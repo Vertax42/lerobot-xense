@@ -33,12 +33,34 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 
+# def get_safe_default_codec():
+#     if importlib.util.find_spec("torchcodec"):
+#         return "torchcodec"
+#     else:
+#         logging.warning(
+#             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
+#         )
+#         return "pyav"
+
+
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
-        return "torchcodec"
+        # Test if the core functionality is properly registered
+        import torch
+
+        # Try to access the torchcodec core operations to see if they're registered
+        if hasattr(torch, "_ops") and hasattr(torch._ops, "torchcodec_ns"):
+            return "torchcodec"
+        else:
+            logging.warning(
+                "torchcodec is installed but core operations are not registered, "
+                "falling back to 'pyav' as default decoder"
+            )
+            return "pyav"
     else:
         logging.warning(
-            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
+            "'torchcodec' is not available in your platform, "
+            "falling back to 'pyav' as a default decoder"
         )
         return "pyav"
 

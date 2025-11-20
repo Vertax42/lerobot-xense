@@ -62,7 +62,9 @@ DEFAULT_TASKS_PATH = "meta/tasks.parquet"
 DEFAULT_EPISODES_PATH = EPISODES_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_DATA_PATH = DATA_DIR + "/" + CHUNK_FILE_PATTERN + ".parquet"
 DEFAULT_VIDEO_PATH = VIDEO_DIR + "/{video_key}/" + CHUNK_FILE_PATTERN + ".mp4"
-DEFAULT_IMAGE_PATH = "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+DEFAULT_IMAGE_PATH = (
+    "images/{image_key}/episode-{episode_index:06d}/frame-{frame_index:06d}.png"
+)
 
 LEGACY_EPISODES_PATH = "meta/episodes.jsonl"
 LEGACY_EPISODES_STATS_PATH = "meta/episodes_stats.jsonl"
@@ -94,7 +96,9 @@ def get_hf_dataset_size_in_mb(hf_ds: Dataset) -> int:
     return hf_ds.data.nbytes // (1024**2)
 
 
-def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -> tuple[int, int]:
+def update_chunk_file_indices(
+    chunk_idx: int, file_idx: int, chunks_size: int
+) -> tuple[int, int]:
     if file_idx == chunks_size - 1:
         file_idx = 0
         chunk_idx += 1
@@ -103,7 +107,9 @@ def update_chunk_file_indices(chunk_idx: int, file_idx: int, chunks_size: int) -
     return chunk_idx, file_idx
 
 
-def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None) -> Dataset:
+def load_nested_dataset(
+    pq_dir: Path, features: datasets.Features | None = None
+) -> Dataset:
     """Find parquet files in provided directory {pq_dir}/chunk-xxx/file-xxx.parquet
     Convert parquet files to pyarrow memory mapped in a cache folder for efficient RAM usage
     Concatenate all pyarrow references to return HF Dataset format
@@ -114,11 +120,15 @@ def load_nested_dataset(pq_dir: Path, features: datasets.Features | None = None)
     """
     paths = sorted(pq_dir.glob("*/*.parquet"))
     if len(paths) == 0:
-        raise FileNotFoundError(f"Provided directory does not contain any parquet file: {pq_dir}")
+        raise FileNotFoundError(
+            f"Provided directory does not contain any parquet file: {pq_dir}"
+        )
 
     # TODO(rcadene): set num_proc to accelerate conversion to pyarrow
     with SuppressProgressBars():
-        datasets = Dataset.from_parquet([str(path) for path in paths], features=features)
+        datasets = Dataset.from_parquet(
+            [str(path) for path in paths], features=features
+        )
     return datasets
 
 
@@ -215,7 +225,9 @@ def serialize_dict(stats: dict[str, torch.Tensor | np.ndarray | dict]) -> dict:
         elif isinstance(value, (int | float)):
             serialized_dict[key] = value
         else:
-            raise NotImplementedError(f"The value '{value}' of type '{type(value)}' is not supported.")
+            raise NotImplementedError(
+                f"The value '{value}' of type '{type(value)}' is not supported."
+            )
     return unflatten_dict(serialized_dict)
 
 
@@ -366,7 +378,9 @@ def load_episodes(local_dir: Path) -> datasets.Dataset:
     # Select episode features/columns containing references to episode data and videos
     # (e.g. tasks, dataset_from_index, dataset_to_index, data/chunk_index, data/file_index, etc.)
     # This is to speedup access to these data, instead of having to load episode stats.
-    episodes = episodes.select_columns([key for key in episodes.features if not key.startswith("stats/")])
+    episodes = episodes.select_columns(
+        [key for key in episodes.features if not key.startswith("stats/")]
+    )
     return episodes
 
 
@@ -394,7 +408,9 @@ def load_image_as_numpy(
     return img_array
 
 
-def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[torch.Tensor | str]]:
+def hf_transform_to_torch(
+    items_dict: dict[str, list[Any]],
+) -> dict[str, list[torch.Tensor | str]]:
     """Convert a batch from a Hugging Face dataset to torch tensors.
 
     This transform function converts items from Hugging Face dataset format (pyarrow)
@@ -417,7 +433,9 @@ def hf_transform_to_torch(items_dict: dict[str, list[Any]]) -> dict[str, list[to
         elif first_item is None:
             pass
         else:
-            items_dict[key] = [x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]]
+            items_dict[key] = [
+                x if isinstance(x, str) else torch.tensor(x) for x in items_dict[key]
+            ]
     return items_dict
 
 
@@ -510,7 +528,9 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         ForwardCompatibilityError: If only newer major versions are available.
     """
     target_version = (
-        packaging.version.parse(version) if not isinstance(version, packaging.version.Version) else version
+        packaging.version.parse(version)
+        if not isinstance(version, packaging.version.Version)
+        else version
     )
     hub_versions = get_repo_versions(repo_id)
 
@@ -531,12 +551,16 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
         return f"v{target_version}"
 
     compatibles = [
-        v for v in hub_versions if v.major == target_version.major and v.minor <= target_version.minor
+        v
+        for v in hub_versions
+        if v.major == target_version.major and v.minor <= target_version.minor
     ]
     if compatibles:
         return_version = max(compatibles)
         if return_version < target_version:
-            logging.warning(f"Revision {version} for {repo_id} not found, using version v{return_version}")
+            logging.warning(
+                f"Revision {version} for {repo_id} not found, using version v{return_version}"
+            )
         return f"v{return_version}"
 
     lower_major = [v for v in hub_versions if v.major < target_version.major]
@@ -597,7 +621,9 @@ def _validate_feature_names(features: dict[str, dict]) -> None:
     """
     invalid_features = {name: ft for name, ft in features.items() if "/" in name}
     if invalid_features:
-        raise ValueError(f"Feature names should not contain '/'. Found '/' in '{invalid_features}'.")
+        raise ValueError(
+            f"Feature names should not contain '/'. Found '/' in '{invalid_features}'."
+        )
 
 
 def hw_to_dataset_features(
@@ -623,9 +649,12 @@ def hw_to_dataset_features(
     joint_fts = {
         key: ftype
         for key, ftype in hw_features.items()
-        if ftype is float or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
+        if ftype is float
+        or (isinstance(ftype, PolicyFeature) and ftype.type != FeatureType.VISUAL)
     }
-    cam_fts = {key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)}
+    cam_fts = {
+        key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)
+    }
 
     if joint_fts and prefix == ACTION:
         features[prefix] = {
@@ -674,7 +703,9 @@ def build_dataset_frame(
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
-            frame[key] = np.array([values[name] for name in ft["names"]], dtype=np.float32)
+            frame[key] = np.array(
+                [values[name] for name in ft["names"]], dtype=np.float32
+            )
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]
 
@@ -760,10 +791,14 @@ def combine_feature_dicts(*dicts: dict) -> dict:
 
             if is_vector:
                 # Initialize or retrieve the accumulating dict for this feature key
-                target = out.setdefault(key, {"dtype": dtype, "names": [], "shape": (0,)})
+                target = out.setdefault(
+                    key, {"dtype": dtype, "names": [], "shape": (0,)}
+                )
                 # Ensure consistent data types across merged entries
                 if "dtype" in target and dtype != target["dtype"]:
-                    raise ValueError(f"dtype mismatch for '{key}': {target['dtype']} vs {dtype}")
+                    raise ValueError(
+                        f"dtype mismatch for '{key}': {target['dtype']} vs {dtype}"
+                    )
 
                 # Merge feature names: append only new ones to preserve order without duplicates
                 seen = set(target["names"])
@@ -809,7 +844,8 @@ def create_empty_dataset_info(
         "total_tasks": 0,
         "chunks_size": chunks_size or DEFAULT_CHUNK_SIZE,
         "data_files_size_in_mb": data_files_size_in_mb or DEFAULT_DATA_FILE_SIZE_IN_MB,
-        "video_files_size_in_mb": video_files_size_in_mb or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
+        "video_files_size_in_mb": video_files_size_in_mb
+        or DEFAULT_VIDEO_FILE_SIZE_IN_MB,
         "fps": fps,
         "splits": {},
         "data_path": DEFAULT_DATA_PATH,
@@ -819,7 +855,10 @@ def create_empty_dataset_info(
 
 
 def check_delta_timestamps(
-    delta_timestamps: dict[str, list[float]], fps: int, tolerance_s: float, raise_value_error: bool = True
+    delta_timestamps: dict[str, list[float]],
+    fps: int,
+    tolerance_s: float,
+    raise_value_error: bool = True,
 ) -> bool:
     """Check if delta timestamps are multiples of 1/fps +/- tolerance.
 
@@ -841,10 +880,14 @@ def check_delta_timestamps(
     """
     outside_tolerance = {}
     for key, delta_ts in delta_timestamps.items():
-        within_tolerance = [abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts]
+        within_tolerance = [
+            abs(ts * fps - round(ts * fps)) / fps <= tolerance_s for ts in delta_ts
+        ]
         if not all(within_tolerance):
             outside_tolerance[key] = [
-                ts for ts, is_within in zip(delta_ts, within_tolerance, strict=True) if not is_within
+                ts
+                for ts, is_within in zip(delta_ts, within_tolerance, strict=True)
+                if not is_within
             ]
 
     if len(outside_tolerance) > 0:
@@ -862,7 +905,9 @@ def check_delta_timestamps(
     return True
 
 
-def get_delta_indices(delta_timestamps: dict[str, list[float]], fps: int) -> dict[str, list[int]]:
+def get_delta_indices(
+    delta_timestamps: dict[str, list[float]], fps: int
+) -> dict[str, list[int]]:
     """Convert delta timestamps in seconds to delta indices in frames.
 
     Args:
@@ -961,7 +1006,9 @@ def create_lerobot_dataset_card(
         ],
     )
 
-    card_template = (importlib.resources.files("lerobot.datasets") / "card_template.md").read_text()
+    card_template = (
+        importlib.resources.files("lerobot.datasets") / "card_template.md"
+    ).read_text()
 
     return DatasetCard.from_template(
         card_data=card_data,
@@ -976,22 +1023,30 @@ def validate_frame(frame: dict, features: dict) -> None:
 
     # task is a special required field that's not part of regular features
     if "task" not in actual_features:
-        raise ValueError("Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n")
+        raise ValueError(
+            "Feature mismatch in `frame` dictionary:\nMissing features: {'task'}\n"
+        )
 
     # Remove task from actual_features for regular feature validation
     actual_features_for_validation = actual_features - {"task"}
 
-    error_message = validate_features_presence(actual_features_for_validation, expected_features)
+    error_message = validate_features_presence(
+        actual_features_for_validation, expected_features
+    )
 
     common_features = actual_features_for_validation & expected_features
     for name in common_features:
-        error_message += validate_feature_dtype_and_shape(name, features[name], frame[name])
+        error_message += validate_feature_dtype_and_shape(
+            name, features[name], frame[name]
+        )
 
     if error_message:
         raise ValueError(error_message)
 
 
-def validate_features_presence(actual_features: set[str], expected_features: set[str]) -> str:
+def validate_features_presence(
+    actual_features: set[str], expected_features: set[str]
+) -> str:
     """Check for missing or extra features in a frame.
 
     Args:
@@ -1040,7 +1095,9 @@ def validate_feature_dtype_and_shape(
     elif expected_dtype == "string":
         return validate_feature_string(name, value)
     else:
-        raise NotImplementedError(f"The feature dtype '{expected_dtype}' is not implemented yet.")
+        raise NotImplementedError(
+            f"The feature dtype '{expected_dtype}' is not implemented yet."
+        )
 
 
 def validate_feature_numpy_array(
@@ -1093,7 +1150,9 @@ def validate_feature_image_or_video(
     if isinstance(value, np.ndarray):
         actual_shape = value.shape
         c, h, w = expected_shape
-        if len(actual_shape) != 3 or (actual_shape != (c, h, w) and actual_shape != (h, w, c)):
+        if len(actual_shape) != 3 or (
+            actual_shape != (c, h, w) and actual_shape != (h, w, c)
+        ):
             error_message += f"The feature '{name}' of shape '{actual_shape}' does not have the expected shape '{(c, h, w)}' or '{(h, w, c)}'.\n"
     elif isinstance(value, PILImage.Image):
         pass
@@ -1118,7 +1177,9 @@ def validate_feature_string(name: str, value: str) -> str:
     return ""
 
 
-def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features: dict) -> None:
+def validate_episode_buffer(
+    episode_buffer: dict, total_episodes: int, features: dict
+) -> None:
     """Validate the episode buffer before it's written to disk.
 
     Ensures the buffer has the required keys, contains at least one frame, and
@@ -1147,7 +1208,9 @@ def validate_episode_buffer(episode_buffer: dict, total_episodes: int, features:
         )
 
     if episode_buffer["size"] == 0:
-        raise ValueError("You must add one or several frames with `add_frame` before calling `add_episode`.")
+        raise ValueError(
+            "You must add one or several frames with `add_frame` before calling `add_episode`."
+        )
 
     buffer_keys = set(episode_buffer.keys()) - {"task", "size"}
     if not buffer_keys == set(features):
@@ -1243,7 +1306,14 @@ class Backtrackable(Generic[T]):
     ```
     """
 
-    __slots__ = ("_source", "_back_buf", "_ahead_buf", "_cursor", "_history", "_lookahead")
+    __slots__ = (
+        "_source",
+        "_back_buf",
+        "_ahead_buf",
+        "_cursor",
+        "_history",
+        "_lookahead",
+    )
 
     def __init__(self, iterable: Iterable[T], *, history: int = 1, lookahead: int = 0):
         if history < 1:
@@ -1253,7 +1323,9 @@ class Backtrackable(Generic[T]):
 
         self._source: Iterator[T] = iter(iterable)
         self._back_buf: deque[T] = deque(maxlen=history)
-        self._ahead_buf: deque[T] = deque(maxlen=lookahead) if lookahead > 0 else deque()
+        self._ahead_buf: deque[T] = (
+            deque(maxlen=lookahead) if lookahead > 0 else deque()
+        )
         self._cursor: int = 0
         self._history = history
         self._lookahead = lookahead
@@ -1353,7 +1425,9 @@ class Backtrackable(Generic[T]):
             return False
 
 
-def safe_shard(dataset: datasets.IterableDataset, index: int, num_shards: int) -> datasets.Dataset:
+def safe_shard(
+    dataset: datasets.IterableDataset, index: int, num_shards: int
+) -> datasets.Dataset:
     """
     Safe shards the dataset.
     """

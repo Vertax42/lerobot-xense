@@ -1,0 +1,33 @@
+name: tacxense
+channels:
+  - robostack-staging
+  - conda-forge
+  - nvidia
+dependencies:
+  - python=3.10
+  - ros-humble-kdl-parser
+  - ros-humble-ament-cmake
+  - cxx-compiler
+  - cmake
+  - ninja
+  - orocos-kdl
+  - eigen
+  - boost
+  - spdlog
+  - pybind11
+  - numpy
+  - click
+  - pyzmq
+  - pynput
+  - pip
+  - evdev
+  - nvidia::cuda-toolkit=12.8 # for xensesdk
+  - nvidia::cudnn # for xensesdk, cuda-version=12
+  - conda-forge::ffmpeg=7.1.1 # for libsvtav1 encoder
+  - conda-forge::soem=1.4.0 # This package is missing in aarch64
+  # To install it on aarch64 (arm64), comment out this package and first create the arx-py311 environment.
+  # Directly clone the SOEM repository and install it to the conda environment (ensure $CONDA_PREFIX points to tacxense):
+  # `conda activate tacxense`
+  # `git clone https://github.com/OpenEtherCATsociety/SOEM.git && cd SOEM`
+  # `mkdir build && cd build && cmake -DCMAKE_INSTALL_PREFIX=$CONDA_PREFIX .. && make -j && make install`
+  # ARX5 SDK Conda Env
