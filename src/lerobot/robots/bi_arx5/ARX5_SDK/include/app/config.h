@@ -312,8 +312,8 @@ class ControllerConfigFactory
         );
         configurations["joint_controller_6"] = std::make_shared<ControllerConfig>(
             "joint_controller",                                           // controller_type
-            (VecDoF(6) << 80.0, 70.0, 70.0, 30.0, 30.0, 20.0).finished(), // default_kp / 2
-            (VecDoF(6) << 2.0, 2.0, 2.0, 1.0, 1.0, 0.7).finished(),       // !! default_kd * 2 default_kp / 2 OK
+            (VecDoF(6) << 80.0, 70.0, 70.0, 30.0, 30.0, 20.0).finished(), // default_kp
+            (VecDoF(6) << 2.0, 2.0, 2.0, 1.0, 1.0, 0.7).finished(),       // default_kd
             1.0,                                                          // default_gripper_kp
             0.01,                                                          // default_gripper_kd
             20,                                                           // over_current_cnt_max

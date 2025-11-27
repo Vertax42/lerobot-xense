@@ -768,7 +768,7 @@ class BiARX5(Robot):
         # reset to default gain
         default_gain = self.left_arm.get_gain()
         default_gain.kp()[:] = self.controller_configs["left_config"].default_kp * 0.5
-        default_gain.kd()[:] = self.controller_configs["left_config"].default_kd * 2.0
+        default_gain.kd()[:] = self.controller_configs["left_config"].default_kd * 1.5
         default_gain.gripper_kp = self.controller_configs[
             "left_config"
         ].default_gripper_kp

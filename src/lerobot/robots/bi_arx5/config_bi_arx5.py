@@ -42,7 +42,7 @@ class BiARX5Config(RobotConfig):
     # Higher values (0.03-0.05) provide smoother motion but more delay
     # Lower values (0.01-0.02) are more responsive but may cause jittering
     preview_time: float = 0.0  # Default 30ms for smooth inference
-    gripper_open_readout: list[float] = field(default_factory=lambda: [-3.5, -3.49])
+    gripper_open_readout: list[float] = field(default_factory=lambda: [-3.4, -3.4])
     home_position: list[float] = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     )
