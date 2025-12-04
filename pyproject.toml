@@ -83,7 +83,7 @@ dependencies = [
     "draccus==0.10.0", # TODO: Remove ==
     "gymnasium>=1.1.1,<2.0.0",
     "rerun-sdk == 0.24.0",
-    "xensesdk",
+    # xensesdk moved to optional due to numpy conflict with rerun-sdk
     # Support dependencies
     "deepdiff>=7.0.1,<9.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
@@ -96,6 +96,7 @@ dependencies = [
 # Common
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
+xense = ["xensesdk==1.6.5"]  # Install with: pip install xensesdk==1.6.5 --no-deps (numpy conflict with rerun-sdk)
 transformers-dep = ["transformers>=4.53.0,<5.0.0"]
 grpcio-dep = ["grpcio==1.73.1", "protobuf==6.31.0"] # TODO: Bumb dependency (compatible with wandb)
 
