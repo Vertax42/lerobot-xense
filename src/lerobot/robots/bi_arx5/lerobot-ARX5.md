@@ -231,8 +231,14 @@ lerobot-record \
 ## BiARX5 Robot lerobot-replay command
 lerobot-replay \
     --robot.type=bi_arx5 \
-    --dataset.repo_id=Vertax/xense_bi_arx5_tie_shoelaces_1027 \
+    --dataset.repo_id=Vertax/lerobot040_test_bi_arx5 \
     --dataset.episode=0
+
+## BiARX5 Robot lerobot-annotate-reward command
+lerobot-annotate-reward \
+    --repo-id Xense/xense_bi_arx5_tie_shoelaces \
+    --new-repo-id Vertax/test_annotated \
+    --push-to-hub
 
 ## BiARX5 Robot lerobot-train command act
 lerobot-train \
