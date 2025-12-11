@@ -25,6 +25,11 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras.xense import (
+    XenseCameraConfig,
+    XenseOutputType,
+    XenseTactileCamera,
+)
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -160,21 +165,52 @@ class BiARX5(Robot):
     def _motors_ft(self) -> dict[str, type]:
         # ARX5 有 6个关节 + 1个夹爪
         joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
-        return {f"left_{joint}.pos": float for joint in joint_names} | {
+        return {
+            f"left_{joint}.pos": float for joint in joint_names
+        } | {
             f"right_{joint}.pos": float for joint in joint_names
         }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
+        """Describe visual outputs (H, W, C) for cameras that actually emit images.
+
+        Xense tactile sensors can be configured to output only force/resultant data
+        (no DIFFERENCE/RECTIFY/DEPTH frames). In that case we must *not* register
+        them as image features, otherwise the dataset writer will expect an
+        observation key like ``right_tactile_0`` that is never produced, leading
+        to KeyError during recording and silently dropping tactile frames.
+        """
+
+        image_outputs = {
+            XenseOutputType.RECTIFY,
+            XenseOutputType.DIFFERENCE,
+            XenseOutputType.DEPTH,
         }
+
+        camera_feats: dict[str, tuple] = {}
+        for cam_name, cam_cfg in self.config.cameras.items():
+            if isinstance(cam_cfg, XenseCameraConfig):
+                # Only register Xense cameras that deliver image-like outputs
+                if not any(ot in image_outputs for ot in cam_cfg.output_types):
+                    continue
+            camera_feats[cam_name] = (cam_cfg.height, cam_cfg.width, 3)
+
+        return camera_feats
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
+        feats = {**self._motors_ft, **self._cameras_ft}
+        # Add tactile resultants without touching _motors_ft/_cameras_ft
+        for cam_name, cam_cfg in self.config.cameras.items():
+            if isinstance(cam_cfg, XenseCameraConfig) and (
+                XenseOutputType.FORCE_RESULTANT in cam_cfg.output_types
+            ):
+                side = "left" if "left" in cam_name else "right" if "right" in cam_name else cam_name
+                for axis in ["fx", "fy", "fz", "mx", "my", "mz"]:
+                    feats[f"tactile.{side}_resultant.{axis}"] = float
         print(f"camera_features: {self._cameras_ft}")
-        return {**self._motors_ft, **self._cameras_ft}
+        return feats
 
     @cached_property
     def action_features(self) -> dict[str, type]:
@@ -357,6 +393,38 @@ class BiARX5(Robot):
             start = time.perf_counter()
             image = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
+
+            # Handle Xense tactile outputs explicitly
+            if isinstance(cam, XenseTactileCamera):
+                outputs = (image,) if not isinstance(image, tuple) else image
+                for ot, value in zip(cam.output_types, outputs, strict=False):
+                    if ot in (XenseOutputType.RECTIFY, XenseOutputType.DIFFERENCE):
+                        obs_dict[cam_key] = value
+                    elif ot == XenseOutputType.FORCE_RESULTANT:
+                        side = "left" if "left" in cam_key else "right" if "right" in cam_key else cam_key
+                        axes = ["fx", "fy", "fz", "mx", "my", "mz"]
+                        for i, axis in enumerate(axes):
+                            obs_dict[f"tactile.{side}_resultant.{axis}"] = float(
+                                value[i]
+                            )
+                        # Convenience vector for visualization (not used by dataset features)
+                        obs_dict[f"tactile.{side}_resultant_vec"] = value.astype(
+                            np.float32
+                        )
+                    elif ot == XenseOutputType.DEPTH:
+                        obs_dict[f"{cam_key}.depth"] = value
+                    else:
+                        # Guardrail: surface unhandled tactile modalities instead of silently dropping them
+                        logger.debug(
+                            "Unhandled Xense output type %s for camera %s (value shape=%s)",
+                            ot,
+                            cam_key,
+                            getattr(value, "shape", None),
+                        )
+                camera_times[cam_key] = dt_ms
+                continue
+
+            # Default camera handling
             obs_dict[cam_key] = image
             camera_times[cam_key] = dt_ms
 

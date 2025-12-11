@@ -656,6 +656,20 @@ def hw_to_dataset_features(
         key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)
     }
 
+    # Special grouping: tactile resultants stay out of observation.state
+    tactile_groups: dict[str, list[str]] = {}
+    for name in list(joint_fts):
+        # Accept both dot- and underscore-separated patterns:
+        # tactile.right_resultant.fx  or tactile.right.resultant.fx
+        if name.startswith("tactile.") and "resultant." in name:
+            _, rest = name.split("tactile.", 1)
+            # rest examples: "right_resultant.fx" or "right.resultant.fx"
+            side, axis = rest.split("resultant.", 1)
+            side = side.rstrip("._")
+            axis = axis.lstrip("._")
+            tactile_groups.setdefault(side, []).append(axis)
+            joint_fts.pop(name)
+
     if joint_fts and prefix == ACTION:
         features[prefix] = {
             "dtype": "float32",
@@ -669,6 +683,15 @@ def hw_to_dataset_features(
             "shape": (len(joint_fts),),
             "names": list(joint_fts),
         }
+
+    # Add grouped tactile resultants as separate 6D vectors
+    if tactile_groups and prefix == OBS_STR:
+        for side, names in tactile_groups.items():
+            features[f"{prefix}.tactile.{side}_resultant"] = {
+                "dtype": "float32",
+                "shape": (len(names),),
+                "names": names,  # e.g. ["fx", "fy", ...]
+            }
 
     for key, shape in cam_fts.items():
         features[f"{prefix}.images.{key}"] = {
@@ -703,8 +726,16 @@ def build_dataset_frame(
         if key in DEFAULT_FEATURES or not key.startswith(prefix):
             continue
         elif ft["dtype"] == "float32" and len(ft["shape"]) == 1:
+            # For tactile resultants we store short axis names (fx, fy, ...).
+            # Reconstruct full value keys if needed using the feature key.
+            names = ft["names"]
+            if key.startswith(f"{prefix}.tactile.") and all("." not in n for n in names):
+                base = key.removeprefix(f"{prefix}.")
+                names_full = [f"{base}.{n}" for n in names]
+            else:
+                names_full = names
             frame[key] = np.array(
-                [values[name] for name in ft["names"]], dtype=np.float32
+                [values[name] for name in names_full], dtype=np.float32
             )
         elif ft["dtype"] in ["image", "video"]:
             frame[key] = values[key.removeprefix(f"{prefix}.images.")]

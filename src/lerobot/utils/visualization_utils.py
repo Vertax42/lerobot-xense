@@ -44,57 +44,58 @@ def log_rerun_data(
     """
     Logs observation and action data to Rerun for real-time visualization.
 
-    This function iterates through the provided observation and action dictionaries and sends their contents
-    to the Rerun viewer. It handles different data types appropriately:
-    - Scalars values (floats, ints) are logged as `rr.Scalars`.
-    - 3D NumPy arrays that resemble images (e.g., with 1, 3, or 4 channels first) are transposed
-      from CHW to HWC format and logged as `rr.Image`.
-    - 1D NumPy arrays are logged as a series of individual scalars, with each element indexed.
-    - Other multi-dimensional arrays are flattened and logged as individual scalars.
-
-    Keys are automatically namespaced with "observation." or "action." if not already present.
-
-    Args:
-        observation: An optional dictionary containing observation data to log.
-        action: An optional dictionary containing action data to log.
+    - Scalars are logged as `rr.Scalars`.
+    - 3D NumPy arrays with channel-first layout are transposed to HWC and logged as `rr.Image`.
+    - 1D arrays are expanded into individual scalars.
+    - Tuples/lists (e.g., multi-output tactile sensor reads) are unpacked and each element is logged
+      under an indexed suffix.
     """
+
+    def _log_value(base_key: str, value: Any, is_obs: bool) -> None:
+        """Recursively log values with sensible defaults for images and scalars."""
+        if value is None:
+            return
+
+        if _is_scalar(value):
+            rr.log(base_key, rr.Scalars(float(value)))
+            return
+
+        if isinstance(value, (tuple, list)):
+            for i, vi in enumerate(value):
+                _log_value(f"{base_key}_{i}", vi, is_obs)
+            return
+
+        if isinstance(value, np.ndarray):
+            arr = value
+            # Convert CHW -> HWC when needed
+            if (
+                arr.ndim == 3
+                and arr.shape[0] in (1, 3, 4)
+                and arr.shape[-1] not in (1, 3, 4)
+            ):
+                arr = np.transpose(arr, (1, 2, 0))
+
+            if arr.ndim == 1:
+                for i, vi in enumerate(arr):
+                    rr.log(f"{base_key}_{i}", rr.Scalars(float(vi)))
+            else:
+                # Use dynamic logging for streams (no static=True) so images update over time.
+                rr.log(base_key, rr.Image(arr))
+            return
+
+        # Fallback: try to log numeric types via float conversion
+        try:
+            rr.log(base_key, rr.Scalars(float(value)))
+        except Exception:
+            # Ignore unsupported types silently to keep loop fast
+            return
+
     if observation:
         for k, v in observation.items():
-            if v is None:
-                continue
             key = k if str(k).startswith(OBS_PREFIX) else f"{OBS_STR}.{k}"
-
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                arr = v
-                # Convert CHW -> HWC when needed
-                if (
-                    arr.ndim == 3
-                    and arr.shape[0] in (1, 3, 4)
-                    and arr.shape[-1] not in (1, 3, 4)
-                ):
-                    arr = np.transpose(arr, (1, 2, 0))
-                if arr.ndim == 1:
-                    for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    rr.log(key, rr.Image(arr), static=True)
+            _log_value(key, v, is_obs=True)
 
     if action:
         for k, v in action.items():
-            if v is None:
-                continue
             key = k if str(k).startswith("action.") else f"action.{k}"
-
-            if _is_scalar(v):
-                rr.log(key, rr.Scalars(float(v)))
-            elif isinstance(v, np.ndarray):
-                if v.ndim == 1:
-                    for i, vi in enumerate(v):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    # Fall back to flattening higher-dimensional arrays
-                    flat = v.flatten()
-                    for i, vi in enumerate(flat):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+            _log_value(key, v, is_obs=False)

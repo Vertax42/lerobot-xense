@@ -250,25 +250,30 @@ class XenseTactileCamera(Camera):
             # DEBUG: Check if output type is in image_outputs
             # print(f"DEBUG: output_type={self.output_types[0]}, in_image_outputs={self.output_types[0] in image_outputs}")
 
-            if isinstance(results, tuple):
-                processed_results = []
+            # xensesdk may return either tuple or list when multiple outputs are requested.
+            # Accept both to avoid treating a list of heterogeneous arrays as a single output,
+            # which triggers numpy's "inhomogeneous shape" ValueError.
+            if isinstance(results, (tuple, list)):
+                processed_results: list[np.ndarray] = []
                 for i, output_type in enumerate(self.output_types):
-                    data = results[i]
-                    if output_type in image_outputs and len(data.shape) >= 2:
-                        # Transpose to swap h and w dimensions
+                    data = np.asarray(results[i])
+
+                    if output_type in image_outputs and data.ndim >= 2:
+                        # Transpose only image-like outputs; keep force/marker/resultant unchanged
                         data = np.transpose(
-                            data, (1, 0) + tuple(range(2, len(data.shape)))
+                            data, (1, 0) + tuple(range(2, data.ndim))
                         )
-                        processed_results.append(data)
+
+                    processed_results.append(data)
+
                 return tuple(processed_results)
             else:
                 # single output type
-                if self.output_types[0] in image_outputs and len(results.shape) >= 2:
-                    # print(f"DEBUG: Transposing shape {results.shape}")
+                results = np.asarray(results)
+                if self.output_types[0] in image_outputs and results.ndim >= 2:
                     results = np.transpose(
-                        results, (1, 0) + tuple(range(2, len(results.shape)))
+                        results, (1, 0) + tuple(range(2, results.ndim))
                     )
-                    # print(f"DEBUG: Transposed shape {results.shape}")
                 return results
 
         except Exception as e:

@@ -129,6 +129,19 @@ lerobot-teleoperate \
     --display_data=true
 
 ## BiARX5 Robot lerobot-record command
+  lerobot-record \
+    --robot.type=bi_arx5 \
+    --robot.enable_tactile_sensors=true \
+    --teleop.type=mock_teleop \
+    --dataset.repo_id=Vertax/6dforce_test \
+    --dataset.num_episodes=1 \
+    --dataset.single_task="test" \
+    --dataset.fps=30 \
+    --dataset.episode_time_s=10 \
+    --display_data=false \
+    --resume=false \
+    --dataset.push_to_hub=true
+
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \

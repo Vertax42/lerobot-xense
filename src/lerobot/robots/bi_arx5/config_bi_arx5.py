@@ -69,7 +69,10 @@ class BiARX5Config(RobotConfig):
                 "right_tactile_0": XenseCameraConfig(
                     serial_number="OG000344",
                     fps=60,  # Reduced from 60 to reduce loop overhead
-                    output_types=[XenseOutputType.DIFFERENCE],
+                    output_types=[
+                        XenseOutputType.DIFFERENCE,
+                        XenseOutputType.FORCE_RESULTANT,
+                    ],
                     warmup_s=1.0,  # Increased warmup time for stable initialization
                     # width=700,
                     # height=400,
@@ -77,7 +80,10 @@ class BiARX5Config(RobotConfig):
                 "left_tactile_0": XenseCameraConfig(
                     serial_number="OG000337",
                     fps=60,  # Reduced from 60 to reduce loop overhead
-                    output_types=[XenseOutputType.DIFFERENCE],
+                    output_types=[
+                        XenseOutputType.DIFFERENCE,
+                        XenseOutputType.FORCE_RESULTANT,
+                    ],
                     warmup_s=1.0,  # Increased warmup time for stable initialization
                     # width=700,
                     # height=400,
