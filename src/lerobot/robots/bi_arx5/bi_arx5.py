@@ -25,6 +25,11 @@ import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.cameras.xense import (
+    XenseCameraConfig,
+    XenseOutputType,
+    XenseTactileCamera,
+)
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
@@ -160,16 +165,46 @@ class BiARX5(Robot):
     def _motors_ft(self) -> dict[str, type]:
         # ARX5 有 6个关节 + 1个夹爪
         joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
-        return {f"left_{joint}.pos": float for joint in joint_names} | {
+        motors: dict[str, type] = {
+            f"left_{joint}.pos": float for joint in joint_names
+        } | {
             f"right_{joint}.pos": float for joint in joint_names
         }
 
+        # Add 6D force resultant if Xense outputs include FORCE_RESULTANT
+        for cam_name, cam_cfg in self.config.cameras.items():
+            if isinstance(cam_cfg, XenseCameraConfig) and (
+                XenseOutputType.FORCE_RESULTANT in cam_cfg.output_types
+            ):
+                side = "left" if "left" in cam_name else "right" if "right" in cam_name else cam_name
+                for axis in ["fx", "fy", "fz", "mx", "my", "mz"]:
+                    motors[f"tactile.{side}_resultant.{axis}"] = float
+
+        return motors
+
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
-        }
+        camera_features: dict[str, tuple] = {}
+        for cam_name, cam_cfg in self.config.cameras.items():
+            # Only add visual outputs (e.g., tactile difference or RGB cameras)
+            if isinstance(cam_cfg, XenseCameraConfig):
+                has_image_output = any(
+                    ot in (XenseOutputType.RECTIFY, XenseOutputType.DIFFERENCE)
+                    for ot in cam_cfg.output_types
+                )
+                if has_image_output:
+                    camera_features[cam_name] = (
+                        cam_cfg.height,
+                        cam_cfg.width,
+                        3,
+                    )
+            else:
+                camera_features[cam_name] = (
+                    cam_cfg.height,
+                    cam_cfg.width,
+                    3,
+                )
+        return camera_features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -357,6 +392,30 @@ class BiARX5(Robot):
             start = time.perf_counter()
             image = cam.async_read()
             dt_ms = (time.perf_counter() - start) * 1e3
+
+            # Handle Xense tactile outputs explicitly
+            if isinstance(cam, XenseTactileCamera):
+                outputs = (image,) if not isinstance(image, tuple) else image
+                for ot, value in zip(cam.output_types, outputs, strict=False):
+                    if ot in (XenseOutputType.RECTIFY, XenseOutputType.DIFFERENCE):
+                        obs_dict[cam_key] = value
+                    elif ot == XenseOutputType.FORCE_RESULTANT:
+                        side = "left" if "left" in cam_key else "right" if "right" in cam_key else cam_key
+                        axes = ["fx", "fy", "fz", "mx", "my", "mz"]
+                        for i, axis in enumerate(axes):
+                            obs_dict[f"tactile.{side}_resultant.{axis}"] = float(
+                                value[i]
+                            )
+                        # Convenience vector for visualization (not used by dataset features)
+                        obs_dict[f"tactile.{side}_resultant_vec"] = value.astype(
+                            np.float32
+                        )
+                    elif ot == XenseOutputType.DEPTH:
+                        obs_dict[f"{cam_key}.depth"] = value
+                camera_times[cam_key] = dt_ms
+                continue
+
+            # Default camera handling
             obs_dict[cam_key] = image
             camera_times[cam_key] = dt_ms
 

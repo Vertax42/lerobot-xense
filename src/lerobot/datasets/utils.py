@@ -656,6 +656,15 @@ def hw_to_dataset_features(
         key: shape for key, shape in hw_features.items() if isinstance(shape, tuple)
     }
 
+    # Special grouping: tactile resultants stay out of observation.state
+    tactile_groups: dict[str, list[str]] = {}
+    for name in list(joint_fts):
+        if name.startswith("tactile.") and ".resultant." in name:
+            _, rest = name.split("tactile.", 1)
+            side = rest.split(".resultant.", 1)[0]
+            tactile_groups.setdefault(side, []).append(name)
+            joint_fts.pop(name)
+
     if joint_fts and prefix == ACTION:
         features[prefix] = {
             "dtype": "float32",
@@ -669,6 +678,15 @@ def hw_to_dataset_features(
             "shape": (len(joint_fts),),
             "names": list(joint_fts),
         }
+
+    # Add grouped tactile resultants as separate 6D vectors
+    if tactile_groups and prefix == OBS_STR:
+        for side, names in tactile_groups.items():
+            features[f"{prefix}.tactile.{side}_resultant"] = {
+                "dtype": "float32",
+                "shape": (len(names),),
+                "names": names,
+            }
 
     for key, shape in cam_fts.items():
         features[f"{prefix}.images.{key}"] = {
