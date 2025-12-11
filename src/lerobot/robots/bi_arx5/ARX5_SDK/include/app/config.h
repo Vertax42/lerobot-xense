@@ -98,7 +98,7 @@ class RobotConfigFactory
             "X5",                                                          // robot_model
             (VecDoF(6) << -3.14, -0.05, -0.2, -1.6, -1.57, -2).finished(), // joint_pos_min
             (VecDoF(6) << 2.618, 3.50, 3.20, 1.55, 1.57, 2).finished(),    // joint_pos_max
-            (VecDoF(6) << 20.0, 20.0, 20.5, 20.5, 20.0, 20.0).finished(),        // joint_vel_max
+            (VecDoF(6) << 20.0, 20.0, 20.5, 20.5, 20.0, 20.0).finished(),  // joint_vel_max
             (VecDoF(6) << 30.0, 40.0, 30.0, 15.0, 10.0, 10.0).finished(),  // joint_torque_max
             (Pose6d() << 0.6, 0.6, 0.6, 1.8, 1.8, 1.8).finished(),         // ee_vel_max
             20.0,                                                           // gripper_vel_max 0.3 m/s -> 5.6 rads/s (scaled with gripper_width)
