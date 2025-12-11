@@ -165,51 +165,32 @@ class BiARX5(Robot):
     def _motors_ft(self) -> dict[str, type]:
         # ARX5 有 6个关节 + 1个夹爪
         joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
-        motors: dict[str, type] = {
+        return {
             f"left_{joint}.pos": float for joint in joint_names
         } | {
             f"right_{joint}.pos": float for joint in joint_names
         }
 
-        # Add 6D force resultant if Xense outputs include FORCE_RESULTANT
+    @property
+    def _cameras_ft(self) -> dict[str, tuple]:
+        return {
+            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
+            for cam in self.cameras
+        }
+
+    @cached_property
+    def observation_features(self) -> dict[str, type | tuple]:
+        feats = {**self._motors_ft, **self._cameras_ft}
+        # Add tactile resultants without touching _motors_ft/_cameras_ft
         for cam_name, cam_cfg in self.config.cameras.items():
             if isinstance(cam_cfg, XenseCameraConfig) and (
                 XenseOutputType.FORCE_RESULTANT in cam_cfg.output_types
             ):
                 side = "left" if "left" in cam_name else "right" if "right" in cam_name else cam_name
                 for axis in ["fx", "fy", "fz", "mx", "my", "mz"]:
-                    motors[f"tactile.{side}_resultant.{axis}"] = float
-
-        return motors
-
-    @property
-    def _cameras_ft(self) -> dict[str, tuple]:
-        camera_features: dict[str, tuple] = {}
-        for cam_name, cam_cfg in self.config.cameras.items():
-            # Only add visual outputs (e.g., tactile difference or RGB cameras)
-            if isinstance(cam_cfg, XenseCameraConfig):
-                has_image_output = any(
-                    ot in (XenseOutputType.RECTIFY, XenseOutputType.DIFFERENCE)
-                    for ot in cam_cfg.output_types
-                )
-                if has_image_output:
-                    camera_features[cam_name] = (
-                        cam_cfg.height,
-                        cam_cfg.width,
-                        3,
-                    )
-            else:
-                camera_features[cam_name] = (
-                    cam_cfg.height,
-                    cam_cfg.width,
-                    3,
-                )
-        return camera_features
-
-    @cached_property
-    def observation_features(self) -> dict[str, type | tuple]:
+                    feats[f"tactile.{side}_resultant.{axis}"] = float
         print(f"camera_features: {self._cameras_ft}")
-        return {**self._motors_ft, **self._cameras_ft}
+        return feats
 
     @cached_property
     def action_features(self) -> dict[str, type]:
