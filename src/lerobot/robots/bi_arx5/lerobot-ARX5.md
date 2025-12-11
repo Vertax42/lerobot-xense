@@ -38,7 +38,9 @@ if conda_prefix:
 ```
 
 # Xense SDK
+
 2. **Install missing dependencies** (as noted in xensesdk README):
+
    ```bash
     pip install scipy cypack cryptography pyudev PyOpenGL PyOpenGL-accelerate assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
     pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
@@ -71,6 +73,7 @@ if conda_prefix:
 ```
 
 # default configurations X5 in ` include/app/config.h `
+
 ```cpp
 // joint_names: [0: joint1, 1: joint2, 2: joint3, 3: joint4, 4: joint5, 5: joint6]
 // motors: [0: EC_A4310, 1: EC_A4310, 2: EC_A4310, 3: DM_J4310, 4: DM_J4310, 5: DM_J4310]
@@ -99,6 +102,7 @@ RobotConfigFactory()
             std::string(SDK_ROOT) + "/models/X5.urdf"                         // urdf_path
         );
     }
+
 ControllerConfigFactory()
     {
         configurations["joint_controller_6"] = std::make_shared<ControllerConfig>(
@@ -119,7 +123,10 @@ ControllerConfigFactory()
 ```
 
 # Lerobot-integration with ARX_X5
+
 ## BiARX5 Robot lerobot-teleoperate command
+
+```python
 lerobot-teleoperate \
     --robot.type=bi_arx5 \
     --robot.enable_tactile_sensors=true \
@@ -127,8 +134,11 @@ lerobot-teleoperate \
     --fps=30 \
     --debug_timing=false \
     --display_data=true
+```
 
 ## BiARX5 Robot lerobot-record command
+
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
@@ -140,7 +150,9 @@ lerobot-record \
     --display_data=false \
     --resume=true \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --robot.enable_tactile_sensors=true \
@@ -153,7 +165,9 @@ lerobot-record \
     --display_data=false \
     --resume=false \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --robot.enable_tactile_sensors=true \
@@ -166,7 +180,9 @@ lerobot-record \
     --display_data=false \
     --resume=false \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
@@ -178,7 +194,9 @@ lerobot-record \
     --display_data=false \
     --resume=true \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
@@ -190,7 +208,9 @@ lerobot-record \
     --display_data=false \
     --resume=true \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
@@ -202,7 +222,9 @@ lerobot-record \
     --display_data=false \
     --resume=true \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
@@ -214,7 +236,9 @@ lerobot-record \
     --display_data=false \
     --resume=true \
     --dataset.push_to_hub=true
+```
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --robot.enable_tactile_sensors=true \
@@ -227,9 +251,11 @@ lerobot-record \
     --display_data=false \
     --resume=false \
     --dataset.push_to_hub=true
+```
 
 --------------------------------
 
+```python
 lerobot-record \
     --robot.type=bi_arx5 \
     --robot.enable_tactile_sensors=true \
@@ -242,20 +268,29 @@ lerobot-record \
     --display_data=false \
     --resume=false \
     --dataset.push_to_hub=true
+```
 
 ## BiARX5 Robot lerobot-replay command
+
+```python
 lerobot-replay \
     --robot.type=bi_arx5 \
     --dataset.repo_id=Vertax/lerobot040_test_bi_arx5 \
     --dataset.episode=0
+```
 
 ## BiARX5 Robot lerobot-annotate-reward command
+
+```python
 lerobot-annotate-reward \
     --repo-id Xense/xense_bi_arx5_tie_shoelaces \
     --new-repo-id Vertax/test_annotated \
     --push-to-hub
+```
 
 ## BiARX5 Robot lerobot-train command act
+
+```python
 lerobot-train \
   --dataset.repo_id=Vertax/bi_arx5_pick_and_place_cube \
   --policy.type=act \
@@ -268,8 +303,11 @@ lerobot-train \
   --steps=200000 \
   --policy.push_to_hub=true \
   --wandb.disable_artifact=true 
+```
 
 ## BiARX5 Robot lerobot-train command diffusion
+
+```python
 lerobot-train \
   --dataset.repo_id=Vertax/bi_arx5_pick_and_place_cube \
   --policy.type=diffusion \
@@ -282,32 +320,18 @@ lerobot-train \
   --steps=100000 \
   --policy.push_to_hub=true \
   --wandb.disable_artifact=true
+```
 
-## resume
-lerobot-train \
-  --policy.path=outputs/train/act_bi_arx5_pick_and_place_cube/checkpoints/last/pretrained_model \
-  --resume=true
+**Note on preview_time:**
 
-## BiARX5 act policy lerobot-eval command
-lerobot-record  \
-  --robot.type=bi_arx5 \
-  --robot.inference_mode=true \
-  --robot.preview_time=0.01 \
-  --robot.id=bi_arx5 \
-  --dataset.episode_time_s=600 \
-  --display_data=false \
-  --dataset.repo_id=Vertax/eval_act_bi_arx5_pick_and_place_cube \
-  --dataset.single_task="pick and place cube" \
-  --policy.path=outputs/train/act_bi_arx5_pick_and_place_cube/checkpoints/last/pretrained_model
-  <!-- Local model path alternative: -->
-  <!-- --policy.path=outputs/train/act_bi_arx5_pick_and_place_cube/checkpoints/last/pretrained_model -->
-
-**Note on preview_time:** Adjust `--robot.preview_time` to reduce jittering:
+Adjust `--robot.preview_time` to reduce jittering:
 - 0.03-0.05s: Smoother motion, more delay (recommended for stable movements)
 - 0.01-0.02s: More responsive, but may cause jittering
 - 0.0: No preview (only for teleoperation/recording)
 
 ## BiARX5 diffusion policy lerobot-eval command
+
+```python
 lerobot-record  \
   --robot.type=bi_arx5 \
   --robot.inference_mode=true \
@@ -319,3 +343,4 @@ lerobot-record  \
   --dataset.repo_id=Vertax/eval_diffusion_bi_arx5_pick_and_place_cube \
   --dataset.single_task="pick and place cube" \
   --policy.path=outputs/train/diffusion_bi_arx5_pick_and_place_cube/checkpoints/last/pretrained_model
+```

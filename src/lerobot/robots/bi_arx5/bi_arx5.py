@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-# Copyright 2025 The HuggingFace Inc. team. All rights reserved.
+# Copyright 2025 The XenseRobotics Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,11 +30,10 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 from ..robot import Robot
 from .config_bi_arx5 import BiARX5Config
 
-# 导入ARX5接口 Stanford-Real-Robot
 import os
 import sys
 
-# 添加ARX5 SDK路径到Python路径
+# Add ARX5 SDK path to Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 arx5_sdk_path = os.path.join(current_dir, "ARX5_SDK", "python")
 if arx5_sdk_path not in sys.path:
@@ -158,7 +157,7 @@ class BiARX5(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        # ARX5 有 6个关节 + 1个夹爪
+        # X5 has 6 joints + 1 gripper
         joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
         return {f"left_{joint}.pos": float for joint in joint_names} | {
             f"right_{joint}.pos": float for joint in joint_names
@@ -208,32 +207,32 @@ class BiARX5(Robot):
             )
 
         try:
-            logger.info("正在创建左臂控制器...")
+            logger.info("Creating left arm controller...")
             self.left_arm = arx5.Arx5JointController(
                 self.robot_configs["left_config"],
                 self.controller_configs["left_config"],
                 self.config.left_arm_port,
             )
             time.sleep(0.5)
-            logger.info("✓ 左臂控制器创建成功")
+            logger.info("✓ Left arm controller created successfully")
             logger.info(
                 f"preview_time: {self.controller_configs['left_config'].default_preview_time}"
             )
 
-            logger.info("正在创建右臂控制器...")
+            logger.info("Creating right arm controller...")
             self.right_arm = arx5.Arx5JointController(
                 self.robot_configs["right_config"],
                 self.controller_configs["right_config"],
                 self.config.right_arm_port,
             )
             time.sleep(0.5)
-            logger.info("✓ 右臂控制器创建成功")
+            logger.info("✓ Right arm controller created successfully")
             logger.info(
                 f"preview_time: {self.controller_configs['right_config'].default_preview_time}"
             )
         except Exception as e:
-            logger.error(f"创建机器人控制器失败: {e}")
-            # 清理已创建的实例
+            logger.error(f"Failed to create robot controller: {e}")
+            # Clean up created instances
             self.left_arm = None
             self.right_arm = None
             raise e
@@ -304,15 +303,15 @@ class BiARX5(Robot):
         return self.is_connected
 
     def calibrate(self) -> None:
-        """ARX 5 dont need to calib in runtime"""
-        logger.info("ARX5 do not need to calib in runtime, skip...")
+        """X5 does not need to calibrate in runtime"""
+        logger.info("X5 does not need to calibrate in runtime, skip...")
         return
 
     def configure(self) -> None:
         pass
 
     def setup_motors(self) -> None:
-        """ARX5 motors use pre-configured IDs, no runtime setup needed"""
+        """X5 motors use pre-configured IDs, no runtime setup needed"""
         logger.info(
             f"{self} ARX5 motors use pre-configured IDs, no runtime setup needed"
         )
