@@ -51,13 +51,14 @@ except ImportError as e:
     else:
         raise e
 
-
 logger = logging.getLogger(__name__)
 
 
 class BiARX5(Robot):
     """
     [Bimanual ARX5 Arms]
+
+    Dual ARX5 Arms Robot
     """
 
     config_class = BiARX5Config
@@ -71,9 +72,11 @@ class BiARX5(Robot):
         self.left_arm = None
         self.right_arm = None
         self._is_connected = False
+
         # Control mode state variables
         self._is_gravity_compensation_mode = False
         self._is_position_control_mode = False
+
         # Use configurable preview time for inference mode
         # Higher values provide smoother motion but more delay
         # Can be adjusted via --robot.preview_time parameter
@@ -113,6 +116,7 @@ class BiARX5(Robot):
                 config.right_arm_model
             ),
         }
+
         # set gripper_open_readout for left and right arm
         self.robot_configs["left_config"].gripper_open_readout = (
             config.gripper_open_readout[0]
@@ -157,7 +161,7 @@ class BiARX5(Robot):
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        # X5 has 6 joints + 1 gripper
+        # ARX5 has 6 joints + 1 gripper
         joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
         return {f"left_{joint}.pos": float for joint in joint_names} | {
             f"right_{joint}.pos": float for joint in joint_names
@@ -288,32 +292,38 @@ class BiARX5(Robot):
 
         gain = self.left_arm.get_gain()
         logger.info(
-            f"Left arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
+            f"Current left arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
         )
         gain = self.right_arm.get_gain()
         logger.info(
-            f"Right arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
+            f"Current right arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
         )
         if self.config.inference_mode:
             self.set_to_normal_position_control()
-            logger.info("✓ Robot is now in normal position control mode for inference")
+            logger.info("✓ Robot is now in normal position control mode for inference or MASTER/VR teleoperation")
 
     @property
     def is_calibrated(self) -> bool:
+        """
+        ARX5 does not need to calibrate in runtime
+        """
         return self.is_connected
 
     def calibrate(self) -> None:
-        """X5 does not need to calibrate in runtime"""
-        logger.info("X5 does not need to calibrate in runtime, skip...")
+        """ARX5 does not need to calibrate in runtime"""
+        logger.info("ARX5 does not need to calibrate in runtime, skip...")
         return
 
     def configure(self) -> None:
+        """
+        Configure the robot
+        """
         pass
 
     def setup_motors(self) -> None:
-        """X5 motors use pre-configured IDs, no runtime setup needed"""
+        """ARX5 motors are pre-configured, no runtime setup needed"""
         logger.info(
-            f"{self} ARX5 motors use pre-configured IDs, no runtime setup needed"
+            f"{self} ARX5 motors are pre-configured, no runtime setup needed"
         )
         logger.info("Motor IDs are defined in the robot configuration:")
         logger.info("  - Joint motors: [1, 2, 4, 5, 6, 7]")
@@ -382,18 +392,20 @@ class BiARX5(Robot):
         # Left arm: use single get() call with fallback to avoid 'in' checks
         left_pos = left_cmd.pos()
         for i, key in enumerate(self._left_joint_keys):
+            # Keep previous value if key missing
             left_pos[i] = action.get(
                 key, left_pos[i]
-            )  # Keep previous value if key missing
+            )
 
         left_cmd.gripper_pos = action.get("left_gripper.pos", left_cmd.gripper_pos)
 
         # Right arm: same optimization
         right_pos = right_cmd.pos()
         for i, key in enumerate(self._right_joint_keys):
+            # Keep previous value if key missing
             right_pos[i] = action.get(
                 key, right_pos[i]
-            )  # Keep previous value if key missing
+            )
 
         right_cmd.gripper_pos = action.get("right_gripper.pos", right_cmd.gripper_pos)
 
