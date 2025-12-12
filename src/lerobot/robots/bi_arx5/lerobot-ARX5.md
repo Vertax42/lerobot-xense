@@ -42,12 +42,12 @@ if conda_prefix:
 2. **Install missing dependencies** (as noted in xensesdk README):
 
    ```bash
-    pip install scipy cypack cryptography pyudev PyOpenGL PyOpenGL-accelerate assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    pip install xensesdk==1.6.3 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install scipy cypack cryptography pyudev PyOpenGL PyOpenGL-accelerate assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install xensesdk==1.6.3 -i https://mirrors.huaweicloud.com/repository/pypi/simple
     conda install cuda-toolkit=12.9 -c nvidia
     conda install nvidia:cudnn cuda-version=12 -c nvidia
-    pip install onnxruntime-gpu==1.19.2
+    uv pip install onnxruntime-gpu==1.19.2
     mkdir -p $CONDA_PREFIX/etc/conda/activate.d && echo 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/lib64:$LD_LIBRARY_PATH' > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
    ```
 
