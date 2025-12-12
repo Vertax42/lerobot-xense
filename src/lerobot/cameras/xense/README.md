@@ -18,17 +18,17 @@ The Xense tactile sensor provides rich tactile-visual information including:
 1. **Install xensesdk** (follow manufacturer instructions):
    ```bash
    conda activate lerobot-openpi
-   pip install xensesdk
+   uv pip install xensesdk
    ```
 
 2. **Install missing dependencies** (as noted in xensesdk README):
    ```bash
-    pip install scipy cypack cryptography pyudev assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    pip install xensesdk==1.6.3 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install scipy cypack cryptography pyudev assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
+    uv pip install xensesdk==1.6.3 -i https://mirrors.huaweicloud.com/repository/pypi/simple
     conda install cuda-toolkit=12.9 -c nvidia
     conda install cudnn -c conda-forge -y
-    pip install onnxruntime-gpu==1.19.2
+    uv pip install onnxruntime-gpu==1.19.2
     export LD_LIBRARY_PATH=$CONDA_PREFIX/lib/:$LD_LIBRARY_PATH
    ```
 
@@ -265,13 +265,13 @@ XenseCameraConfig(
 
 ### Import Error: "No module named 'xensesdk'"
 ```bash
-pip install xensesdk
+uv pip install xensesdk
 ```
 
 ### Missing Dependencies
 Install all required packages:
 ```bash
-pip install cypack cryptography pyudev assimp_py==1.0.7 qtpy PyQt5 h5py lz4
+uv pip install cypack cryptography pyudev assimp_py==1.0.7 qtpy PyQt5 h5py lz4
 ```
 
 ### Sensor Not Found
