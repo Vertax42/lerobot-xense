@@ -79,7 +79,26 @@ def log_rerun_data(
                     for i, vi in enumerate(arr):
                         rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
                 else:
-                    rr.log(key, rr.Image(arr), static=True)
+                    # Depth images (2D arrays) should be logged as rr.DepthImage for correct visualization.
+                    # Heuristic:
+                    # - If key contains "depth" and the array is 2D (or single-channel 3D), treat as depth.
+                    # - Also treat "likely depth" arrays as depth even if the key doesn't include "depth"
+                    #   (e.g. some callers log a single xense output as "xense_camera").
+                    key_lower = str(key).lower()
+                    is_depth_shape = arr.ndim == 2 or (arr.ndim == 3 and arr.shape[-1] == 1)
+                    depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
+                    likely_depth = (
+                        is_depth_shape
+                        and isinstance(depth, np.ndarray)
+                        and (depth.dtype != np.uint8)
+                        and (np.nanmax(depth) > 255)  # typical depth maps exceed 8-bit range
+                    )
+
+                    if ("depth" in key_lower and is_depth_shape) or likely_depth:
+                        depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
+                        rr.log(key, rr.DepthImage(depth, meter=0.001, depth_range=(0.0, 0.1), colormap="turbo"), static=True)
+                    else:
+                        rr.log(key, rr.Image(arr), static=True)
 
     if action:
         for k, v in action.items():

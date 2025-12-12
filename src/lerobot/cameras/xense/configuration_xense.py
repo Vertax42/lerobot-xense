@@ -93,7 +93,8 @@ class XenseCameraConfig(CameraConfig):
     """
 
     serial_number: str
-    output_types: list[XenseOutputType] = None
+    # NOTE: we allow strings too (e.g. from CLI/YAML), and normalize them in __post_init__
+    output_types: list[XenseOutputType] | list[str] | None = None
     warmup_s: float = 0.5
     rectify_size: tuple[int, int] | None = None  # (width, height) for rectified images
     raw_size: tuple[int, int] | None = None  # (width, height) for raw sensor data
@@ -103,12 +104,35 @@ class XenseCameraConfig(CameraConfig):
         if self.output_types is None:
             self.output_types = [XenseOutputType.FORCE, XenseOutputType.FORCE_RESULTANT]
 
-        # Validate output types
+        # Normalize & validate output types (support strings from CLI)
+        normalized: list[XenseOutputType] = []
         for output_type in self.output_types:
-            if not isinstance(output_type, XenseOutputType):
-                raise ValueError(
-                    f"Invalid output_type: {output_type}. Must be a XenseOutputType enum."
-                )
+            if isinstance(output_type, XenseOutputType):
+                normalized.append(output_type)
+                continue
+            if isinstance(output_type, str):
+                # Accept "difference" / "DIFFERENCE" / "XenseOutputType.DIFFERENCE"
+                s = output_type.strip()
+                if s.startswith("XenseOutputType."):
+                    s = s.split(".", 1)[1]
+                s_lower = s.lower()
+                matched = None
+                for v in XenseOutputType:
+                    if v.value == s_lower or v.name.lower() == s_lower:
+                        matched = v
+                        break
+                if matched is None:
+                    raise ValueError(
+                        f"Invalid output_type: {output_type}. "
+                        f"Valid values: {[v.value for v in XenseOutputType]}"
+                    )
+                normalized.append(matched)
+                continue
+
+            raise ValueError(
+                f"Invalid output_type: {output_type}. Must be a XenseOutputType (or str)."
+            )
+        self.output_types = normalized
 
         # Set default FPS if not provided
         if self.fps is None:

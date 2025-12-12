@@ -109,6 +109,8 @@ class XenseTactileCamera(Camera):
         # Pre-build sensor output types list for better performance
         # This avoids reconstructing the mapping on every read() call
         self._sensor_output_types_cache = None
+        # Keep a key so changing output_types at runtime can invalidate cache
+        self._sensor_output_types_cache_key: tuple[XenseOutputType, ...] | None = None
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}({self.serial_number})"
@@ -214,7 +216,8 @@ class XenseTactileCamera(Camera):
 
         try:
             # Build sensor output types list (cached for performance)
-            if self._sensor_output_types_cache is None:
+            cache_key = tuple(self.output_types)
+            if self._sensor_output_types_cache is None or self._sensor_output_types_cache_key != cache_key:
                 # Map XenseOutputType to Sensor.OutputType
                 # Note: SDK uses CamelCase for OutputType attributes (e.g., Force, ForceResultant)
                 output_type_mapping = {
@@ -235,10 +238,13 @@ class XenseTactileCamera(Camera):
                     output_type_mapping[output_type]
                     for output_type in self.output_types
                 ]
+                self._sensor_output_types_cache_key = cache_key
 
             # Call selectSensorInfo with cached sensor output types
             # Returns: single np.ndarray if one arg, or tuple of np.ndarray if multiple args
             results = self.sensor.selectSensorInfo(*self._sensor_output_types_cache)
+            # for names, result in zip(self._sensor_output_types_cache, results):
+
 
             # image_outputs definition
             image_outputs = {
@@ -248,33 +254,88 @@ class XenseTactileCamera(Camera):
             }
 
             # DEBUG: Check if output type is in image_outputs
-            # print(f"DEBUG: output_type={self.output_types[0]}, in_image_outputs={self.output_types[0] in image_outputs}")
 
             if isinstance(results, tuple):
-                processed_results = []
+                # IMPORTANT: keep 1:1 correspondence with self.output_types
+                # (previously, non-image outputs were accidentally dropped)
+                processed_results: list[np.ndarray] = []
                 for i, output_type in enumerate(self.output_types):
                     data = results[i]
-                    if output_type in image_outputs and len(data.shape) >= 2:
-                        # Transpose to swap h and w dimensions
-                        data = np.transpose(
-                            data, (1, 0) + tuple(range(2, len(data.shape)))
-                        )
-                        processed_results.append(data)
+                    if output_type in image_outputs and getattr(data, "ndim", 0) >= 2:
+                        # Transpose to swap h and w dimensions:
+                        # - HWC -> WHC
+                        # - HW  -> WH
+                        data = np.transpose(data, (1, 0) + tuple(range(2, data.ndim)))
+                    if output_type == XenseOutputType.DEPTH:
+                        data = np.asarray(data) + np.float32(0.01)  # add 10mm to avoid log zero
+                    processed_results.append(data)
                 return tuple(processed_results)
             else:
                 # single output type
-                if self.output_types[0] in image_outputs and len(results.shape) >= 2:
+                if self.output_types[0] in image_outputs and getattr(results, "ndim", 0) >= 2:
                     # print(f"DEBUG: Transposing shape {results.shape}")
                     results = np.transpose(
-                        results, (1, 0) + tuple(range(2, len(results.shape)))
+                        results, (1, 0) + tuple(range(2, results.ndim))
                     )
-                    # print(f"DEBUG: Transposed shape {results.shape}")
+                if self.output_types[0] == XenseOutputType.DEPTH and results is not None:
+                    results = np.asarray(results) + np.float32(0.01)  # add 10mm to avoid log zero
                 return results
 
         except Exception as e:
             raise RuntimeError(f"{self} failed to read sensor data: {e}") from e
 
-    def read(self, color_mode=None) -> np.ndarray | tuple[np.ndarray, ...]:
+    def _format_read_result(
+        self, data: np.ndarray | tuple[np.ndarray, ...]
+    ) -> np.ndarray | dict[str, np.ndarray]:
+        """
+        Convert SDK output into a stable, developer-friendly structure.
+
+        - If exactly 1 output type is configured: return the single np.ndarray (backward-compatible).
+        - If multiple output types are configured: return a dict keyed by XenseOutputType.value.
+        """
+        # NOTE: Xense SDK (via OpenCV backend) returns image-like outputs as BGR.
+        # We convert to RGB here so downstream code can treat rectify/difference as RGB consistently.
+        # This is applied for both sync read() and async_read().
+        image_bgr_outputs = {
+            XenseOutputType.RECTIFY,
+            XenseOutputType.DIFFERENCE,
+        }
+
+        def _bgr_to_rgb_if_needed(output_type: XenseOutputType, arr: np.ndarray) -> np.ndarray:
+            if output_type not in image_bgr_outputs:
+                return arr
+            if not isinstance(arr, np.ndarray):
+                return arr
+            # Expect HWC/WHC with 3 channels.
+            if arr.ndim < 3 or arr.shape[-1] != 3:
+                return arr
+            # Swap last axis (BGR -> RGB). Make contiguous to avoid negative strides downstream.
+            return np.ascontiguousarray(arr[..., ::-1])
+
+        if len(self.output_types) == 1:
+            if isinstance(data, tuple):
+                # Defensive: SDK should not return tuple for a single requested output
+                data0 = data[0]
+                return _bgr_to_rgb_if_needed(self.output_types[0], data0)
+            return _bgr_to_rgb_if_needed(self.output_types[0], data)
+
+        # Multiple outputs -> dict in the same order as requested
+        if not isinstance(data, tuple):
+            # Defensive: SDK should return tuple when multiple outputs requested
+            return {self.output_types[0].value: _bgr_to_rgb_if_needed(self.output_types[0], data)}
+
+        if len(data) != len(self.output_types):
+            raise RuntimeError(
+                f"{self}: Internal error: SDK returned {len(data)} outputs but "
+                f"{len(self.output_types)} were requested ({self.output_types})."
+            )
+
+        return {
+            ot.value: _bgr_to_rgb_if_needed(ot, arr)
+            for ot, arr in zip(self.output_types, data, strict=True)
+        }
+
+    def read(self, color_mode=None) -> np.ndarray | dict[str, np.ndarray]:
         """
         Reads tactile data synchronously from the sensor.
 
@@ -299,11 +360,12 @@ class XenseTactileCamera(Camera):
         start_time = time.perf_counter()
 
         data = self._read_sensor_data()
+        formatted = self._format_read_result(data)
 
         read_duration_ms = (time.perf_counter() - start_time) * 1e3
         logger.debug(f"{self} read took: {read_duration_ms:.1f}ms")
 
-        return data
+        return formatted
 
     def _read_loop(self):
         """
@@ -366,9 +428,7 @@ class XenseTactileCamera(Camera):
         self.thread = None
         self.stop_event = None
 
-    def async_read(
-        self, timeout_ms: float = 200
-    ) -> np.ndarray | tuple[np.ndarray, ...]:
+    def async_read(self, timeout_ms: float = 200) -> np.ndarray | dict[str, np.ndarray]:
         """
         Reads the latest available data asynchronously.
 
@@ -417,7 +477,10 @@ class XenseTactileCamera(Camera):
                     f"Internal error: Event set but no data available for {self}."
                 )
 
-        return data
+        if data is None:
+            raise RuntimeError(f"Internal error: Event set but no data available for {self}.")
+
+        return self._format_read_result(data)
 
     def disconnect(self):
         """
