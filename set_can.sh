@@ -1,112 +1,112 @@
 #!/bin/bash
 
-# ARX5 CAN接口配置脚本
-# 功能：配置 can1, can3 接口为 1000000 波特率并启动
+# bash scripts for ARX5 CAN interface configuration
+# function: configure can1, can3 interface to 1000000 baud rate and start
 
-echo "=== ARX5 CAN接口配置脚本 ==="
-echo "配置接口: can1, can3"
-echo "波特率: 1000000 bps"
-echo "================================"
+echo "=== ARX5 CAN interface configuration script ==="
+echo "Interface: can1, can3"
+echo "Baud rate: 1000000 bps"
+echo "================================================"
 
-# 停止占用CAN接口的进程
-echo "停止占用CAN接口的进程..."
-echo "检查并停止slcand进程..."
+# stop the processes that occupy the CAN interface
+echo "Stopping the processes that occupy the CAN interface..."
+echo "Checking and stopping slcand process..."
 
-# 检查并停止slcand进程
+# check and stop slcand process
 if pgrep slcand >/dev/null 2>&1; then
-    echo "发现slcand进程，正在停止..."
+    echo "slcand process found, stopping..."
     sudo pkill slcand
     sleep 1
     
-    # 验证进程是否已停止
+    # verify if the process has been stopped
     if pgrep slcand >/dev/null 2>&1; then
-        echo "警告: slcand进程仍在运行，尝试强制停止..."
+        echo "Warning: slcand process is still running, trying to force stop..."
         sudo pkill -9 slcand
         sleep 1
     fi
     
     if ! pgrep slcand >/dev/null 2>&1; then
-        echo "✓ slcand进程已成功停止"
+        echo "✓ slcand process has been successfully stopped"
     else
-        echo "✗ 无法停止slcand进程，请手动检查"
+        echo "✗ cannot stop slcand process, please check manually"
     fi
 else
-    echo "✓ 未发现slcand进程"
+    echo "✓ slcand process not found"
 fi
 
-# 检查并停止arx_can相关进程
-echo "检查并停止arx_can相关进程..."
+# check and stop arx_can related processes
+echo "Checking and stopping arx_can related processes..."
 if pgrep -f "arx_can.*\.sh" >/dev/null 2>&1; then
-    echo "发现arx_can脚本进程，正在停止..."
+    echo "arx_can script process found, stopping..."
     sudo pkill -f "arx_can.*\.sh"
     sleep 1
     
     if ! pgrep -f "arx_can.*\.sh" >/dev/null 2>&1; then
-        echo "✓ arx_can脚本进程已成功停止"
+        echo "✓ arx_can script process has been successfully stopped"
     else
-        echo "✗ 无法停止arx_can脚本进程，请手动检查"
+        echo "✗ cannot stop arx_can script process, please check manually"
     fi
 else
-    echo "✓ 未发现arx_can脚本进程"
+    echo "✓ arx_can script process not found"
 fi
 
 echo ""
 
-# 使用SLCAN方法配置CAN接口
-echo "使用SLCAN方法配置CAN接口..."
+# use SLCAN method to configure CAN interface
+echo "Using SLCAN method to configure CAN interface..."
 
-# 函数：使用SLCAN方法配置单个CAN接口
+# function: use SLCAN method to configure single CAN interface
 configure_slcan_interface() {
     local device=$1
     local interface=$2
     
-    echo "配置 $interface 接口 (设备: $device)..."
+    echo "Configuring $interface interface (device: $device)..."
     
-    # 检查设备是否存在
+    # check if the device exists
     if [ ! -e "$device" ]; then
-        echo "  ✗ 设备 $device 不存在，跳过"
+        echo "  ✗ device $device does not exist, skipping"
         return 1
     fi
     
-    # 使用slcand命令创建CAN接口
-    echo "  使用slcand创建 $interface 接口..."
+    # use slcand command to create CAN interface
+    echo "  creating $interface interface using slcand..."
     if sudo slcand -o -f -s8 "$device" "$interface" 2>/dev/null; then
-        echo "  ✓ slcand创建 $interface 成功"
+        echo "  ✓ slcand created $interface successfully"
     else
-        echo "  ✗ slcand创建 $interface 失败"
+        echo "  ✗ slcand created $interface failed"
         return 1
     fi
     
-    # 等待接口创建
+    # wait for interface creation
     sleep 1
     
-    # 启动接口
-    echo "  启动 $interface..."
+    # start interface
+    echo "  starting $interface..."
     if sudo ifconfig "$interface" up 2>/dev/null; then
-        echo "  ✓ $interface 启动成功"
+        echo "  ✓ $interface started successfully"
     else
-        echo "  ✗ $interface 启动失败"
+        echo "  ✗ $interface started failed"
         return 1
     fi
     
-    # 验证配置
+    # verify configuration
     if ip link show "$interface" >/dev/null 2>&1; then
         local current_state=$(ip -details link show "$interface" | grep -o "state [A-Z-]*" | cut -d' ' -f2)
-        echo "  ✓ $interface 配置验证成功 (状态: $current_state, 波特率: 1000000 bps via SLCAN)"
+        echo "  ✓ $interface configuration verified successfully (state: $current_state, baud rate: 1000000 bps via SLCAN)"
         return 0
     else
-        echo "  ✗ $interface 配置验证失败"
+        echo "  ✗ $interface configuration verified failed"
         return 1
     fi
 }
 
-# 配置所有CAN接口
+# configure all CAN interfaces
 devices=("/dev/arxcan1" "/dev/arxcan3")
 interfaces=("can1" "can3")
 success_count=0
 total_count=${#interfaces[@]}
 
-echo "开始配置 $total_count 个CAN接口..."
+echo "Starting to configure $total_count CAN interfaces..."
 for i in "${!interfaces[@]}"; do
     echo ""
     if configure_slcan_interface "${devices[$i]}" "${interfaces[$i]}"; then
@@ -115,23 +115,23 @@ for i in "${!interfaces[@]}"; do
 done
 
 echo "================================"
-echo "配置完成!"
-echo "成功配置: $success_count/$total_count 个接口"
+echo "Configuration completed!"
+echo "Successfully configured: $success_count/$total_count interfaces"
 
 if [ $success_count -eq $total_count ]; then
-    echo "✓ 所有CAN接口配置成功"
+    echo "✓ All CAN interfaces configured successfully"
     echo ""
-    echo "当前CAN接口状态:"
+    echo "Current CAN interface status:"
     for interface in "${interfaces[@]}"; do
         if ip link show "$interface" >/dev/null 2>&1; then
             bitrate=$(ip -details link show "$interface" | grep -o "bitrate [0-9]*" | cut -d' ' -f2)
             state=$(ip -details link show "$interface" | grep -o "state [A-Z-]*" | cut -d' ' -f2)
-            echo "  $interface: 波特率=$bitrate, 状态=$state"
+            echo "  $interface: baud rate=$bitrate, state=$state"
         fi
     done
     exit 0
 else
-    echo "✗ 部分CAN接口配置失败"
-    echo "请检查接口是否存在或是否有其他进程占用"
+    echo "✗ some CAN interfaces configuration failed"
+    echo "Please check if the interface exists or if there are other processes occupying it"
     exit 1
 fi
