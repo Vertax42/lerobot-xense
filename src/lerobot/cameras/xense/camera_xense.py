@@ -31,6 +31,67 @@ from .configuration_xense import XenseCameraConfig, XenseOutputType
 
 logger = logging.getLogger(__name__)
 
+_CTYPES_FIND_LIBRARY_UDEV_PATCHED = False
+
+
+def _patch_ctypes_find_library_for_udev() -> None:
+    """
+    Work around a conda-specific issue where `ctypes.util.find_library("udev")`
+    can incorrectly resolve to `$CONDA_PREFIX/lib/udev/` (a directory), causing
+    `pyudev` (and therefore `xensesdk`) to fail with:
+        OSError: .../lib/udev: ... Is a directory
+
+    We patch `ctypes.util.find_library` to return the real `libudev.so.1` path
+    when resolving "udev".
+    """
+
+    global _CTYPES_FIND_LIBRARY_UDEV_PATCHED
+    if _CTYPES_FIND_LIBRARY_UDEV_PATCHED:
+        return
+
+    import ctypes.util
+    import os
+    import subprocess
+
+    orig_find_library = ctypes.util.find_library
+
+    def _resolve_libudev_path() -> str | None:
+        # Prefer ldconfig (most robust on Linux)
+        try:
+            out = subprocess.check_output(
+                ["/sbin/ldconfig", "-p"], text=True, stderr=subprocess.DEVNULL
+            )
+            for line in out.splitlines():
+                if "libudev.so.1" in line and "=>" in line:
+                    candidate = line.split("=>", 1)[1].strip()
+                    if os.path.exists(candidate):
+                        return candidate
+        except Exception:
+            pass
+
+        # Common fallbacks (Ubuntu/Debian)
+        for candidate in (
+            "/lib/x86_64-linux-gnu/libudev.so.1",
+            "/usr/lib/x86_64-linux-gnu/libudev.so.1",
+        ):
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    def patched_find_library(name: str):  # noqa: ANN001 - match ctypes util signature
+        if name != "udev":
+            return orig_find_library(name)
+
+        resolved = orig_find_library(name)
+        if resolved is None or os.path.isdir(resolved):
+            fixed = _resolve_libudev_path()
+            if fixed is not None:
+                return fixed
+        return resolved
+
+    ctypes.util.find_library = patched_find_library
+    _CTYPES_FIND_LIBRARY_UDEV_PATCHED = True
+
 
 class XenseTactileCamera(Camera):
     """
@@ -134,6 +195,7 @@ class XenseTactileCamera(Camera):
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
         try:
+            _patch_ctypes_find_library_for_udev()
             # Use default OpenCV backend (no api parameter = CV2_V4L2)
             self.sensor = self._Sensor.create(
                 self.serial_number,
@@ -172,6 +234,7 @@ class XenseTactileCamera(Camera):
             where each dictionary contains 'type', 'serial_number', and other info.
         """
         try:
+            _patch_ctypes_find_library_for_udev()
             from xensesdk import Sensor
 
             # Get available devices - returns dict like {'OG000352': 10, 'OG000344': 8}

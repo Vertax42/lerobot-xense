@@ -5,6 +5,12 @@ from xensesdk import CameraSource
 
 
 def main():
+    # Work around conda environments that ship `$CONDA_PREFIX/lib/udev/` (a directory),
+    # which can break `pyudev` and therefore `xensesdk` device scanning.
+    from lerobot.cameras.xense.camera_xense import _patch_ctypes_find_library_for_udev
+
+    _patch_ctypes_find_library_for_udev()
+
     # Import torch to initialize CUDA runtime before xensesdk
     # This is critical for onnxruntime GPU detection
     try:

@@ -15,7 +15,8 @@ dependencies:
   - boost
   - spdlog
   - pybind11
-  - numpy
+  - numpy=1.26.4
+  - wheel
   - click
   - pyzmq
   - pynput

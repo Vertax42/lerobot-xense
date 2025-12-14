@@ -73,9 +73,9 @@ def test(
                 # marker output: [marker_2d]
                 # mesh output: [mesh_3d, mesh_3d_init, mesh_3d_flow]
             ),
-            "realsense_camera": RealSenseCameraConfig(
-                serial_number_or_name="230422271416", fps=60, width=640, height=480
-            ),
+            # "realsense_camera": RealSenseCameraConfig(
+            #     serial_number_or_name="230422271416", fps=60, width=640, height=480
+            # ),
         }
 
         _, _, robot_observation_processor = make_default_processors()

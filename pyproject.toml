@@ -13,7 +13,8 @@
 # limitations under the License.
 
 [build-system]
-requires = ["setuptools"]
+# PEP 660 editable installs require setuptools with `build_editable`.
+requires = ["setuptools>=71.0.0,<81.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project.urls]
@@ -92,8 +93,8 @@ dependencies = [
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
 
-    # xensesdk dependencies
-    "xensesdk==1.7.0",
+    # NOTE: xensesdk requires numpy<=1.26.4 but rerun-sdk requires numpy>=2
+    # xensesdk is installed separately with --no-deps in setup_env.sh
 ]
 
 # Optional dependencies
@@ -230,6 +231,11 @@ lerobot-test = "lerobot.scripts.lerobot_test:main"
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.uv]
+# NOTE: xensesdk currently requires NumPy <= 1.26.4, while rerun-sdk declares NumPy >= 2.
+# We intentionally override NumPy here to keep the Xense stack working in a single environment.
+override-dependencies = ["numpy==1.26.4"]
 
 [tool.ruff]
 target-version = "py310"
