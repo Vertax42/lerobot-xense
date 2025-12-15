@@ -94,7 +94,7 @@ dependencies = [
     "termcolor>=2.4.0,<4.0.0",
 
     # NOTE: xensesdk requires numpy<=1.26.4 but rerun-sdk requires numpy>=2
-    # xensesdk is installed separately with --no-deps in setup_env.sh
+    # xensesdk is installed separately with --no-deps in setup_env.sh"
 ]
 
 # Optional dependencies

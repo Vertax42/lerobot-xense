@@ -29,6 +29,9 @@ def init_rerun(session_name: str = "lerobot_control_loop") -> None:
     rr.init(session_name)
     memory_limit = os.getenv("LEROBOT_RERUN_MEMORY_LIMIT", "10%")
     rr.spawn(memory_limit=memory_limit)
+    # NOTE: We do NOT send a fixed blueprint here. This lets Rerun auto-discover
+    # all logged entity paths and create views dynamically. If a static blueprint
+    # is sent, changing stream names (e.g. depth -> rectify) won't update the view.
 
 
 def _is_scalar(x):
@@ -82,23 +85,24 @@ def log_rerun_data(
                     # Depth images (2D arrays) should be logged as rr.DepthImage for correct visualization.
                     # Heuristic:
                     # - If key contains "depth" and the array is 2D (or single-channel 3D), treat as depth.
-                    # - Also treat "likely depth" arrays as depth even if the key doesn't include "depth"
-                    #   (e.g. some callers log a single xense output as "xense_camera").
+                    # - Also treat "likely depth" arrays as depth even if the key doesn't include "depth":
+                    #   2D float32/float64 arrays are likely depth (RGB images are uint8 HWC 3-channel).
                     key_lower = str(key).lower()
                     is_depth_shape = arr.ndim == 2 or (arr.ndim == 3 and arr.shape[-1] == 1)
                     depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
                     likely_depth = (
                         is_depth_shape
                         and isinstance(depth, np.ndarray)
-                        and (depth.dtype != np.uint8)
-                        and (np.nanmax(depth) > 255)  # typical depth maps exceed 8-bit range
+                        and depth.dtype in (np.float32, np.float64)  # float 2D = likely depth
                     )
 
+                    # IMPORTANT: these are typically streaming observations. Do not log them as
+                    # static/timeless, otherwise the Rerun viewer won't update on new frames.
                     if ("depth" in key_lower and is_depth_shape) or likely_depth:
                         depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
-                        rr.log(key, rr.DepthImage(depth, meter=0.001, depth_range=(0.0, 0.1), colormap="turbo"), static=True)
+                        rr.log(key, rr.DepthImage(depth, meter=0.001, depth_range=(0.0, 0.1), colormap="turbo"))
                     else:
-                        rr.log(key, rr.Image(arr), static=True)
+                        rr.log(key, rr.Image(arr))
 
     if action:
         for k, v in action.items():

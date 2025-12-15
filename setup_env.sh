@@ -168,6 +168,35 @@ elif [[ "$1" == "--install" ]]; then
         echo "[ERROR] Lerobot installation failed. See the error output above."
         exit 1
     fi
+    echo "[INFO] Installing xensesdk..."
+    if uv pip install xensesdk==1.6.5 --no-deps; then
+        echo "[INFO] xensesdk installed successfully!"
+
+        # Workaround:
+        # After installing xensesdk, remove OpenCV's bundled Qt platform plugin if present.
+        # This avoids Qt/XCB plugin loading issues inside conda environments.
+        if [[ -n "${CONDA_PREFIX}" ]]; then
+            PY_VER="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+            QXCB_PATH="${CONDA_PREFIX}/lib/python${PY_VER}/site-packages/cv2/qt/plugins/platforms/libqxcb.so"
+            QXCB_PATH_310="${CONDA_PREFIX}/lib/python3.10/site-packages/cv2/qt/plugins/platforms/libqxcb.so"
+
+            if [[ -f "$QXCB_PATH" ]]; then
+                echo "[INFO] Removing OpenCV Qt plugin: $QXCB_PATH"
+                rm -f "$QXCB_PATH"
+            elif [[ -f "$QXCB_PATH_310" ]]; then
+                echo "[INFO] Removing OpenCV Qt plugin: $QXCB_PATH_310"
+                rm -f "$QXCB_PATH_310"
+            else
+                echo "[INFO] OpenCV Qt plugin (libqxcb.so) not found; skipping removal."
+            fi
+        else
+            echo "[WARN] CONDA_PREFIX is not set; cannot remove OpenCV Qt plugin."
+        fi
+
+    else
+        echo "[ERROR] xensesdk installation failed. See the error output above."
+        exit 1
+    fi
     exit 0
 else
     echo "Invalid argument. Usage:"

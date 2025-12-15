@@ -67,15 +67,15 @@ def test(
             "xense_camera": XenseCameraConfig(
                 serial_number="OG000456",
                 fps=30,
-                output_types=["depth"],
+                output_types=["difference"],
                 # image output: [rectify, difference, depth]
                 # force output: [force, force_norm, force_resultant]
                 # marker output: [marker_2d]
                 # mesh output: [mesh_3d, mesh_3d_init, mesh_3d_flow]
             ),
-            # "realsense_camera": RealSenseCameraConfig(
-            #     serial_number_or_name="230422271416", fps=60, width=640, height=480
-            # ),
+            "realsense_camera": RealSenseCameraConfig(
+                serial_number_or_name="230422271416", fps=60, width=640, height=480
+            ),
         }
 
         _, _, robot_observation_processor = make_default_processors()
@@ -118,19 +118,9 @@ def test(
                     for out_k, out_v in data.items():
                         obs_dict[f"{cam_key}.{out_k}"] = out_v
                 else:
-                    # If the camera instance exposes a single configured output type (e.g. Xense),
-                    # include it in the key so downstream (e.g. visualization) can distinguish
-                    # "xense_camera.depth" vs "xense_camera.rectify" etc.
-                    out_key = cam_key
-                    try:
-                        out_types = getattr(cam, "output_types", None)
-                        if isinstance(out_types, list) and len(out_types) == 1:
-                            ot0 = out_types[0]
-                            suffix = getattr(ot0, "value", None) or str(ot0)
-                            out_key = f"{cam_key}.{suffix}"
-                    except Exception:
-                        pass
-                    obs_dict[out_key] = data
+                    # Single output: use fixed key (cam_key) so Rerun viewer doesn't need
+                    # manual adjustment when switching output_types between runs.
+                    obs_dict[cam_key] = data
                 camera_times[cam_key] = dt_ms
 
             total_dt_ms = (time.perf_counter() - t0) * 1e3
