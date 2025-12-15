@@ -12,6 +12,16 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
+```python
+lerobot-teleoperate \
+    --robot.type=arx5_follower \
+    --robot.enable_tactile_sensors=false \
+    --teleop.type=mock_teleop \
+    --fps=30 \
+    --debug_timing=false \
+    --display_data=true
+```
+
 ## BiARX5 Robot lerobot-record command
 
 ```python

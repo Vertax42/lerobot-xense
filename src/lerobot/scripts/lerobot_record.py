@@ -97,6 +97,7 @@ from lerobot.processor.rename_processor import rename_stats
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    arx5_follower,
     bi_so100_follower,
     bi_arx5,
     hope_jr,

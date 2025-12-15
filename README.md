@@ -4,7 +4,7 @@
 
 ## 🔧 Installation
 
-We strongly recommend using [`Mamba`](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install) to manage your conda environments. You can also use conda, but it will take significantly longer. Due to the xensesdk dependencies, lerobot-xense works only with python 3.10 and pytorch 2.7.1+ with cuda-12.8 right now.
+This repository is tested on Ubuntu 22.04, NVIDIA Unix Driver Archive >= 570.144. We strongly recommend using [`Mamba`](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install) to manage your conda environments. You can also use conda, but it will take significantly longer. Due to the xensesdk dependencies, lerobot-xense works only with python 3.10 and pytorch 2.7.1+ with cuda-12.8 right now.
 
 ### 📦 Environment Setup
 
@@ -22,11 +22,17 @@ ffmpeg -encoders | grep libsvtav1
 ```
 
 
-### 📊 Weights & Biases
+## 📊 Weights & Biases
 
-(note: you will also need to enable WandB in the configuration. See below.)
+To use Weights and Biases for experiment tracking, log in with:
 
-### 👀 Visualize datasets
+```bash
+wandb login
+```
+
+**Note:** You will also need to enable WandB in the configuration. See below.
+
+## 👀 Visualize datasets
 
 Check out [example 1](https://github.com/huggingface/lerobot/blob/main/examples/dataset/load_lerobot_dataset.py) that illustrates how to use our dataset class which automatically downloads data from the Hugging Face hub.
 
@@ -50,7 +56,7 @@ lerobot-dataset-viz \
 
 Our script can also visualize datasets stored on a distant server. See `lerobot-dataset-viz --help` for more instructions.
 
-### 🔑 The `LeRobotDataset` format
+## 🔑 The `LeRobotDataset` format
 
 A dataset in `LeRobotDataset` format is very simple to use. It can be loaded from a repository on the Hugging Face hub or a local folder simply with e.g. `dataset = LeRobotDataset("lerobot/aloha_static_coffee")` and can be indexed into like any Hugging Face and PyTorch dataset. For instance `dataset[0]` will retrieve a single temporal frame from the dataset containing observation(s) and an action as PyTorch tensors ready to be fed to a model.
 
@@ -106,7 +112,7 @@ A `LeRobotDataset` is serialised using several widespread file formats for each 
 
 Dataset can be uploaded/downloaded from the HuggingFace hub seamlessly. To work on a local dataset, you can specify its location with the `root` argument if it's not in the default `~/.cache/huggingface/lerobot` location.
 
-### Acknowledgment
+## Acknowledgment
 
 - The LeRobot team 🤗 for building SmolVLA [Paper](https://arxiv.org/abs/2506.01844), [Blog](https://huggingface.co/blog/smolvla).
 - Thanks to Tony Zhao, Zipeng Fu and colleagues for open sourcing ACT policy, ALOHA environments and datasets. Ours are adapted from [ALOHA](https://tonyzhaozh.github.io/aloha) and [Mobile ALOHA](https://mobile-aloha.github.io).

@@ -67,7 +67,7 @@ def test(
             "xense_camera": XenseCameraConfig(
                 serial_number="OG000456",
                 fps=30,
-                output_types=["difference"],
+                output_types=["force_resultant"],
                 # image output: [rectify, difference, depth]
                 # force output: [force, force_norm, force_resultant]
                 # marker output: [marker_2d]
@@ -191,9 +191,30 @@ def test(
 
     elif device == "spacemouse":
         from lerobot.teleoperators.spacemouse import SpacemouseTeleop
-        teleop = SpacemouseTeleop()
+        from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
+        config = SpacemouseConfig(
+            pos_sensitivity=0.8,
+            ori_sensitivity=1.5,
+            deadzone=0.0,
+            max_value=500,
+            frequency=200,
+            filter_window_size=3,
+        )
+
+        teleop = SpacemouseTeleop(config)
+        logger.info("Connecting to spacemouse...")
         teleop.connect()
-        teleop.disconnect()
+        logger.info("Connected to spacemouse.")
+        try:
+            while True:
+                action = teleop.get_action()
+                logger.info(f"Action: {action}")
+                time.sleep(1 / 200)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            logger.info("Disconnecting from spacemouse...")
+            teleop.disconnect()
     elif device == "pico4":
         from lerobot.teleoperators.pico4 import Pico4
         teleop = Pico4()

@@ -75,6 +75,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    arx5_follower,
     bi_so100_follower,
     bi_arx5,
     hope_jr,
@@ -95,9 +96,9 @@ from lerobot.teleoperators import (  # noqa: F401
     so101_leader,
 )
 
-# Import mock_teleop to make it available for CLI
+# Import mock_teleop and spacemouse to make them available for CLI
 from lerobot.teleoperators.mock_teleop import MockTeleopConfig  # noqa: F401
-
+from lerobot.teleoperators.spacemouse import SpacemouseConfig  # noqa: F401
 
 from lerobot.utils.import_utils import register_third_party_devices
 from lerobot.utils.robot_utils import busy_wait
@@ -200,7 +201,7 @@ def teleop_loop(
             return
 
 
-def bi_arx5_teleop_loop(
+def arx5_teleop_loop(
     robot: Robot,
     fps: int,
     teleop_action_processor: RobotProcessorPipeline[
@@ -217,9 +218,15 @@ def bi_arx5_teleop_loop(
     debug_timing: bool = False,
 ):
     """
-    This function continuously reads actions from a teleoperation device, processes them through optional
-    pipelines, sends them to a robot, and optionally displays the robot's state. The loop runs at a
+    Teleop loop for ARX5 robots (both single-arm and bimanual).
+
+    This function continuously reads robot state, processes observations through optional
+    pipelines, and optionally displays the robot's state. The loop runs at a
     specified frequency until a set duration is reached or it is manually interrupted.
+
+    Supports:
+    - Single arm mode (arx5_follower): robot.arm
+    - Bimanual mode (bi_arx5): robot.left_arm, robot.right_arm
     """
     start = time.perf_counter()
     timing_stats = {
@@ -228,6 +235,14 @@ def bi_arx5_teleop_loop(
         "total_obs_times": [],
         "loop_times": [],
     }
+
+    # Detect arm mode: single arm vs bimanual
+    is_bimanual = hasattr(robot, "left_arm") and hasattr(robot, "right_arm")
+    is_single_arm = hasattr(robot, "arm") and not is_bimanual
+
+    if not is_bimanual and not is_single_arm:
+        raise ValueError("Robot must have either 'arm' (single) or 'left_arm'/'right_arm' (bimanual)")
+
     # Identify camera keys
     camera_keys = [
         key for key in robot.observation_features.keys() if not key.endswith(".pos")
@@ -244,9 +259,11 @@ def bi_arx5_teleop_loop(
         # Get robot state (joints) timing
         robot_state_start = time.perf_counter()
 
-        if hasattr(robot, "left_arm") and hasattr(robot, "right_arm"):
+        if is_bimanual:
             left_joint_state = robot.left_arm.get_joint_state()
             right_joint_state = robot.right_arm.get_joint_state()
+        else:  # single arm
+            joint_state = robot.arm.get_joint_state()
 
         robot_obs_time = time.perf_counter() - robot_state_start
         timing_stats["robot_obs_times"].append(robot_obs_time * 1000)  # Convert to ms
@@ -265,19 +282,28 @@ def bi_arx5_teleop_loop(
 
         total_camera_time = time.perf_counter() - camera_obs_start
         total_camera_time_ms = total_camera_time * 1000
+
         # Build complete observation dict (similar to robot.get_observation())
         raw_observation = {}
 
-        # Add robot joint observations
-        left_pos = left_joint_state.pos().copy()
-        for i in range(6):
-            raw_observation[f"left_joint_{i+1}.pos"] = float(left_pos[i])
-        raw_observation["left_gripper.pos"] = float(left_joint_state.gripper_pos)
+        if is_bimanual:
+            # Add left arm joint observations
+            left_pos = left_joint_state.pos().copy()
+            for i in range(6):
+                raw_observation[f"left_joint_{i+1}.pos"] = float(left_pos[i])
+            raw_observation["left_gripper.pos"] = float(left_joint_state.gripper_pos)
 
-        right_pos = right_joint_state.pos().copy()
-        for i in range(6):
-            raw_observation[f"right_joint_{i+1}.pos"] = float(right_pos[i])
-        raw_observation["right_gripper.pos"] = float(right_joint_state.gripper_pos)
+            # Add right arm joint observations
+            right_pos = right_joint_state.pos().copy()
+            for i in range(6):
+                raw_observation[f"right_joint_{i+1}.pos"] = float(right_pos[i])
+            raw_observation["right_gripper.pos"] = float(right_joint_state.gripper_pos)
+        else:  # single arm
+            # Add single arm joint observations
+            pos = joint_state.pos().copy()
+            for i in range(6):
+                raw_observation[f"joint_{i+1}.pos"] = float(pos[i])
+            raw_observation["gripper.pos"] = float(joint_state.gripper_pos)
 
         # Add camera observations
         raw_observation.update(camera_observations)
@@ -307,43 +333,60 @@ def bi_arx5_teleop_loop(
 
             # Only show motor data if NOT in debug_timing mode (to avoid conflicts)
             if not debug_timing:
-                # Separate left and right arm data for two-column display
-                left_motors = {
-                    k: v for k, v in raw_action.items() if k.startswith("left_")
-                }
-                right_motors = {
-                    k: v for k, v in raw_action.items() if k.startswith("right_")
-                }
+                if is_bimanual:
+                    # Separate left and right arm data for two-column display
+                    left_motors = {
+                        k: v for k, v in raw_action.items() if k.startswith("left_")
+                    }
+                    right_motors = {
+                        k: v for k, v in raw_action.items() if k.startswith("right_")
+                    }
 
-                # Calculate column width
-                col_width = 25
+                    # Calculate column width
+                    col_width = 25
 
-                # Print header
-                print("\n" + "-" * (col_width * 2 + 3))
-                print(f"{'LEFT ARM':<{col_width}} | {'RIGHT ARM':<{col_width}}")
-                print("-" * (col_width * 2 + 3))
+                    # Print header
+                    print("\n" + "-" * (col_width * 2 + 3))
+                    print(f"{'LEFT ARM':<{col_width}} | {'RIGHT ARM':<{col_width}}")
+                    print("-" * (col_width * 2 + 3))
 
-                # Display motors side by side
-                max_motors = max(len(left_motors), len(right_motors))
-                left_items = list(left_motors.items())
-                right_items = list(right_motors.items())
+                    # Display motors side by side
+                    max_motors = max(len(left_motors), len(right_motors))
+                    left_items = list(left_motors.items())
+                    right_items = list(right_motors.items())
 
-                for i in range(max_motors):
-                    left_str = ""
-                    right_str = ""
+                    for i in range(max_motors):
+                        left_str = ""
+                        right_str = ""
 
-                    if i < len(left_items):
-                        motor_name = left_items[i][0].replace("left_", "")
-                        left_str = f"{motor_name}: {left_items[i][1]:>6.2f}"
+                        if i < len(left_items):
+                            motor_name = left_items[i][0].replace("left_", "")
+                            left_str = f"{motor_name}: {left_items[i][1]:>6.2f}"
 
-                    if i < len(right_items):
-                        motor_name = right_items[i][0].replace("right_", "")
-                        right_str = f"{motor_name}: {right_items[i][1]:>6.2f}"
+                        if i < len(right_items):
+                            motor_name = right_items[i][0].replace("right_", "")
+                            right_str = f"{motor_name}: {right_items[i][1]:>6.2f}"
 
-                    print(f"{left_str:<{col_width}} | {right_str:<{col_width}}")
+                        print(f"{left_str:<{col_width}} | {right_str:<{col_width}}")
 
-                # Move cursor up: 1 blank line + 1 top line + 1 header + 1 separator + max_motors data lines
-                move_cursor_up(max_motors + 4)
+                    # Move cursor up: 1 blank line + 1 top line + 1 header + 1 separator + max_motors data lines
+                    move_cursor_up(max_motors + 4)
+                else:  # single arm
+                    # Single column display for single arm
+                    col_width = 20
+
+                    # Print header
+                    print("\n" + "-" * (col_width + 12))
+                    print(f"{'JOINT':<{col_width}} | {'VALUE':>7}")
+                    print("-" * (col_width + 12))
+
+                    # Display motors
+                    motor_items = list(raw_action.items())
+                    for motor, value in motor_items:
+                        print(f"{motor:<{col_width}} | {value:>7.3f}")
+
+                    # Move cursor up
+                    move_cursor_up(len(motor_items) + 4)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -429,9 +472,10 @@ def teleoperate(cfg: TeleoperateConfig):
     if cfg.display_data:
         init_rerun(session_name="teleoperation")
 
-    # Check if this is BiARX5 robot
-    if cfg.robot.type == "bi_arx5":
-        logging.info("Detected BiARX5 robot, using specialized teleop loop")
+    # Check if this is ARX5 robot (single arm or bimanual)
+    if cfg.robot.type in ("bi_arx5", "arx5_follower"):
+        mode = "bimanual" if cfg.robot.type == "bi_arx5" else "single-arm"
+        logging.info(f"Detected ARX5 robot ({mode}), using specialized teleop loop")
 
         # Create robot instance
         robot = make_robot_from_config(cfg.robot)
@@ -440,7 +484,7 @@ def teleoperate(cfg: TeleoperateConfig):
             make_default_processors()
         )
         try:
-            bi_arx5_teleop_loop(
+            arx5_teleop_loop(
                 robot=robot,
                 fps=cfg.fps,
                 display_data=cfg.display_data,

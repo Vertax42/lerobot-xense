@@ -13,10 +13,10 @@ pip install opencv-python-headless==4.9.0.80 -->
 sudo setcap cap_sys_nice+ep $(readlink -f $(which python))
 
 # C++ ABI version issue
-/home/vertax/miniconda3/envs/lerobot-openpi/lib/python3.11/site-packages/sitecustomize.py
+/home/vertax/miniconda3/envs/${CONDA_PREFIX}/lib/${python_version}/site-packages/sitecustomize.py
 ```python
 """
-Sitecustomize for lerobot-openpi environment.
+Sitecustomize for conda environment.
 
 This file is automatically executed when Python starts.
 It preloads the conda environment's libstdc++.so.6 to ensure C++ extensions
@@ -36,21 +36,6 @@ if conda_prefix:
             # Silently fail if preloading doesn't work
             pass
 ```
-
-# Xense SDK
-
-2. **Install missing dependencies** (as noted in xensesdk README):
-
-   ```bash
-    uv pip install scipy cypack cryptography pyudev PyOpenGL PyOpenGL-accelerate assimp_py==1.0.7 qtpy PyQt5 h5py lz4 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    uv pip install cyclonedds-nightly==2025.7.29 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    uv pip install xensesdk==1.6.3 -i https://mirrors.huaweicloud.com/repository/pypi/simple
-    conda install cuda-toolkit=12.9 -c nvidia
-    conda install nvidia:cudnn cuda-version=12 -c nvidia
-    uv pip install onnxruntime-gpu==1.19.2
-    mkdir -p $CONDA_PREFIX/etc/conda/activate.d && echo 'export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$CONDA_PREFIX/lib64:$LD_LIBRARY_PATH' > $CONDA_PREFIX/etc/conda/activate.d/env_vars.sh
-   ```
-
 
 # ARX_X5 CAN Bus Diagram
 

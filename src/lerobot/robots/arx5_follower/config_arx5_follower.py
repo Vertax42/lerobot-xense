@@ -50,6 +50,7 @@ class ARX5FollowerConfig(RobotConfig):
 
     # Gripper calibration
     gripper_open_readout: float = -3.4
+    enable_tactile_sensors: bool = False
 
     # Position settings
     home_position: list[float] = field(
@@ -64,18 +65,19 @@ class ARX5FollowerConfig(RobotConfig):
 
     def __post_init__(self):
         # Default camera configuration if not provided
-        if not self.cameras:
-            self.cameras = {
-                "head": RealSenseCameraConfig(
-                    serial_number_or_name="230322271365",
-                    fps=60,
-                    width=640,
-                    height=480,
-                ),
-                "wrist": RealSenseCameraConfig(
-                    serial_number_or_name="230422271416",
-                    fps=60,
-                    width=640,
-                    height=480,
-                ),
-            }
+        # if not self.cameras:
+        #     self.cameras = {
+        #         "head": RealSenseCameraConfig(
+        #             serial_number_or_name="230322271365",
+        #             fps=60,
+        #             width=640,
+        #             height=480,
+        #         ),
+        #         "wrist": RealSenseCameraConfig(
+        #             serial_number_or_name="230422271416",
+        #             fps=60,
+        #             width=640,
+        #             height=480,
+        #         ),
+        #     }
+        pass

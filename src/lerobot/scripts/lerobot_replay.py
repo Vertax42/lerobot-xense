@@ -53,6 +53,7 @@ from lerobot.processor import (
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
+    arx5_follower,
     bi_arx5,
     bi_so100_follower,
     hope_jr,
