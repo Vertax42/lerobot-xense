@@ -15,11 +15,30 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 from lerobot.cameras import CameraConfig
 from lerobot.cameras.realsense import RealSenseCameraConfig
 
 from ..config import RobotConfig
+
+
+class ARX5ControlMode(Enum):
+    """Control modes for ARX5 robot arm.
+
+    Attributes:
+        JOINT_CONTROL: Joint space position control mode.
+            Robot tracks target joint positions directly.
+        CARTESIAN_CONTROL: Cartesian/EEF space control mode.
+            Robot tracks end-effector pose in 6D space (x, y, z, roll, pitch, yaw).
+        GRAVITY_COMP: Gravity compensation mode.
+            Robot maintains zero torque while compensating for gravity,
+            allowing free movement by hand (teach mode).
+    """
+
+    JOINT_CONTROL = "joint_control"
+    CARTESIAN_CONTROL = "cartesian_control"
+    GRAVITY_COMP = "gravity_comp"
 
 
 @RobotConfig.register_subclass("arx5_follower")
@@ -42,7 +61,8 @@ class ARX5FollowerConfig(RobotConfig):
 
     # Mode settings
     inference_mode: bool = False
-
+    # default control mode is joint control
+    control_mode: ARX5ControlMode = ARX5ControlMode.JOINT_CONTROL
     # Preview time in seconds for action interpolation during inference
     # Higher values (0.03-0.05) provide smoother motion but more delay
     # Lower values (0.01-0.02) are more responsive but may cause jittering
