@@ -71,38 +71,68 @@ def log_rerun_data(
                 rr.log(key, rr.Scalars(float(v)))
             elif isinstance(v, np.ndarray):
                 arr = v
-                # Convert CHW -> HWC when needed
+                key_lower = str(key).lower()
+
+                # 1D array → individual Scalars (e.g., force_resultant with shape (6,))
+                if arr.ndim == 1:
+                    # force_resultant (6,) float has physical meaning: [Fx, Fy, Fz, Mx, My, Mz]
+                    # Detect by shape (6,) and float dtype (key may not contain "force_resultant")
+                    is_force_resultant = (
+                        len(arr) == 6
+                        and arr.dtype in (np.float32, np.float64)
+                    )
+                    if is_force_resultant:
+                        force_labels = ["Fx", "Fy", "Fz", "Mx", "My", "Mz"]
+                        for label, vi in zip(force_labels, arr, strict=True):
+                            rr.log(f"{key}/{label}", rr.Scalars(float(vi)))
+                    else:
+                        for i, vi in enumerate(arr):
+                            rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
+                    continue
+
+                # Force distribution (35, 20, 3) float → compute magnitude and show as heatmap
+                # Heuristic: key contains "force", 3D array, last dim is 3, dtype is float
+                is_force_distribution = (
+                    "force" in key_lower
+                    and arr.ndim == 3
+                    and arr.shape[-1] == 3
+                    and arr.dtype in (np.float32, np.float64)
+                )
+                if is_force_distribution:
+                    # Compute force magnitude: sqrt(fx^2 + fy^2 + fz^2) → (H, W) heatmap
+                    force_magnitude = np.linalg.norm(arr, axis=-1).astype(np.float32)
+                    # Use DepthImage as heatmap visualization (meter=1.0 means values are in meters)
+                    rr.log(key, rr.DepthImage(force_magnitude, meter=1.0, colormap="turbo"))
+                    continue
+
+                # Convert CHW -> HWC when needed (for regular images)
                 if (
                     arr.ndim == 3
                     and arr.shape[0] in (1, 3, 4)
                     and arr.shape[-1] not in (1, 3, 4)
                 ):
                     arr = np.transpose(arr, (1, 2, 0))
-                if arr.ndim == 1:
-                    for i, vi in enumerate(arr):
-                        rr.log(f"{key}_{i}", rr.Scalars(float(vi)))
-                else:
-                    # Depth images (2D arrays) should be logged as rr.DepthImage for correct visualization.
-                    # Heuristic:
-                    # - If key contains "depth" and the array is 2D (or single-channel 3D), treat as depth.
-                    # - Also treat "likely depth" arrays as depth even if the key doesn't include "depth":
-                    #   2D float32/float64 arrays are likely depth (RGB images are uint8 HWC 3-channel).
-                    key_lower = str(key).lower()
-                    is_depth_shape = arr.ndim == 2 or (arr.ndim == 3 and arr.shape[-1] == 1)
-                    depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
-                    likely_depth = (
-                        is_depth_shape
-                        and isinstance(depth, np.ndarray)
-                        and depth.dtype in (np.float32, np.float64)  # float 2D = likely depth
-                    )
 
-                    # IMPORTANT: these are typically streaming observations. Do not log them as
-                    # static/timeless, otherwise the Rerun viewer won't update on new frames.
-                    if ("depth" in key_lower and is_depth_shape) or likely_depth:
-                        depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
-                        rr.log(key, rr.DepthImage(depth, meter=0.001, depth_range=(0.0, 0.1), colormap="turbo"))
-                    else:
-                        rr.log(key, rr.Image(arr))
+                # Depth images (2D arrays) should be logged as rr.DepthImage for correct visualization.
+                # Heuristic:
+                # - If key contains "depth" and the array is 2D (or single-channel 3D), treat as depth.
+                # - Also treat "likely depth" arrays as depth even if the key doesn't include "depth":
+                #   2D float32/float64 arrays are likely depth (RGB images are uint8 HWC 3-channel).
+                is_depth_shape = arr.ndim == 2 or (arr.ndim == 3 and arr.shape[-1] == 1)
+                depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
+                likely_depth = (
+                    is_depth_shape
+                    and isinstance(depth, np.ndarray)
+                    and depth.dtype in (np.float32, np.float64)  # float 2D = likely depth
+                )
+
+                # IMPORTANT: these are typically streaming observations. Do not log them as
+                # static/timeless, otherwise the Rerun viewer won't update on new frames.
+                if ("depth" in key_lower and is_depth_shape) or likely_depth:
+                    depth = arr[..., 0] if (arr.ndim == 3 and arr.shape[-1] == 1) else arr
+                    rr.log(key, rr.DepthImage(depth, meter=0.001, depth_range=(0.0, 0.1), colormap="turbo"))
+                else:
+                    rr.log(key, rr.Image(arr))
 
     if action:
         for k, v in action.items():
