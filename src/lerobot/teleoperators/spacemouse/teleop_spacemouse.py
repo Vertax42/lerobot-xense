@@ -17,9 +17,13 @@
 """
 3D Spacemouse teleoperator for end-effector control.
 
-This teleoperator provides 6-DoF control (translation + rotation)
-and gripper control via buttons. It is designed to work with robots
-that accept end-effector velocity or delta position commands.
+This teleoperator provides 6-DoF absolute pose control (translation + rotation)
+and gripper control via buttons. It outputs accumulated target_pose_6d that can
+be directly sent to a Cartesian controller (e.g., Arx5CartesianController).
+
+The output format matches ARX5 SDK's spacemouse_teleop.py example:
+- target_pose_6d: [x, y, z, roll, pitch, yaw] - absolute EEF pose
+- gripper_pos: absolute gripper position in meters
 
 Based on the 3Dconnexion SpaceMouse using the spnav library.
 """
@@ -45,17 +49,20 @@ class SpacemouseTeleop(Teleoperator):
     3D Spacemouse teleoperator for end-effector control.
 
     This teleoperator reads 6-DoF motion data from a 3Dconnexion SpaceMouse
-    and provides delta position and rotation commands suitable for end-effector
-    teleoperation of robotic arms.
+    and maintains an accumulated target_pose_6d suitable for Cartesian control
+    of robotic arms.
 
     The spacemouse provides:
     - 6-DoF motion: (dx, dy, dz, drx, dry, drz) - delta position and rotation
     - 2 buttons: typically used for gripper open/close or control events
 
-    Output action format:
-    - delta_x, delta_y, delta_z: delta position (always delta)
-    - rx, ry, rz OR delta_rx, delta_ry, delta_rz: rotation (absolute or delta based on config)
-    - gripper: gripper command (0=close, 1=stay, 2=open)
+    Output action format (matches ARX5 SDK spacemouse_teleop.py):
+    - x, y, z, roll, pitch, yaw: absolute EEF target pose (accumulated)
+    - gripper_pos: absolute gripper position in meters
+
+    Usage:
+    1. Call set_target_pose() to initialize with robot's current EEF pose
+    2. Call get_action() to get updated target_pose_6d based on spacemouse input
     """
 
     config_class = SpacemouseConfig
@@ -72,13 +79,11 @@ class SpacemouseTeleop(Teleoperator):
         self._motion_queue: Queue = Queue(self.config.filter_window_size)
 
         # State tracking
-        self._last_update_time: float = 0.0
         self._enabled: bool = False
 
-        # Accumulated rotation for absolute rotation mode (use_delta_rot=False)
-        self._accumulated_rx: float = 0.0
-        self._accumulated_ry: float = 0.0
-        self._accumulated_rz: float = 0.0
+        # Accumulated target pose (x, y, z, roll, pitch, yaw)
+        self._target_pose_6d: np.ndarray = np.zeros(6, dtype=np.float32)
+        self._target_gripper_pos: float = 0.0
 
         # Event tracking for teleop events
         self._both_buttons_pressed_time: float | None = None
@@ -96,40 +101,26 @@ class SpacemouseTeleop(Teleoperator):
     @property
     def action_features(self) -> dict:
         """
-        Return action features in the same format as KeyboardEndEffectorTeleop.
+        Return action features matching ARX5 SDK's target_pose_6d format.
 
-        Returns a dictionary with dtype, shape, and names for the action space.
-        - Position is always delta: delta_x, delta_y, delta_z
-        - Rotation depends on use_delta_rot config:
-          - use_delta_rot=False: rx, ry, rz (absolute, accumulated)
-          - use_delta_rot=True: delta_rx, delta_ry, delta_rz (relative)
+        Returns a dictionary with dtype, shape, and names for the action space:
+        - x, y, z: absolute EEF position (meters)
+        - roll, pitch, yaw: absolute EEF orientation (radians)
+        - gripper_pos: absolute gripper position (meters)
         """
-        if self.config.use_delta_rot:
-            # Delta rotation mode
-            rot_names = {"delta_rx": 3, "delta_ry": 4, "delta_rz": 5}
-        else:
-            # Absolute rotation mode
-            rot_names = {"rx": 3, "ry": 4, "rz": 5}
-
-        base_names = {
-            "delta_x": 0,
-            "delta_y": 1,
-            "delta_z": 2,
-            **rot_names,
+        return {
+            "dtype": "float32",
+            "shape": (7,),
+            "names": {
+                "x": 0,
+                "y": 1,
+                "z": 2,
+                "roll": 3,
+                "pitch": 4,
+                "yaw": 5,
+                "gripper_pos": 6,
+            },
         }
-
-        if self.config.use_gripper:
-            return {
-                "dtype": "float32",
-                "shape": (7,),
-                "names": {**base_names, "gripper": 6},
-            }
-        else:
-            return {
-                "dtype": "float32",
-                "shape": (6,),
-                "names": base_names,
-            }
 
     @property
     def feedback_features(self) -> dict[str, type]:
@@ -166,12 +157,10 @@ class SpacemouseTeleop(Teleoperator):
             self._spacemouse.start(wait=True)
 
             self._is_connected = True
-            self._last_update_time = time.monotonic()
 
-            # Reset accumulated rotation on connect
-            self._accumulated_rx = 0.0
-            self._accumulated_ry = 0.0
-            self._accumulated_rz = 0.0
+            # Reset target pose on connect (will be set by set_target_pose())
+            self._target_pose_6d = np.zeros(6, dtype=np.float32)
+            self._target_gripper_pos = 0.0
 
             logger.info(f"{self} connected successfully.")
 
@@ -182,40 +171,52 @@ class SpacemouseTeleop(Teleoperator):
             raise RuntimeError(f"Failed to connect to Spacemouse: {e}") from e
 
     def calibrate(self) -> None:
-        """Reset accumulated rotation to zero (re-calibration)."""
-        self._accumulated_rx = 0.0
-        self._accumulated_ry = 0.0
-        self._accumulated_rz = 0.0
-        logger.info("Spacemouse rotation reset to zero.")
+        """No calibration needed for spacemouse."""
+        pass
 
     def configure(self) -> None:
         """No additional configuration needed."""
         pass
 
-    def reset_rotation(self) -> None:
-        """Reset accumulated rotation values to zero."""
-        self._accumulated_rx = 0.0
-        self._accumulated_ry = 0.0
-        self._accumulated_rz = 0.0
+    def set_target_pose(self, pose_6d: np.ndarray, gripper_pos: float = 0.0) -> None:
+        """
+        Set the current target pose. Call this to initialize with robot's current EEF pose.
+
+        Args:
+            pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
+            gripper_pos: Gripper position in meters
+        """
+        self._target_pose_6d = np.array(pose_6d, dtype=np.float32)
+        self._target_gripper_pos = float(gripper_pos)
+        logger.info(f"Target pose set to: {self._target_pose_6d}, gripper: {self._target_gripper_pos}")
+
+    def reset_to_pose(self, pose_6d: np.ndarray, gripper_pos: float = 0.0) -> None:
+        """
+        Reset target pose to a specific pose (e.g., home pose).
+
+        Args:
+            pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
+            gripper_pos: Gripper position in meters
+        """
+        self.set_target_pose(pose_6d, gripper_pos)
 
     def _get_filtered_state(self) -> np.ndarray:
         """Get filtered spacemouse state with moving average."""
         raw_state = self._spacemouse.get_motion_state_transformed()
 
         # Apply additional deadzone filtering after transformation
-        deadzone = self.config.deadzone
-        positive_idx = raw_state >= deadzone
-        negative_idx = raw_state <= -deadzone
+        positive_idx = raw_state >= self.config.deadzone
+        negative_idx = raw_state <= -self.config.deadzone
         filtered_state = np.zeros_like(raw_state)
-        filtered_state[positive_idx] = (raw_state[positive_idx] - deadzone) / (1 - deadzone)
-        filtered_state[negative_idx] = (raw_state[negative_idx] + deadzone) / (1 - deadzone)
+        filtered_state[positive_idx] = (raw_state[positive_idx] - self.config.deadzone) / (1 - self.config.deadzone)
+        filtered_state[negative_idx] = (raw_state[negative_idx] + self.config.deadzone) / (1 - self.config.deadzone)
 
         # Apply axis inversion
         invert = np.array(self.config.invert_axes, dtype=np.float32)
         invert = np.where(invert, -1.0, 1.0)
         filtered_state = filtered_state * invert
 
-        # Moving average filter
+        # Moving average filter Use public method of queue to avoid race condition
         if self._motion_queue.full():
             self._motion_queue.get()
         self._motion_queue.put(filtered_state)
@@ -224,20 +225,19 @@ class SpacemouseTeleop(Teleoperator):
 
     def get_action(self) -> dict[str, Any]:
         """
-        Get the current action from the Spacemouse.
+        Get the current target pose from the Spacemouse.
 
-        Returns a dictionary with:
-        - delta_x, delta_y, delta_z: always delta position
-        - rx, ry, rz OR delta_rx, delta_ry, delta_rz: based on use_delta_rot config
-        - gripper: gripper command (0=close, 1=stay, 2=open)
+        Returns a dictionary with absolute EEF pose (matching ARX5 SDK format):
+        - x, y, z: absolute EEF position (meters)
+        - roll, pitch, yaw: absolute EEF orientation (radians)
+        - gripper_pos: absolute gripper position (meters)
         """
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Calculate dt for velocity scaling
-        current_time = time.monotonic()
-        dt = current_time - self._last_update_time
-        self._last_update_time = current_time
+        # Use fixed control_dt for consistent velocity scaling
+        # This should match the external control loop period (e.g., 1/fps)
+        dt = self.config.control_dt
 
         # Get filtered motion state
         state = self._get_filtered_state()  # (6,) normalized [-1, 1]
@@ -246,58 +246,55 @@ class SpacemouseTeleop(Teleoperator):
         button_left = self._spacemouse.is_button_pressed(0)
         button_right = self._spacemouse.is_button_pressed(1)
 
-        # Compute delta position (always delta)
-        delta_x = float(state[0] * self.config.pos_sensitivity * dt)
-        delta_y = float(state[1] * self.config.pos_sensitivity * dt)
-        delta_z = float(state[2] * self.config.pos_sensitivity * dt)
-
-        # Compute rotation delta
-        delta_rx = float(state[3] * self.config.ori_sensitivity * dt)
-        delta_ry = float(state[4] * self.config.ori_sensitivity * dt)
-        delta_rz = float(state[5] * self.config.ori_sensitivity * dt)
-
-        # Compute gripper command (0=close, 1=stay, 2=open)
+        # Compute gripper command based on buttons
         if self.config.swap_gripper_buttons:
             button_open, button_close = button_left, button_right
         else:
             button_open, button_close = button_right, button_left
 
         if button_open and not button_close:
-            gripper = 2.0  # Open
+            gripper_cmd = 1  # Open
         elif button_close and not button_open:
-            gripper = 0.0  # Close
+            gripper_cmd = -1  # Close
         else:
-            gripper = 1.0  # Stay
+            gripper_cmd = 0  # Stay
+
+        # Update target pose with increments (matching ARX5 SDK spacemouse_teleop.py)
+        # Position: target_pose_6d[:3] += state[:3] * pos_speed * dt
+        self._target_pose_6d[:3] += state[:3] * self.config.pos_sensitivity * dt
+        # Orientation: target_pose_6d[3:] += state[3:] * ori_speed * dt
+        self._target_pose_6d[3:] += state[3:] * self.config.ori_sensitivity * dt
+
+        # Update gripper position with clamping
+        self._target_gripper_pos += gripper_cmd * self.config.gripper_speed * dt
+        if self._target_gripper_pos >= self.config.gripper_width:
+            self._target_gripper_pos = self.config.gripper_width
+        elif self._target_gripper_pos <= 0:
+            self._target_gripper_pos = 0
 
         # Check if any input is active
         motion_active = np.any(np.abs(state) > 0.01)
         self._enabled = motion_active or button_left or button_right
 
-        # Build action dict
-        action_dict = {
-            "delta_x": delta_x,
-            "delta_y": delta_y,
-            "delta_z": delta_z,
+        # Return absolute pose dict
+        return {
+            "x": float(self._target_pose_6d[0]),
+            "y": float(self._target_pose_6d[1]),
+            "z": float(self._target_pose_6d[2]),
+            "roll": float(self._target_pose_6d[3]),
+            "pitch": float(self._target_pose_6d[4]),
+            "yaw": float(self._target_pose_6d[5]),
+            "gripper_pos": float(self._target_gripper_pos),
         }
 
-        if self.config.use_delta_rot:
-            # Delta rotation mode
-            action_dict["delta_rx"] = delta_rx
-            action_dict["delta_ry"] = delta_ry
-            action_dict["delta_rz"] = delta_rz
-        else:
-            # Absolute rotation mode - accumulate rotation
-            self._accumulated_rx += delta_rx
-            self._accumulated_ry += delta_ry
-            self._accumulated_rz += delta_rz
-            action_dict["rx"] = self._accumulated_rx
-            action_dict["ry"] = self._accumulated_ry
-            action_dict["rz"] = self._accumulated_rz
+    def get_target_pose_array(self) -> tuple[np.ndarray, float]:
+        """
+        Get the current target pose as numpy array (for direct use with ARX5 SDK).
 
-        if self.config.use_gripper:
-            action_dict["gripper"] = gripper
-
-        return action_dict
+        Returns:
+            Tuple of (pose_6d, gripper_pos) where pose_6d is [x, y, z, roll, pitch, yaw]
+        """
+        return self._target_pose_6d.copy(), self._target_gripper_pos
 
     def get_teleop_events(self) -> dict[str, Any]:
         """
@@ -344,9 +341,7 @@ class SpacemouseTeleop(Teleoperator):
                 terminate_episode = True
                 rerecord_episode = True
                 self._reset_triggered = True
-                # Also reset rotation when both buttons held
-                self.reset_rotation()
-                logger.info("Both buttons held - triggering episode reset and rotation reset")
+                logger.info("Both buttons held - triggering episode reset")
         else:
             self._both_buttons_pressed_time = None
             self._reset_triggered = False

@@ -31,14 +31,14 @@ class ARX5ControlMode(Enum):
             Robot tracks target joint positions directly.
         CARTESIAN_CONTROL: Cartesian/EEF space control mode.
             Robot tracks end-effector pose in 6D space (x, y, z, roll, pitch, yaw).
-        GRAVITY_COMP: Gravity compensation mode.
+        TEACH_MODE: Teaching mode with gravity compensation.
             Robot maintains zero torque while compensating for gravity,
-            allowing free movement by hand (teach mode).
+            allowing free movement by hand for demonstration recording.
     """
 
     JOINT_CONTROL = "joint_control"
     CARTESIAN_CONTROL = "cartesian_control"
-    GRAVITY_COMP = "gravity_comp"
+    TEACH_MODE = "teach_mode"  # Teaching mode with gravity compensation, control mode is joint control
 
 
 @RobotConfig.register_subclass("arx5_follower")
@@ -72,7 +72,7 @@ class ARX5FollowerConfig(RobotConfig):
     gripper_open_readout: float = -3.4
     enable_tactile_sensors: bool = False
 
-    # Position settings
+    # Position settings (Joint space: 6 joints + gripper)
     home_position: list[float] = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     )

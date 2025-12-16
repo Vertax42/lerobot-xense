@@ -88,7 +88,8 @@ dependencies = [
     "torchvision>=0.21.0,<0.24.0",
     "draccus==0.10.0",
     "gymnasium>=1.1.1,<2.0.0",
-    "rerun-sdk == 0.24.0",
+    # Pin to 0.23.1 to stay compatible with TensorFlow/JAX numpy<2 constraint in openpi
+    "rerun-sdk == 0.23.1",
     "deepdiff>=7.0.1,<9.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
