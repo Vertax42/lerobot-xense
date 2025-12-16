@@ -436,6 +436,9 @@ class ARX5Follower(Robot):
     ) -> None:
         """Move the arm smoothly towards the provided joint targets.
 
+        Uses SDK's set_joint_traj for smooth trajectory execution with automatic
+        velocity calculation. Gripper is interpolated linearly.
+
         Args:
             target_joint_poses: A sequence of 6 or 7 joint values (including gripper)
                 or a sequence of such sequences to execute multiple segments.
@@ -472,24 +475,21 @@ class ARX5Follower(Robot):
         # Determine controller timestep (fallback to 10 ms if unavailable)
         controller_dt = getattr(self.config, "interpolation_controller_dt", 0.01)
 
-        # Fetch the current joint positions as starting state
-        def _get_current_state() -> np.ndarray:
+        def _get_current_state() -> tuple[np.ndarray, float]:
             state = self.arm.get_joint_state()
-            return np.concatenate(
-                (state.pos().copy(), np.array([state.gripper_pos]))
-            )
+            return state.pos().copy(), state.gripper_pos
 
-        current = _get_current_state()
-
-        def _parse_target(values: Sequence[float], default: np.ndarray) -> np.ndarray:
+        def _parse_target(
+            values: Sequence[float], default_gripper: float
+        ) -> tuple[np.ndarray, float]:
             arr = np.asarray(values, dtype=float)
             if arr.shape[0] not in (6, 7):
                 raise ValueError(
                     "Target must provide 6 joint values (+ optional gripper)"
                 )
             if arr.shape[0] == 6:
-                arr = np.concatenate((arr, np.array([default[-1]])))
-            return arr
+                return arr, default_gripper
+            return arr[:6], float(arr[6])
 
         def _apply_easing(alpha: float) -> float:
             alpha = max(0.0, min(1.0, alpha))
@@ -499,17 +499,20 @@ class ARX5Follower(Robot):
                 return alpha
             raise ValueError(f"Unsupported easing profile: {easing}")
 
+        current_pos, current_gripper = _get_current_state()
+
         try:
             for segment, duration in zip(trajectory, segment_durations, strict=True):
-                target = _parse_target(segment, current)
+                target_pos, target_gripper = _parse_target(segment, current_gripper)
 
                 if duration <= 0:
-                    action = {}
-                    for i in range(6):
-                        action[f"joint_{i+1}.pos"] = float(target[i])
-                    action["gripper.pos"] = float(target[6])
-                    self.send_action(action)
-                    current = target
+                    # Instant move
+                    joint_cmd = arx5.JointState(self.robot_config.joint_dof)
+                    joint_cmd.pos()[:] = target_pos
+                    joint_cmd.gripper_pos = target_gripper
+                    self.arm.set_joint_cmd(joint_cmd)
+                    current_pos = target_pos
+                    current_gripper = target_gripper
                     continue
 
                 steps = (
@@ -518,20 +521,38 @@ class ARX5Follower(Robot):
                     else max(1, int(math.ceil(duration / controller_dt)))
                 )
 
+                # Build joint trajectory with easing applied to joint positions,
+                # linear interpolation for gripper
+                joint_traj = []
+                current_timestamp = self.arm.get_joint_state().timestamp
+
                 for step in range(1, steps + 1):
                     progress = step / steps
                     ratio = _apply_easing(progress)
-                    interp = current + (target - current) * ratio
 
-                    action = {}
-                    for i in range(6):
-                        action[f"joint_{i+1}.pos"] = float(interp[i])
-                    action["gripper.pos"] = float(interp[6])
+                    # Interpolate joint positions with easing
+                    interp_pos = current_pos + (target_pos - current_pos) * ratio
+                    # Linearly interpolate gripper (no easing needed for gripper)
+                    interp_gripper = current_gripper + (
+                        target_gripper - current_gripper
+                    ) * progress
 
-                    self.send_action(action)
-                    time.sleep(duration / steps if steps_per_segment else controller_dt)
+                    timestamp = current_timestamp + (duration / steps) * step
+                    joint_cmd = arx5.JointState(self.robot_config.joint_dof)
+                    joint_cmd.pos()[:] = interp_pos
+                    joint_cmd.gripper_pos = interp_gripper
+                    joint_cmd.timestamp = timestamp
+                    joint_traj.append(joint_cmd)
 
-                current = target
+                # Send trajectory to SDK (SDK handles smooth interpolation internally)
+                self.arm.set_joint_traj(joint_traj)
+
+                # Wait for trajectory to complete
+                time.sleep(duration)
+
+                current_pos = target_pos
+                current_gripper = target_gripper
+
         except KeyboardInterrupt:
             logger.warning(
                 "Joint trajectory interrupted by user. Holding current pose."
@@ -546,6 +567,9 @@ class ARX5Follower(Robot):
         steps_per_segment: int | None = None,
     ) -> None:
         """Move the arm smoothly towards the provided EEF targets (Cartesian mode).
+
+        Uses SDK's set_eef_traj for smooth trajectory execution with automatic
+        velocity calculation. Gripper is interpolated separately.
 
         Args:
             target_eef_poses: A sequence of 6 or 7 values (x,y,z,roll,pitch,yaw + optional gripper)
@@ -582,23 +606,21 @@ class ARX5Follower(Robot):
 
         controller_dt = getattr(self.config, "interpolation_controller_dt", 0.01)
 
-        def _get_current_state() -> np.ndarray:
+        def _get_current_state() -> tuple[np.ndarray, float]:
             state = self.arm.get_eef_state()
-            return np.concatenate(
-                (state.pose_6d().copy(), np.array([state.gripper_pos]))
-            )
+            return state.pose_6d().copy(), state.gripper_pos
 
-        current = _get_current_state()
-
-        def _parse_target(values: Sequence[float], default: np.ndarray) -> np.ndarray:
+        def _parse_target(
+            values: Sequence[float], default_gripper: float
+        ) -> tuple[np.ndarray, float]:
             arr = np.asarray(values, dtype=float)
             if arr.shape[0] not in (6, 7):
                 raise ValueError(
                     "Target must provide 6 EEF values (+ optional gripper)"
                 )
             if arr.shape[0] == 6:
-                arr = np.concatenate((arr, np.array([default[-1]])))
-            return arr
+                return arr, default_gripper
+            return arr[:6], float(arr[6])
 
         def _apply_easing(alpha: float) -> float:
             alpha = max(0.0, min(1.0, alpha))
@@ -608,22 +630,18 @@ class ARX5Follower(Robot):
                 return alpha
             raise ValueError(f"Unsupported easing profile: {easing}")
 
+        current_pose, current_gripper = _get_current_state()
+
         try:
             for segment, duration in zip(trajectory, segment_durations, strict=True):
-                target = _parse_target(segment, current)
+                target_pose, target_gripper = _parse_target(segment, current_gripper)
 
                 if duration <= 0:
-                    action = {
-                        "x": float(target[0]),
-                        "y": float(target[1]),
-                        "z": float(target[2]),
-                        "roll": float(target[3]),
-                        "pitch": float(target[4]),
-                        "yaw": float(target[5]),
-                        "gripper_pos": float(target[6]),
-                    }
-                    self.send_action(action)
-                    current = target
+                    # Instant move
+                    eef_cmd = arx5.EEFState(target_pose, target_gripper)
+                    self.arm.set_eef_cmd(eef_cmd)
+                    current_pose = target_pose
+                    current_gripper = target_gripper
                     continue
 
                 steps = (
@@ -632,25 +650,36 @@ class ARX5Follower(Robot):
                     else max(1, int(math.ceil(duration / controller_dt)))
                 )
 
+                # Build EEF trajectory with easing applied to pose,
+                # linear interpolation for gripper
+                eef_traj = []
+                current_timestamp = self.arm.get_eef_state().timestamp
+
                 for step in range(1, steps + 1):
                     progress = step / steps
                     ratio = _apply_easing(progress)
-                    interp = current + (target - current) * ratio
 
-                    action = {
-                        "x": float(interp[0]),
-                        "y": float(interp[1]),
-                        "z": float(interp[2]),
-                        "roll": float(interp[3]),
-                        "pitch": float(interp[4]),
-                        "yaw": float(interp[5]),
-                        "gripper_pos": float(interp[6]),
-                    }
+                    # Interpolate pose with easing
+                    interp_pose = current_pose + (target_pose - current_pose) * ratio
+                    # Linearly interpolate gripper (no easing needed for gripper)
+                    interp_gripper = current_gripper + (
+                        target_gripper - current_gripper
+                    ) * progress
 
-                    self.send_action(action)
-                    time.sleep(duration / steps if steps_per_segment else controller_dt)
+                    timestamp = current_timestamp + (duration / steps) * step
+                    eef_cmd = arx5.EEFState(interp_pose, interp_gripper)
+                    eef_cmd.timestamp = timestamp
+                    eef_traj.append(eef_cmd)
 
-                current = target
+                # Send trajectory to SDK (SDK handles smooth interpolation internally)
+                self.arm.set_eef_traj(eef_traj)
+
+                # Wait for trajectory to complete
+                time.sleep(duration)
+
+                current_pose = target_pose
+                current_gripper = target_gripper
+
         except KeyboardInterrupt:
             logger.warning(
                 "EEF trajectory interrupted by user. Holding current pose."
