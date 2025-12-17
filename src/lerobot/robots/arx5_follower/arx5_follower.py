@@ -73,17 +73,22 @@ class ARX5Follower(Robot):
         self._is_connected = False
 
         # Control mode state variables
-        self._is_gravity_compensation_mode = False
-        self._is_cartesian_control_mode = False
         self._is_joint_control_mode = False
+        self._is_cartesian_control_mode = False
+        self._is_gravity_compensation_mode = True
 
-        # Use configurable preview time for inference mode
-        self.default_preview_time = (
-            self.config.preview_time if self.config.inference_mode else 0.0
-        )
-
-        # RPC timeout
-        self.rpc_timeout: float = getattr(config, "rpc_timeout", 5.0)
+        # Use configurable preview time for inference mode (JOINT_CONTROL only)
+        # For CARTESIAN_CONTROL, we don't override SDK default (0.1s)
+        if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
+            # Let SDK use its default preview_time (0.1s for cartesian_controller)
+            self.default_preview_time = None
+            logger.info("Cartesian control mode: using SDK default preview_time (0.1s)")
+        elif self.config.inference_mode:
+            self.default_preview_time = self.config.preview_time
+            logger.info(f"Joint control mode (inference): using preview_time {self.default_preview_time}s")
+        else:
+            self.default_preview_time = 0.0
+            logger.info(f"Joint control mode (teleop): using preview_time {self.default_preview_time}s")
 
         # Pre-compute action keys for faster lookup (performance optimization)
         if config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
@@ -126,15 +131,20 @@ class ARX5Follower(Robot):
                 self._solver.forward_kinematics(home_joint_pos),
                 [self._home_position[6]]  # gripper
             ])
+            # For start position: use FK for xyz, but set rpy to 0 for better teleoperation
+            # This ensures the end-effector is parallel to XYZ axes
+            start_eef_pose = self._solver.forward_kinematics(start_joint_pos)
+            # start_eef_pose[3:6] = 0.0  # Set roll, pitch, yaw to 0
             self._start_position = np.concatenate([
-                self._solver.forward_kinematics(start_joint_pos),
+                start_eef_pose,
                 [self._start_position[6]]  # gripper
             ])
             logger.info(f"EEF home position (FK): {self._home_position}")
-            logger.info(f"EEF start position (FK): {self._start_position}")
+            logger.info(f"EEF start position (FK with rpy=0): {self._start_position}")
 
         # Set gripper_open_readout
         self.robot_config.gripper_open_readout = config.gripper_open_readout
+        logger.info(f"Set gripper_open_readout to: {self.robot_config.gripper_open_readout}")
 
         # Controller config - select based on control mode
         if config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
@@ -152,7 +162,9 @@ class ARX5Follower(Robot):
 
         # Set controller_dt and default_preview_time
         self.controller_config.controller_dt = config.controller_dt
-        self.controller_config.default_preview_time = self.default_preview_time
+        # Only override default_preview_time if not CARTESIAN_CONTROL (preserve SDK default 0.1s)
+        if self.default_preview_time is not None:
+            self.controller_config.default_preview_time = self.default_preview_time
 
         # Background send/recv setting
         self.controller_config.background_send_recv = use_background
@@ -236,7 +248,7 @@ class ARX5Follower(Robot):
                     self.config.arm_port,
                 )
             else:
-                # Joint control or Gravity comp mode
+                # Joint control or Teach mode
                 self.arm = arx5.Arx5JointController(
                     self.robot_config,
                     self.controller_config,
@@ -247,11 +259,15 @@ class ARX5Follower(Robot):
             logger.info(
                 f"preview_time: {self.controller_config.default_preview_time}"
             )
+            # Verify SDK is using the correct gripper_open_readout
+            sdk_robot_config = self.arm.get_robot_config()
+            logger.info(f"SDK gripper_open_readout: {sdk_robot_config.gripper_open_readout}")
         except Exception as e:
             logger.error(f"Failed to create robot controller: {e}")
             self.arm = None
             raise e
 
+        self._is_connected = True
         # Set log level
         self.set_log_level(self.config.log_level)
 
@@ -259,13 +275,7 @@ class ARX5Follower(Robot):
         self.reset_to_home()
 
         # Set gravity compensation gain
-        zero_grav_gain = self.arm.get_gain()
-        zero_grav_gain.kp()[:] = 0.0
-        zero_grav_gain.kd()[:] = self.controller_config.default_kd * 0.15
-        zero_grav_gain.gripper_kp = 0.0
-        zero_grav_gain.gripper_kd = self.controller_config.default_gripper_kd * 0.25
-
-        self.arm.set_gain(zero_grav_gain)
+        self.set_to_gravity_compensation_mode()
 
         # Connect cameras
         for cam in self.cameras.values():
@@ -278,19 +288,6 @@ class ARX5Follower(Robot):
         else:
             self._cmd_buffer = arx5.JointState(self.robot_config.joint_dof)
             self._eef_cmd_buffer = None  # Not used in joint mode
-
-        self._is_connected = True
-
-        # Set control mode state based on config
-        if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
-            self._is_cartesian_control_mode = True
-            self._is_joint_control_mode = False
-            self._is_gravity_compensation_mode = False
-        else:
-            # Joint control - start in gravity compensation mode
-            self._is_cartesian_control_mode = False
-            self._is_joint_control_mode = False
-            self._is_gravity_compensation_mode = True
 
         # Go to start position, ready for data collection or inference
         logger.info("ARX5 Follower Robot connected.")
@@ -311,28 +308,48 @@ class ARX5Follower(Robot):
 
         if self.config.inference_mode:
             if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
-                # Cartesian mode is already in position control
-                logger.info("✓ Robot is in cartesian control mode for inference")
-            else:
+                self.set_to_normal_cartesian_control()
+                logger.info("✓ Robot is now in cartesian control mode for inference")
+            elif self.config.control_mode == ARX5ControlMode.JOINT_CONTROL:
                 self.set_to_normal_position_control()
                 logger.info("✓ Robot is now in joint position control mode for inference")
+            else:
+                logger.error(f"Invalid inference time control mode: {self.config.control_mode.value}")
+                raise ValueError(f"Invalid inference time control mode: {self.config.control_mode.value}")
+            logger.info(f"✓ Robot is now connected and ready for inference in {self.config.control_mode.value} mode.")
+        else:  # in teleoperation mode
+            if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
+                self.set_to_normal_cartesian_control()
+                logger.info("✓ Robot is now in gravity compensation mode for teleoperation")
+            elif self.config.control_mode == ARX5ControlMode.JOINT_CONTROL:
+                self.set_to_normal_position_control()
+                logger.info("✓ Robot is now in position control mode for teleoperation")
+            elif self.config.control_mode == ARX5ControlMode.TEACH_MODE:
+                self.set_to_gravity_compensation_mode()
+                logger.info("✓ Robot is now in gravity compensation mode for teleoperation")
+            else:
+                logger.error(f"Invalid teleoperation control mode: {self.config.control_mode.value}")
+                raise ValueError(f"Invalid teleoperation control mode: {self.config.control_mode.value}")
+            logger.info(f"✓ Robot is now connected and ready for teleoperation in {self.config.control_mode.value} mode.")
 
     @property
     def is_calibrated(self) -> bool:
         """
-        ARX5 does not need to calibrate in runtime
+        ARX5 does not need to calibrate in runtime, skip...
         """
+        logger.info("ARX5 does not need to calibrate in runtime, skip...")
         return self.is_connected
 
     def calibrate(self) -> None:
-        """ARX5 does not need to calibrate in runtime"""
+        """ARX5 does not need to calibrate in runtime, skip..."""
         logger.info("ARX5 does not need to calibrate in runtime, skip...")
         return
 
     def configure(self) -> None:
         """
-        Configure the robot
+        ARX5 does not need to configure in runtime, skip...
         """
+        logger.info("ARX5 does not need to configure in runtime, skip...")
         pass
 
     def setup_motors(self) -> None:
@@ -400,14 +417,12 @@ class ARX5Follower(Robot):
                 pose_6d[i] = action.get(key, pose_6d[i])
             cmd.gripper_pos = action.get(self._gripper_key, cmd.gripper_pos)
 
-            # Set timestamp for trajectory interpolation
-            cmd.timestamp = self.arm.get_timestamp() + self.default_preview_time
-            # Use set_eef_traj for smoother motion (auto velocity calculation)
+            # Use set_eef_cmd - SDK will use default_preview_time for interpolation
             # Debug: Print commands before sending
             # print(
             #     f"Arm command - pose_6d: {cmd.pose_6d()}, gripper: {cmd.gripper_pos}"
             # )
-            self.arm.set_eef_traj([cmd])
+            self.arm.set_eef_cmd(cmd)
         else:
             # Joint mode (including teach mode): use joint command
             cmd = self._cmd_buffer
@@ -442,8 +457,7 @@ class ARX5Follower(Robot):
     ) -> None:
         """Move the arm smoothly towards the provided joint targets.
 
-        Uses SDK's set_joint_traj for smooth trajectory execution with automatic
-        velocity calculation. Gripper is interpolated linearly.
+        Uses send_action to send interpolated commands step by step.
 
         Args:
             target_joint_poses: A sequence of 6 or 7 joint values (including gripper)
@@ -481,44 +495,40 @@ class ARX5Follower(Robot):
         # Determine controller timestep (fallback to 10 ms if unavailable)
         controller_dt = getattr(self.config, "interpolation_controller_dt", 0.01)
 
-        def _get_current_state() -> tuple[np.ndarray, float]:
+        # Fetch the current joint position as starting state
+        def _get_current_state() -> np.ndarray:
             state = self.arm.get_joint_state()
-            return state.pos().copy(), state.gripper_pos
+            return np.concatenate([state.pos().copy(), [state.gripper_pos]])
 
-        def _parse_target(
-            values: Sequence[float], default_gripper: float
-        ) -> tuple[np.ndarray, float]:
-            arr = np.asarray(values, dtype=float)
+        current = _get_current_state()
+
+        def _parse_target(values: Sequence[float], default: np.ndarray) -> np.ndarray:
+            arr = np.asarray(values, dtype=np.float64)
             if arr.shape[0] not in (6, 7):
                 raise ValueError(
-                    "Target must provide 6 joint values (+ optional gripper)"
+                    "Target must provide 6 or 7 joint values"
                 )
             if arr.shape[0] == 6:
-                return arr, default_gripper
-            return arr[:6], float(arr[6])
+                arr = np.concatenate([arr, [default[-1]]])
+            return arr
 
         def _apply_easing(alpha: float) -> float:
-            alpha = max(0.0, min(1.0, alpha))
+            alpha = np.clip(alpha, 0.0, 1.0)
             if easing == "ease_in_out_quad":
                 return self._ease_in_out_quad(alpha)
             if easing == "linear":
                 return alpha
             raise ValueError(f"Unsupported easing profile: {easing}")
 
-        current_pos, current_gripper = _get_current_state()
-
         try:
             for segment, duration in zip(trajectory, segment_durations, strict=True):
-                target_pos, target_gripper = _parse_target(segment, current_gripper)
+                target = _parse_target(segment, current)
 
                 if duration <= 0:
-                    # Instant move
-                    joint_cmd = arx5.JointState(self.robot_config.joint_dof)
-                    joint_cmd.pos()[:] = target_pos
-                    joint_cmd.gripper_pos = target_gripper
-                    self.arm.set_joint_cmd(joint_cmd)
-                    current_pos = target_pos
-                    current_gripper = target_gripper
+                    action = dict(zip(self._action_keys, target[:6].tolist()))
+                    action[self._gripper_key] = float(target[6])
+                    self.send_action(action)
+                    current = target
                     continue
 
                 steps = (
@@ -527,38 +537,18 @@ class ARX5Follower(Robot):
                     else max(1, int(math.ceil(duration / controller_dt)))
                 )
 
-                # Build joint trajectory with easing applied to joint positions,
-                # linear interpolation for gripper
-                joint_traj = []
-                current_timestamp = self.arm.get_joint_state().timestamp
-
                 for step in range(1, steps + 1):
                     progress = step / steps
                     ratio = _apply_easing(progress)
+                    interp = current + (target - current) * ratio
 
-                    # Interpolate joint positions with easing
-                    interp_pos = current_pos + (target_pos - current_pos) * ratio
-                    # Linearly interpolate gripper (no easing needed for gripper)
-                    interp_gripper = current_gripper + (
-                        target_gripper - current_gripper
-                    ) * progress
+                    action = dict(zip(self._action_keys, interp[:6].tolist()))
+                    action[self._gripper_key] = float(interp[6])
 
-                    timestamp = current_timestamp + (duration / steps) * step
-                    joint_cmd = arx5.JointState(self.robot_config.joint_dof)
-                    joint_cmd.pos()[:] = interp_pos
-                    joint_cmd.gripper_pos = interp_gripper
-                    joint_cmd.timestamp = timestamp
-                    joint_traj.append(joint_cmd)
+                    self.send_action(action)
+                    time.sleep(duration / steps if steps_per_segment else controller_dt)
 
-                # Send trajectory to SDK (SDK handles smooth interpolation internally)
-                self.arm.set_joint_traj(joint_traj)
-
-                # Wait for trajectory to complete
-                time.sleep(duration)
-
-                current_pos = target_pos
-                current_gripper = target_gripper
-
+                current = target
         except KeyboardInterrupt:
             logger.warning(
                 "Joint trajectory interrupted by user. Holding current pose."
@@ -569,20 +559,21 @@ class ARX5Follower(Robot):
         target_eef_poses: Sequence[float] | Sequence[Sequence[float]],
         durations: float | Sequence[float],
         *,
-        easing: str = "ease_in_out_quad",
+        easing: str = "linear",
         steps_per_segment: int | None = None,
     ) -> None:
         """Move the arm smoothly towards the provided EEF targets (Cartesian mode).
 
-        Uses SDK's set_eef_traj for smooth trajectory execution with automatic
-        velocity calculation. Gripper is interpolated separately.
+        Uses send_action to send interpolated commands step by step.
 
         Args:
             target_eef_poses: A sequence of 6 or 7 values (x,y,z,roll,pitch,yaw + optional gripper)
                 or a sequence of such sequences to execute multiple segments.
             durations: Duration in seconds for the corresponding target poses.
             easing: Easing profile to apply ("ease_in_out_quad" or "linear").
-            steps_per_segment: Optional fixed number of interpolation steps per segment.
+            steps_per_segment: Optional fixed number of interpolation steps per
+                segment. When omitted the controller's ``controller_dt`` is used
+                to compute the number of steps from the duration.
 
         Raises:
             DeviceNotConnectedError: If the robot is not connected.
@@ -610,44 +601,43 @@ class ARX5Follower(Robot):
                 "target_eef_poses and durations must have the same length"
             )
 
+        # Determine controller timestep (fallback to 10 ms if unavailable)
         controller_dt = getattr(self.config, "interpolation_controller_dt", 0.01)
 
-        def _get_current_state() -> tuple[np.ndarray, float]:
+        # Fetch the current EEF position as starting state
+        def _get_current_state() -> np.ndarray:
             state = self.arm.get_eef_state()
-            return state.pose_6d().copy(), state.gripper_pos
+            return np.concatenate([state.pose_6d().copy(), [state.gripper_pos]])
 
-        def _parse_target(
-            values: Sequence[float], default_gripper: float
-        ) -> tuple[np.ndarray, float]:
-            arr = np.asarray(values, dtype=float)
+        current = _get_current_state()
+
+        def _parse_target(values: Sequence[float], default: np.ndarray) -> np.ndarray:
+            arr = np.asarray(values, dtype=np.float64)
             if arr.shape[0] not in (6, 7):
                 raise ValueError(
                     "Target must provide 6 EEF values (+ optional gripper)"
                 )
             if arr.shape[0] == 6:
-                return arr, default_gripper
-            return arr[:6], float(arr[6])
+                arr = np.concatenate([arr, [default[-1]]])
+            return arr
 
         def _apply_easing(alpha: float) -> float:
-            alpha = max(0.0, min(1.0, alpha))
+            alpha = np.clip(alpha, 0.0, 1.0)
             if easing == "ease_in_out_quad":
                 return self._ease_in_out_quad(alpha)
             if easing == "linear":
                 return alpha
             raise ValueError(f"Unsupported easing profile: {easing}")
 
-        current_pose, current_gripper = _get_current_state()
-
         try:
             for segment, duration in zip(trajectory, segment_durations, strict=True):
-                target_pose, target_gripper = _parse_target(segment, current_gripper)
+                target = _parse_target(segment, current)
 
                 if duration <= 0:
-                    # Instant move
-                    eef_cmd = arx5.EEFState(target_pose, target_gripper)
-                    self.arm.set_eef_cmd(eef_cmd)
-                    current_pose = target_pose
-                    current_gripper = target_gripper
+                    action = dict(zip(self._action_keys, target[:6].tolist()))
+                    action[self._gripper_key] = float(target[6])
+                    self.send_action(action)
+                    current = target
                     continue
 
                 steps = (
@@ -656,35 +646,18 @@ class ARX5Follower(Robot):
                     else max(1, int(math.ceil(duration / controller_dt)))
                 )
 
-                # Build EEF trajectory with easing applied to pose,
-                # linear interpolation for gripper
-                eef_traj = []
-                current_timestamp = self.arm.get_eef_state().timestamp
-
                 for step in range(1, steps + 1):
                     progress = step / steps
                     ratio = _apply_easing(progress)
+                    interp = current + (target - current) * ratio
 
-                    # Interpolate pose with easing
-                    interp_pose = current_pose + (target_pose - current_pose) * ratio
-                    # Linearly interpolate gripper (no easing needed for gripper)
-                    interp_gripper = current_gripper + (
-                        target_gripper - current_gripper
-                    ) * progress
+                    action = dict(zip(self._action_keys, interp[:6].tolist()))
+                    action[self._gripper_key] = float(interp[6])
 
-                    timestamp = current_timestamp + (duration / steps) * step
-                    eef_cmd = arx5.EEFState(interp_pose, interp_gripper)
-                    eef_cmd.timestamp = timestamp
-                    eef_traj.append(eef_cmd)
+                    self.send_action(action)
+                    time.sleep(duration / steps if steps_per_segment else controller_dt)
 
-                # Send trajectory to SDK (SDK handles smooth interpolation internally)
-                self.arm.set_eef_traj(eef_traj)
-
-                # Wait for trajectory to complete
-                time.sleep(duration)
-
-                current_pose = target_pose
-                current_gripper = target_gripper
+                current = target
 
         except KeyboardInterrupt:
             logger.warning(
@@ -701,6 +674,10 @@ class ARX5Follower(Robot):
             self.reset_to_home()
             self.arm.set_to_damping()
             logger.info("✓ Arm disconnected successfully")
+        except KeyboardInterrupt:
+            logger.warning("Disconnect interrupted by user. Setting to damping mode...")
+            self.arm.set_to_damping()
+            logger.info("✓ Arm set to damping mode for safety")
         except Exception as e:
             logger.warning(f"Arm disconnect failed: {e}")
 
@@ -750,7 +727,7 @@ class ARX5Follower(Robot):
     def set_to_gravity_compensation_mode(self):
         """Switch from normal position control or cartesian control to gravity compensation mode.
 
-        Uses SDK's set_to_damping() which:
+        Uses SDK's set_to_gravity_compensation() which:
         1. Sets kp=0, kd=default (damping only, no position control)
         2. Resets interpolator to current position (important for Cartesian mode)
         3. Gravity compensation is handled by SDK if controller_config.gravity_compensation=True
@@ -758,17 +735,25 @@ class ARX5Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        if self._is_gravity_compensation_mode:
+            logger.info("Arm is already in gravity compensation mode")
+            return
+
         logger.info("Switching to gravity compensation mode...")
 
-        # Use SDK's set_to_damping() which properly resets the interpolator
-        self.arm.set_to_damping()
+        # Use SDK's set_to_gravity_compensation() which properly resets the interpolator
+        if self._is_joint_control_mode:
+            logger.info("Switching to gravity compensation mode from joint control mode...")
+        elif self._is_cartesian_control_mode:
+            logger.info("Switching to gravity compensation mode from cartesian control mode...")
 
+        self.arm.set_to_gravity_compensation()
         # Update control mode state
         self._is_gravity_compensation_mode = True
         self._is_joint_control_mode = False
         self._is_cartesian_control_mode = False
 
-        logger.info("✓ Arm is now in gravity compensation mode (damping)")
+        logger.info("✓ Arm is now in gravity compensation mode.")
 
     def set_to_normal_position_control(self):
         """Switch from gravity compensation to normal position control or cartesian control mode"""
@@ -777,23 +762,102 @@ class ARX5Follower(Robot):
 
         logger.info("Switching to normal position control mode...")
 
-        # Reset to default gain
-        default_gain = self.arm.get_gain()
-        default_gain.kp()[:] = self.controller_config.default_kp * 0.5
-        default_gain.kd()[:] = self.controller_config.default_kd * 1.5
-        default_gain.gripper_kp = self.controller_config.default_gripper_kp
-        default_gain.gripper_kd = self.controller_config.default_gripper_kd
+        is_joint_mode = (
+            self.config.control_mode == ARX5ControlMode.JOINT_CONTROL
+            or self.config.control_mode == ARX5ControlMode.TEACH_MODE
+        )
 
-        self.arm.set_gain(default_gain)
+        if self._is_gravity_compensation_mode and is_joint_mode:
+            # Reset to default gain
+            default_gain = self.arm.get_gain()
+            default_gain.kp()[:] = self.controller_config.default_kp * 0.5
+            default_gain.kd()[:] = self.controller_config.default_kd * 1.5
+            default_gain.gripper_kp = self.controller_config.default_gripper_kp
+            default_gain.gripper_kd = self.controller_config.default_gripper_kd
 
-        # Update control mode state
-        self._is_gravity_compensation_mode = False
-        self._is_joint_control_mode = True
-        self._is_cartesian_control_mode = False
-        logger.info("✓ Arm is now in normal position control mode")
+            self.arm.set_gain(default_gain)
+
+            # Update control mode state
+            self._is_joint_control_mode = True
+            self._is_cartesian_control_mode = False
+            self._is_gravity_compensation_mode = False
+            logger.info("✓ Arm is now in normal position control mode")
+        elif not self._is_gravity_compensation_mode and is_joint_mode:
+            logger.info("Arm is already in normal position control mode")
+            return
+        else:
+            logger.warning(f"Can't switch to normal position control mode from current mode: {self.config.control_mode}")
+            return
+
+    def set_to_normal_cartesian_control(self):
+        """Switch from gravity compensation to normal cartesian control mode"""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        logger.info("Switching to normal cartesian control mode...")
+
+        is_cartesian_mode = self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL
+
+        if self._is_gravity_compensation_mode and is_cartesian_mode:
+            # Reset to default gain
+            default_gain = self.arm.get_gain()
+            default_gain.kp()[:] = self.controller_config.default_kp
+            default_gain.kd()[:] = self.controller_config.default_kd
+            default_gain.gripper_kp = self.controller_config.default_gripper_kp
+            default_gain.gripper_kd = self.controller_config.default_gripper_kd
+
+            self.arm.set_gain(default_gain)
+
+            # Update control mode state
+            self._is_joint_control_mode = False
+            self._is_cartesian_control_mode = True
+            self._is_gravity_compensation_mode = False
+
+            logger.info("✓ Arm is now switch from gravity compensation to normal cartesian control mode")
+        elif not self._is_gravity_compensation_mode and is_cartesian_mode:
+            logger.info("Arm is already in normal cartesian control mode")
+            return
+        else:
+            logger.warning(
+                f"Can't switch to normal cartesian control mode from current mode: {self.config.control_mode}"
+            )
+            return
+
+    def _calculate_motion_duration(
+        self,
+        target: np.ndarray,
+        min_duration: float = 0.5,
+        speed_factor: float = 2.0,
+    ) -> float:
+        """
+        Calculate motion duration based on maximum joint/EEF position error.
+
+        This follows the SDK's reset_to_home logic:
+        duration = max(max_pos_error, min_duration)
+
+        Args:
+            target: Target position (7 elements: 6 joints/pose + gripper)
+            min_duration: Minimum duration in seconds (default: 1.0)
+            speed_factor: Multiplier for speed adjustment (default: 2.0)
+
+        Returns:
+            Calculated duration in seconds
+        """
+        # Always use Joint space for duration calculation (consistent units in radians)
+        # This follows SDK's reset_to_home logic which uses joint position error
+        state = self.arm.get_joint_state()
+        current = np.concatenate([state.pos(), [state.gripper_pos]])
+
+        # Calculate maximum position error (excluding gripper)
+        max_error = np.abs(current[:6] - target[:6]).max()
+
+        # Duration = max(max_error, min_duration) * speed_factor
+        duration = max(max_error, min_duration) * speed_factor
+        logger.info(f"Calculated motion duration: {duration:.1f} seconds")
+        return duration
 
     def smooth_go_start(
-        self, duration: float = 2.0, easing: str = "ease_in_out_quad"
+        self, duration: float | None = None, easing: str = "ease_in_out_quad"
     ) -> None:
         """
         Smoothly move the arm to the start position using trajectory interpolation.
@@ -808,7 +872,8 @@ class ARX5Follower(Robot):
         (No mode switching needed - already in position control)
 
         Args:
-            duration: Duration in seconds for the movement (default: 2.0)
+            duration: Duration in seconds for the movement. If None, automatically
+                calculated based on distance to target (like SDK's reset_to_home).
             easing: Easing profile to apply ("ease_in_out_quad" or "linear")
 
         Raises:
@@ -817,18 +882,34 @@ class ARX5Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Calculate duration if not provided
+        if duration is None:
+            target = np.array(self._start_position)
+            duration = self._calculate_motion_duration(target)
+
         logger.info(f"Smoothly going to start position over {duration:.1f} seconds...")
 
         if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
-            # Cartesian mode: use EEF trajectory (already in position control)
+            # Cartesian mode: use EEF trajectory
+            logger.info("Cartesian mode: use EEF trajectory interpolation.")
+            state = self.arm.get_eef_state()
+            current_cmd = arx5.EEFState(state.pose_6d(), state.gripper_pos)
+            # Must set a future timestamp (SDK requires timestamp > current_time for interpolation)
+            current_cmd.timestamp = self.arm.get_timestamp() + 0.01
+            self.arm.set_eef_cmd(current_cmd)
+
+            # Now safe to switch to normal cartesian control
+            self.set_to_normal_cartesian_control()
+
             self.move_eef_trajectory(
                 target_eef_poses=self._start_position.copy(),
                 durations=duration,
                 easing=easing,
             )
-            logger.info("✓ Successfully going to start position (cartesian mode)")
+            logger.info(f"✓ Successfully going to start position in {self.config.control_mode.value} mode")
         else:
-            # Joint mode: need to switch modes
+            # Joint mode: use joint trajectory interpolation
+            logger.info("Joint mode: use joint trajectory interpolation.")
             # First, set current position as target to avoid large position error
             state = self.arm.get_joint_state()
 
@@ -848,15 +929,10 @@ class ARX5Follower(Robot):
                 durations=duration,
                 easing=easing,
             )
-
-            # Switch back to gravity compensation mode (only for joint mode)
-            self.set_to_gravity_compensation_mode()
-            logger.info(
-                "✓ Successfully going to start position and switched to gravity compensation mode"
-            )
+            logger.info(f"✓ Successfully going to start position in {self.config.control_mode.value} mode")
 
     def smooth_go_home(
-        self, duration: float = 2.0, easing: str = "ease_in_out_quad"
+        self, duration: float | None = None, easing: str = "ease_in_out_quad"
     ) -> None:
         """
         Smoothly move the arm to the home position using trajectory interpolation.
@@ -871,7 +947,8 @@ class ARX5Follower(Robot):
         (No mode switching needed - already in position control)
 
         Args:
-            duration: Duration in seconds for the movement (default: 2.0)
+            duration: Duration in seconds for the movement. If None, automatically
+                calculated based on distance to target (like SDK's reset_to_home).
             easing: Easing profile to apply ("ease_in_out_quad" or "linear")
 
         Raises:
@@ -880,18 +957,36 @@ class ARX5Follower(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Calculate duration if not provided
+        if duration is None:
+            target = np.array(self._home_position)
+            duration = self._calculate_motion_duration(target)
+
         logger.info(
             f"Smoothly returning to home position over {duration:.1f} seconds..."
         )
 
         if self.config.control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
-            # Cartesian mode: use EEF trajectory (already in position control)
+            # Cartesian mode: use EEF trajectory
+            logger.info("Cartesian mode: use EEF trajectory interpolation.")
+
+            # Set current position as command first (required for interpolator)
+            state = self.arm.get_eef_state()
+            current_cmd = arx5.EEFState(state.pose_6d(), state.gripper_pos)
+            current_cmd.timestamp = self.arm.get_timestamp() + 0.01
+            self.arm.set_eef_cmd(current_cmd)
+
+            # Switch to normal cartesian control (if in gravity compensation mode)
+            self.set_to_normal_cartesian_control()
+
             self.move_eef_trajectory(
                 target_eef_poses=self._home_position.copy(),
                 durations=duration,
                 easing=easing,
             )
-            logger.info("✓ Successfully returned to home position (cartesian mode)")
+            logger.info(
+                f"✓ Successfully returned to home position in {self.config.control_mode.value} mode"
+            )
         else:
             # Joint mode: need to switch modes
             # First, set current position as target to avoid large position error

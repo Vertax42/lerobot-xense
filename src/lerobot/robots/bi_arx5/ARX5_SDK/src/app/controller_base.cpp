@@ -53,10 +53,10 @@ Arx5ControllerBase::~Arx5ControllerBase()
         damping_gain.gripper_kd = controller_config_.default_gripper_kd;  // 夹爪阻尼增益
 
         // Increase damping if needed
-        // damping_gain.kd[0] *= 3;
-        // damping_gain.kd[1] *= 3;
-        // damping_gain.kd[2] *= 3;
-        // damping_gain.kd[3] *= 1.5;
+        damping_gain.kd[0] *= 3;
+        damping_gain.kd[1] *= 3;
+        damping_gain.kd[2] *= 3;
+        damping_gain.kd[3] *= 3;
 
         set_gain(damping_gain);
         {
@@ -234,8 +234,9 @@ void Arx5ControllerBase::reset_to_home()
             std::lock_guard<std::mutex> guard(cmd_mutex_);
             interpolator_.override_waypoint(get_timestamp(), target_state);
         }
+        // Wait for second stage interpolation to complete
+        sleep_ms(550);
         logger_->info("Finish reset to home (second stage)");
-        // logger_->info("Second stage completed");
     }
     else {
         logger_->info("Finish reset to home (single stage)");
