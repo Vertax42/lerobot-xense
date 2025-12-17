@@ -172,6 +172,7 @@ elif [[ "$1" == "--install" ]]; then
 
     uv pip install onnxruntime-gpu==1.19.2
     if uv pip install xensesdk==1.6.5; then
+        uv pip install av==15.1.0
         echo "[INFO] xensesdk installed successfully!"
         # Workaround:
         # After installing xensesdk, remove OpenCV's bundled Qt platform plugin if present.
@@ -232,6 +233,29 @@ elif [[ "$1" == "--install" ]]; then
     pip uninstall -y xensevr_pc_service_sdk 2>/dev/null || true
     python setup.py install
     echo -e "[INFO] xensevr_pc_service_sdk is installed in $CONDA_CMD environment '$ENV_NAME'.\n"
+    
+    # Verify critical package versions
+    echo "[INFO] Verifying package versions..."
+    cd "$PROJECT_ROOT"
+    TORCHCODEC_VER=$(python -c "import torchcodec; print(torchcodec.__version__)" 2>/dev/null || echo "NOT INSTALLED")
+    AV_VER=$(python -c "import av; print(av.__version__)" 2>/dev/null || echo "NOT INSTALLED")
+    TORCH_VER=$(python -c "import torch; print(torch.__version__)" 2>/dev/null || echo "NOT INSTALLED")
+    echo "  - torch: $TORCH_VER"
+    echo "  - torchcodec: $TORCHCODEC_VER (should be 0.7.0)"
+    echo "  - av (pyav): $AV_VER (should be 15.1.0)"
+    
+    if [[ "$TORCHCODEC_VER" != "0.7.0" ]]; then
+        echo "[WARN] torchcodec version mismatch! Expected 0.7.0, got $TORCHCODEC_VER"
+        echo "[INFO] Attempting to fix torchcodec version..."
+        uv pip install torchcodec==0.7.0 --force-reinstall
+    fi
+    
+    if [[ "$AV_VER" != "15.1.0" ]]; then
+        echo "[WARN] av (pyav) version mismatch! Expected 15.1.0, got $AV_VER"
+        echo "[INFO] Attempting to fix av version..."
+        uv pip install av==15.1.0 --force-reinstall
+    fi
+    
     echo "[INFO] Lerobot-Xense installation completed successfully!"
     exit 0
 else

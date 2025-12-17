@@ -84,7 +84,7 @@ dependencies = [
     "wandb>=0.20.0,<0.22.0",
     "pyrealsense2",
     "torch>=2.2.1,<2.8.1",
-    "torchcodec>=0.2.1,<0.6.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
+    "torchcodec==0.7.0; sys_platform != 'win32' and (sys_platform != 'linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l')) and (sys_platform != 'darwin' or platform_machine != 'x86_64')",
     "torchvision>=0.21.0,<0.24.0",
     "draccus==0.10.0",
     "gymnasium>=1.1.1,<2.0.0",
@@ -93,12 +93,15 @@ dependencies = [
     "deepdiff>=7.0.1,<9.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
+    "scikit-image",
 
     # NOTE: xensesdk requires numpy<=1.26.4 but rerun-sdk requires numpy>=2
     "PyOpenGL_accelerate",
     # for 3d spacemouse teleoperator
     "atomics",
-    "spnav@https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz"
+    "spnav@https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz",
+    # for flexiv robot
+    "flexivrdk",
 ]
 
 # Optional dependencies
