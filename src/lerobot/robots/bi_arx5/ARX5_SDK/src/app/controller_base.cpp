@@ -247,8 +247,8 @@ void Arx5ControllerBase::set_to_damping()
 {
     Gain damping_gain{robot_config_.joint_dof};
     damping_gain.kd = controller_config_.default_kd;
-    damping_gain.gripper_kp = 0.0f;  // 夹爪位置增益设为0
-    damping_gain.gripper_kd = controller_config_.default_gripper_kd;  // 夹爪阻尼增益
+    damping_gain.gripper_kp = 0.0f;  // gripper position kp set to 0
+    damping_gain.gripper_kd = controller_config_.default_gripper_kd;  // gripper velocity kd set to default
     set_gain(damping_gain);
     sleep_ms(10);
     JointState joint_state = get_joint_state();
@@ -256,12 +256,30 @@ void Arx5ControllerBase::set_to_damping()
         std::lock_guard<std::mutex> guard(cmd_mutex_);
         joint_state.vel = VecDoF::Zero(robot_config_.joint_dof);
         joint_state.torque = VecDoF::Zero(robot_config_.joint_dof);
-        joint_state.gripper_vel = 0.0f;  // 夹爪速度设为0
-        joint_state.gripper_torque = 0.0f;  // 夹爪力矩设为0
+        joint_state.gripper_vel = 0.0f;  // gripper velocity set to 0
+        joint_state.gripper_torque = 0.0f;  // gripper torque set to 0
         interpolator_.init_fixed(joint_state);
     }
 }
 
+void Arx5ControllerBase::set_to_gravity_compensation()
+{
+    Gain damping_gain{robot_config_.joint_dof};
+    damping_gain.kd << 0.3, 0.3, 0.3, 0.15, 0.15, 0.1;  // joint velocity kd set to constant
+    damping_gain.gripper_kp = 0.0f;  // gripper position kp set to 0
+    damping_gain.gripper_kd = 0.0025f;  // gripper velocity kd set to constant 0.0025
+    set_gain(damping_gain);
+    sleep_ms(10);
+    JointState joint_state = get_joint_state();
+    {
+        std::lock_guard<std::mutex> guard(cmd_mutex_);
+        joint_state.vel = VecDoF::Zero(robot_config_.joint_dof);
+        joint_state.torque = VecDoF::Zero(robot_config_.joint_dof);
+        joint_state.gripper_vel = 0.0f;  // gripper velocity set to 0
+        joint_state.gripper_torque = 0.0f;  // gripper torque set to 0
+        interpolator_.init_fixed(joint_state);
+    }
+}
 // ---------------------- Private functions ----------------------
 
 void Arx5ControllerBase::init_robot_()
