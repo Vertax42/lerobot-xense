@@ -473,7 +473,7 @@ int64_t getMotionTimeStampNs() {
 }
 
 
-PYBIND11_MODULE(xrobotoolkit_sdk, m) {
+PYBIND11_MODULE(xensevr_pc_service_sdk, m) {
     m.def("init", &init, "Initialize the PXREARobot SDK.");
     m.def("close", &deinit, "Deinitialize the PXREARobot SDK.");
     m.def("get_left_controller_pose", &getLeftControllerPose, "Get the left controller pose.");

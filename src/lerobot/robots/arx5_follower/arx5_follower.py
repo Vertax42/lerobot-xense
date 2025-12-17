@@ -209,11 +209,17 @@ class ARX5Follower(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         return self._is_gravity_compensation_mode
 
-    def is_position_control_mode(self) -> bool:
+    def is_joint_control_mode(self) -> bool:
         """Check if robot is currently in position control mode"""
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         return self._is_joint_control_mode
+
+    def is_cartesian_control_mode(self) -> bool:
+        """Check if robot is currently in cartesian control mode"""
+        if not self._is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        return self._is_cartesian_control_mode
 
     def connect(self, calibrate: bool = False, go_to_start: bool = True) -> None:
         if self.is_connected:
@@ -692,7 +698,7 @@ class ARX5Follower(Robot):
         # Reset to home and set to damping mode for safety
         try:
             logger.info("Disconnecting arm...")
-            self.arm.reset_to_home()
+            self.reset_to_home()
             self.arm.set_to_damping()
             logger.info("✓ Arm disconnected successfully")
         except Exception as e:
@@ -704,9 +710,7 @@ class ARX5Follower(Robot):
 
         # Destroy arm object - this triggers SDK cleanup
         self.arm = None
-
         self._is_connected = False
-
         logger.info(f"{self} disconnected.")
 
     def set_log_level(self, level: str):
@@ -730,7 +734,6 @@ class ARX5Follower(Robot):
             raise ValueError(
                 f"Invalid log level: {level}. Supported levels: {list(log_level_map.keys())}"
             )
-
         log_level = log_level_map[level.upper()]
 
         # Set log level for arm if connected
@@ -745,29 +748,30 @@ class ARX5Follower(Robot):
         logger.info("Arm reset to home position.")
 
     def set_to_gravity_compensation_mode(self):
-        """Switch from normal position control to gravity compensation mode"""
+        """Switch from normal position control or cartesian control to gravity compensation mode.
+
+        Uses SDK's set_to_damping() which:
+        1. Sets kp=0, kd=default (damping only, no position control)
+        2. Resets interpolator to current position (important for Cartesian mode)
+        3. Gravity compensation is handled by SDK if controller_config.gravity_compensation=True
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         logger.info("Switching to gravity compensation mode...")
 
-        # Reset to zero PD with 0.15 * default kd
-        zero_grav_gain = arx5.Gain(self.robot_config.joint_dof)
-        zero_grav_gain.kp()[:] = 0.0
-        zero_grav_gain.kd()[:] = self.controller_config.default_kd * 0.15
-        zero_grav_gain.gripper_kp = 0.0
-        zero_grav_gain.gripper_kd = self.controller_config.default_gripper_kd * 0.25
-
-        self.arm.set_gain(zero_grav_gain)
+        # Use SDK's set_to_damping() which properly resets the interpolator
+        self.arm.set_to_damping()
 
         # Update control mode state
         self._is_gravity_compensation_mode = True
         self._is_joint_control_mode = False
+        self._is_cartesian_control_mode = False
 
-        logger.info("✓ Arm is now in gravity compensation mode")
+        logger.info("✓ Arm is now in gravity compensation mode (damping)")
 
     def set_to_normal_position_control(self):
-        """Switch from gravity compensation to normal position control mode"""
+        """Switch from gravity compensation to normal position control or cartesian control mode"""
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -785,7 +789,7 @@ class ARX5Follower(Robot):
         # Update control mode state
         self._is_gravity_compensation_mode = False
         self._is_joint_control_mode = True
-
+        self._is_cartesian_control_mode = False
         logger.info("✓ Arm is now in normal position control mode")
 
     def smooth_go_start(

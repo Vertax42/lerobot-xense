@@ -8,6 +8,7 @@ dependencies:
   - ros-humble-kdl-parser
   - ros-humble-ament-cmake
   - cxx-compiler
+  - libstdcxx-ng  # for xensevr_pc_service_sdk
   - cmake
   - ninja
   - orocos-kdl

@@ -197,6 +197,41 @@ elif [[ "$1" == "--install" ]]; then
         echo "[ERROR] xensesdk installation failed. See the error output above."
         exit 1
     fi
+
+    # Install xensevr_pc_service_sdk for pico4 teleoperator
+    echo "[INFO] Installing xensevr_pc_service_sdk..."
+    
+    # Save the project root directory
+    PROJECT_ROOT=$(pwd)
+    XENSEVR_PC_SERVICE_PYBIND_DIR="$PROJECT_ROOT/src/lerobot/teleoperators/pico4/xensevr-pc-service-pybind"
+
+    # Install the required packages
+    cd "$XENSEVR_PC_SERVICE_PYBIND_DIR"
+    mkdir -p dependencies
+    cd dependencies
+
+    # Clone if not already cloned
+    if [ ! -d "XenseVR-PC-Service" ]; then
+        git clone https://github.com/Vertax42/XenseVR-PC-Service.git
+    fi
+    cd XenseVR-PC-Service/RoboticsService/PXREARobotSDK
+    bash build.sh
+    
+    # Go back to xensevr-pc-service-pybind directory
+    cd "$XENSEVR_PC_SERVICE_PYBIND_DIR"
+    mkdir -p lib
+    mkdir -p include
+
+    # Copy files from the cloned repo
+    SDK_DIR="$XENSEVR_PC_SERVICE_PYBIND_DIR/dependencies/XenseVR-PC-Service/RoboticsService/PXREARobotSDK"
+    cp "$SDK_DIR/PXREARobotSDK.h" include/
+    cp -r "$SDK_DIR/nlohmann" include/
+    cp "$SDK_DIR/build/libPXREARobotSDK.so" lib/
+
+    pip uninstall -y xensevr_pc_service_sdk 2>/dev/null || true
+    python setup.py install
+    echo -e "[INFO] xensevr_pc_service_sdk is installed in $CONDA_CMD environment '$ENV_NAME'.\n"
+    echo "[INFO] Lerobot-Xense installation completed successfully!"
     exit 0
 else
     echo "Invalid argument. Usage:"
