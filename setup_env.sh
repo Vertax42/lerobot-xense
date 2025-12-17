@@ -169,9 +169,10 @@ elif [[ "$1" == "--install" ]]; then
         exit 1
     fi
     echo "[INFO] Installing xensesdk..."
-    if uv pip install xensesdk==1.6.5 --no-deps; then
-        echo "[INFO] xensesdk installed successfully!"
 
+    uv pip install onnxruntime-gpu==1.19.2
+    if uv pip install xensesdk==1.6.5; then
+        echo "[INFO] xensesdk installed successfully!"
         # Workaround:
         # After installing xensesdk, remove OpenCV's bundled Qt platform plugin if present.
         # This avoids Qt/XCB plugin loading issues inside conda environments.
