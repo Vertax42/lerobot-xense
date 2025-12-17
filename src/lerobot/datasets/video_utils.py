@@ -33,36 +33,39 @@ from datasets.features.features import register_feature
 from PIL import Image
 
 
-# def get_safe_default_codec():
-#     if importlib.util.find_spec("torchcodec"):
-#         return "torchcodec"
-#     else:
-#         logging.warning(
-#             "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
-#         )
-#         return "pyav"
-
-
 def get_safe_default_codec():
     if importlib.util.find_spec("torchcodec"):
-        # Test if the core functionality is properly registered
-        import torch
-
-        # Try to access the torchcodec core operations to see if they're registered
-        if hasattr(torch, "_ops") and hasattr(torch._ops, "torchcodec_ns"):
-            return "torchcodec"
-        else:
-            logging.warning(
-                "torchcodec is installed but core operations are not registered, "
-                "falling back to 'pyav' as default decoder"
-            )
-            return "pyav"
+        return "torchcodec"
     else:
         logging.warning(
-            "'torchcodec' is not available in your platform, "
-            "falling back to 'pyav' as a default decoder"
+            "'torchcodec' is not available in your platform, falling back to 'pyav' as a default decoder"
         )
         return "pyav"
+
+
+# def get_safe_default_codec():
+#     """
+#     Returns the best available video codec for decoding.
+#     Prefers torchcodec over pyav for better performance.
+#     """
+#     if importlib.util.find_spec("torchcodec"):
+#         try:
+#             # Actually try to import the decoder to verify it works
+#             from torchcodec.decoders import VideoDecoder  # noqa: F401
+
+#             return "torchcodec"
+#         except ImportError as e:
+#             logging.warning(
+#                 f"torchcodec is installed but failed to import VideoDecoder: {e}. "
+#                 "Falling back to 'pyav' as default decoder"
+#             )
+#             return "pyav"
+#     else:
+#         logging.warning(
+#             "'torchcodec' is not available in your platform, "
+#             "falling back to 'pyav' as a default decoder"
+#         )
+#         return "pyav"
 
 
 def decode_video_frames(
