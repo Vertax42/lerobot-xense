@@ -75,6 +75,7 @@ PYBIND11_MODULE(arx5_interface, m)
         .def("get_controller_config", &Arx5JointController::get_controller_config)
         .def("reset_to_home", &Arx5JointController::reset_to_home)
         .def("set_to_damping", &Arx5JointController::set_to_damping)
+        .def("set_to_gravity_compensation", &Arx5JointController::set_to_gravity_compensation)
         .def("set_log_level", &Arx5JointController::set_log_level)
         .def("calibrate_joint", &Arx5JointController::calibrate_joint)
         .def("calibrate_gripper", &Arx5JointController::calibrate_gripper);
@@ -96,7 +97,8 @@ PYBIND11_MODULE(arx5_interface, m)
         .def("get_controller_config", &Arx5CartesianController::get_controller_config)
         .def("reset_to_home", &Arx5CartesianController::reset_to_home)
         .def("multi_trial_ik", &Arx5CartesianController::multi_trial_ik)
-        .def("set_to_damping", &Arx5CartesianController::set_to_damping);
+        .def("set_to_damping", &Arx5CartesianController::set_to_damping)
+        .def("set_to_gravity_compensation", &Arx5CartesianController::set_to_gravity_compensation);
     py::class_<Arx5Solver>(m, "Arx5Solver")
         .def(py::init<const std::string &, int, Eigen::VectorXd, Eigen::VectorXd>())
         .def(py::init<const std::string &, int, Eigen::VectorXd, Eigen::VectorXd, const std::string &,

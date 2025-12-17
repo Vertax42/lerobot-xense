@@ -35,6 +35,7 @@ class Arx5ControllerBase // parent class for the other two controllers
 
     void reset_to_home();
     void set_to_damping();
+    void set_to_gravity_compensation();
 
   protected:
     RobotConfig robot_config_;
