@@ -85,7 +85,10 @@ def main(model: str, interface: str):
         pose_error_cnt += 1
         time.sleep(0.05)
     traj_update_pose_err = pose_error / pose_error_cnt
-    controller.reset_to_home()
+    controller.set_to_damping()
+    while True:
+        time.sleep(0.1)
+    damping_pose_err = pose_error / pose_error_cnt
     print(f"Single point update: average pose error {single_update_pose_err}")
     print(f"EEF trajectory update: average pose error {traj_update_pose_err}")
     # Since the input trajectory is already smooth enough, the tracking error difference is not significant

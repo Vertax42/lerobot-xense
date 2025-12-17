@@ -22,13 +22,11 @@ from typing import Any, Sequence
 
 import numpy as np
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
-from .config_bi_arx5 import BiARX5Config
+from .config_bi_arx5 import BiARX5Config, BiARX5ControlMode
 
 import os
 import sys
@@ -58,7 +56,7 @@ class BiARX5(Robot):
     """
     [Bimanual ARX5 Arms]
 
-    Dual ARX5 Arms Robot
+    Dual ARX5 Arms Robot with support for Joint and Cartesian control modes.
     """
 
     config_class = BiARX5Config
@@ -68,46 +66,52 @@ class BiARX5(Robot):
         super().__init__(config)
         self.config = config
 
-        # init left and right arm when connect
+        # Init left and right arm when connect
         self.left_arm = None
         self.right_arm = None
         self._is_connected = False
 
         # Control mode state variables
-        self._is_gravity_compensation_mode = False
-        self._is_position_control_mode = False
+        self._is_joint_control_mode = False
+        self._is_cartesian_control_mode = False
+        self._is_gravity_compensation_mode = True
 
         # Use configurable preview time for inference mode
-        # Higher values provide smoother motion but more delay
-        # Can be adjusted via --robot.preview_time parameter
-        self.default_preview_time = (
-            self.config.preview_time if self.config.inference_mode else 0.0
-        )
-
-        # rpc timeout
-        self.rpc_timeout: float = getattr(config, "rpc_timeout", 5.0)
-
-        # init thread pool
-        self._exec_left = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="left_arm"
-        )
-        self._exec_right = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="right_arm"
-        )
+        # For CARTESIAN_CONTROL, we don't override SDK default (0.1s)
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Let SDK use its default preview_time (0.1s for cartesian_controller)
+            self.default_preview_time = None
+            logger.info("Cartesian control mode: using SDK default preview_time (0.1s)")
+        elif self.config.inference_mode:
+            self.default_preview_time = self.config.preview_time
+            logger.info(f"Joint control mode (inference): using preview_time {self.default_preview_time}s")
+        else:
+            self.default_preview_time = 0.0
+            logger.info(f"Joint control mode (teleop): using preview_time {self.default_preview_time}s")
 
         # Pre-compute action keys for faster lookup (performance optimization)
-        self._left_joint_keys = [f"left_joint_{i+1}.pos" for i in range(6)]
-        self._right_joint_keys = [f"right_joint_{i+1}.pos" for i in range(6)]
+        if config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            self._left_action_keys = ["left_x", "left_y", "left_z", "left_roll", "left_pitch", "left_yaw"]
+            self._right_action_keys = ["right_x", "right_y", "right_z", "right_roll", "right_pitch", "right_yaw"]
+            self._left_gripper_key = "left_gripper_pos"
+            self._right_gripper_key = "right_gripper_pos"
+        else:
+            self._left_action_keys = [f"left_joint_{i+1}.pos" for i in range(6)]
+            self._right_action_keys = [f"right_joint_{i+1}.pos" for i in range(6)]
+            self._left_gripper_key = "left_gripper.pos"
+            self._right_gripper_key = "right_gripper.pos"
 
-        # Pre-allocate JointState command buffers to avoid repeated allocation
-        self._left_cmd_buffer = None
-        self._right_cmd_buffer = None
+        # Pre-allocate command buffers (initialized in connect based on control mode)
+        self._left_cmd_buffer = None  # JointState buffer for joint control
+        self._right_cmd_buffer = None  # JointState buffer for joint control
+        self._left_eef_cmd_buffer = None  # EEFState buffer for cartesian control
+        self._right_eef_cmd_buffer = None  # EEFState buffer for cartesian control
 
         # Define home position (all joints at 0, gripper closed)
         self._home_position = self.config.home_position
         self._start_position = self.config.start_position
 
-        # use dict to store left and right arm configs
+        # Robot configs
         self.robot_configs = {
             "left_config": arx5.RobotConfigFactory.get_instance().get_config(
                 config.left_arm_model
@@ -117,55 +121,97 @@ class BiARX5(Robot):
             ),
         }
 
-        # set gripper_open_readout for left and right arm
+        # Create solver for FK/IK calculations (both arms use same model)
+        urdf_path = os.path.join(
+            current_dir, "ARX5_SDK", "models", f"{config.left_arm_model}.urdf"
+        )
+        self._solver = arx5.Arx5Solver(
+            urdf_path,
+            self.robot_configs["left_config"].joint_dof,
+            self.robot_configs["left_config"].joint_pos_min,
+            self.robot_configs["left_config"].joint_pos_max,
+        )
+
+        # For Cartesian mode, convert joint positions to EEF positions
+        if config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            home_joint_pos = np.array(self._home_position[:6], dtype=np.float64)
+            start_joint_pos = np.array(self._start_position[:6], dtype=np.float64)
+
+            # Convert home and start positions to EEF space using FK
+            self._home_position_eef = np.concatenate([
+                self._solver.forward_kinematics(home_joint_pos),
+                [self._home_position[6]]  # gripper
+            ])
+            self._start_position_eef = np.concatenate([
+                self._solver.forward_kinematics(start_joint_pos),
+                [self._start_position[6]]  # gripper
+            ])
+            logger.info(f"EEF home position (FK): {self._home_position_eef}")
+            logger.info(f"EEF start position (FK): {self._start_position_eef}")
+
+        # Set gripper_open_readout for left and right arm
         self.robot_configs["left_config"].gripper_open_readout = (
             config.gripper_open_readout[0]
         )
         self.robot_configs["right_config"].gripper_open_readout = (
             config.gripper_open_readout[1]
         )
+        logger.info(f"Set left gripper_open_readout to: {self.robot_configs['left_config'].gripper_open_readout}")
+        logger.info(f"Set right gripper_open_readout to: {self.robot_configs['right_config'].gripper_open_readout}")
+
+        # Controller config - select based on control mode
+        if config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            controller_type = "cartesian_controller"
+            # Cartesian controller requires background_send_recv = True
+            use_background = True
+        else:
+            controller_type = "joint_controller"
+            use_background = config.use_multithreading
 
         self.controller_configs = {
             "left_config": arx5.ControllerConfigFactory.get_instance().get_config(
-                "joint_controller", self.robot_configs["left_config"].joint_dof
+                controller_type, self.robot_configs["left_config"].joint_dof
             ),
             "right_config": arx5.ControllerConfigFactory.get_instance().get_config(
-                "joint_controller", self.robot_configs["right_config"].joint_dof
+                controller_type, self.robot_configs["right_config"].joint_dof
             ),
         }
+        logger.info(f"Using {controller_type} for control mode: {config.control_mode.value}")
 
-        self.controller_configs["left_config"].controller_dt = (
-            config.controller_dt
-        )  # set controller_dt to 5ms
-        self.controller_configs["right_config"].controller_dt = (
-            config.controller_dt
-        )  # set controller_dt to 5ms
+        # Set controller_dt and default_preview_time
+        self.controller_configs["left_config"].controller_dt = config.controller_dt
+        self.controller_configs["right_config"].controller_dt = config.controller_dt
+        # Only override default_preview_time if not CARTESIAN_CONTROL (preserve SDK default 0.1s)
+        if self.default_preview_time is not None:
+            self.controller_configs["left_config"].default_preview_time = self.default_preview_time
+            self.controller_configs["right_config"].default_preview_time = self.default_preview_time
 
-        self.controller_configs["left_config"].default_preview_time = (
-            self.default_preview_time
-        )  # set default_preview_time to 15ms
-        self.controller_configs["right_config"].default_preview_time = (
-            self.default_preview_time
-        )  # set default_preview_time to 15ms
-
-        # use multithreading by default
-        if config.use_multithreading:
-            self.controller_configs["left_config"].background_send_recv = True
-            self.controller_configs["right_config"].background_send_recv = True
-        else:
-            self.controller_configs["left_config"].background_send_recv = False
-            self.controller_configs["right_config"].background_send_recv = False
+        # Background send/recv setting
+        self.controller_configs["left_config"].background_send_recv = use_background
+        self.controller_configs["right_config"].background_send_recv = use_background
 
         self.cameras = make_cameras_from_configs(config.cameras)
         np.set_printoptions(precision=3, suppress=True)
 
     @property
     def _motors_ft(self) -> dict[str, type]:
-        # ARX5 has 6 joints + 1 gripper
-        joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
-        return {f"left_{joint}.pos": float for joint in joint_names} | {
-            f"right_{joint}.pos": float for joint in joint_names
-        }
+        """Return motor features based on control mode."""
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Cartesian mode: EEF pose (x, y, z, roll, pitch, yaw) + gripper for each arm
+            return {
+                "left_x": float, "left_y": float, "left_z": float,
+                "left_roll": float, "left_pitch": float, "left_yaw": float,
+                "left_gripper_pos": float,
+                "right_x": float, "right_y": float, "right_z": float,
+                "right_roll": float, "right_pitch": float, "right_yaw": float,
+                "right_gripper_pos": float,
+            }
+        else:
+            # Joint mode (including teach mode): 6 joints + gripper per arm
+            joint_names = [f"joint_{i}" for i in range(1, 7)] + ["gripper"]
+            return {f"left_{joint}.pos": float for joint in joint_names} | {
+                f"right_{joint}.pos": float for joint in joint_names
+            }
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
@@ -198,11 +244,17 @@ class BiARX5(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
         return self._is_gravity_compensation_mode
 
-    def is_position_control_mode(self) -> bool:
-        """Check if robot is currently in position control mode"""
+    def is_joint_control_mode(self) -> bool:
+        """Check if robot is currently in joint control mode"""
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        return self._is_position_control_mode
+        return self._is_joint_control_mode
+
+    def is_cartesian_control_mode(self) -> bool:
+        """Check if robot is currently in cartesian control mode"""
+        if not self._is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        return self._is_cartesian_control_mode
 
     def connect(self, calibrate: bool = False, go_to_start: bool = True) -> None:
         if self.is_connected:
@@ -211,74 +263,77 @@ class BiARX5(Robot):
             )
 
         try:
-            logger.info("Creating left arm controller...")
-            self.left_arm = arx5.Arx5JointController(
-                self.robot_configs["left_config"],
-                self.controller_configs["left_config"],
-                self.config.left_arm_port,
-            )
+            logger.info(f"Creating left arm controller (mode: {self.config.control_mode.value})...")
+            if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+                self.left_arm = arx5.Arx5CartesianController(
+                    self.robot_configs["left_config"],
+                    self.controller_configs["left_config"],
+                    self.config.left_arm_port,
+                )
+            else:
+                self.left_arm = arx5.Arx5JointController(
+                    self.robot_configs["left_config"],
+                    self.controller_configs["left_config"],
+                    self.config.left_arm_port,
+                )
             time.sleep(0.5)
-            logger.info("✓ Left arm controller created successfully")
-            logger.info(
-                f"preview_time: {self.controller_configs['left_config'].default_preview_time}"
-            )
+            logger.info(f"✓ Left arm controller created successfully ({type(self.left_arm).__name__})")
+            logger.info(f"Left arm preview_time: {self.controller_configs['left_config'].default_preview_time}")
 
-            logger.info("Creating right arm controller...")
-            self.right_arm = arx5.Arx5JointController(
-                self.robot_configs["right_config"],
-                self.controller_configs["right_config"],
-                self.config.right_arm_port,
-            )
+            logger.info(f"Creating right arm controller (mode: {self.config.control_mode.value})...")
+            if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+                self.right_arm = arx5.Arx5CartesianController(
+                    self.robot_configs["right_config"],
+                    self.controller_configs["right_config"],
+                    self.config.right_arm_port,
+                )
+            else:
+                self.right_arm = arx5.Arx5JointController(
+                    self.robot_configs["right_config"],
+                    self.controller_configs["right_config"],
+                    self.config.right_arm_port,
+                )
             time.sleep(0.5)
-            logger.info("✓ Right arm controller created successfully")
-            logger.info(
-                f"preview_time: {self.controller_configs['right_config'].default_preview_time}"
-            )
+            logger.info(f"✓ Right arm controller created successfully ({type(self.right_arm).__name__})")
+            logger.info(f"Right arm preview_time: {self.controller_configs['right_config'].default_preview_time}")
+
+            # Verify SDK is using the correct gripper_open_readout
+            left_robot_config = self.left_arm.get_robot_config()
+            right_robot_config = self.right_arm.get_robot_config()
+            logger.info(f"SDK left gripper_open_readout: {left_robot_config.gripper_open_readout}")
+            logger.info(f"SDK right gripper_open_readout: {right_robot_config.gripper_open_readout}")
         except Exception as e:
             logger.error(f"Failed to create robot controller: {e}")
-            # Clean up created instances
             self.left_arm = None
             self.right_arm = None
             raise e
 
-        # set log lever
+        self._is_connected = True
+        # Set log level
         self.set_log_level(self.config.log_level)
 
-        # reset to home using sdk method
+        # Reset to home using SDK method
         self.reset_to_home()
 
-        zero_grav_gain = self.left_arm.get_gain()
-        zero_grav_gain.kp()[:] = 0.0
-        zero_grav_gain.kd()[:] = (
-            self.controller_configs["left_config"].default_kd * 0.15
-        )
-        zero_grav_gain.gripper_kp = 0.0
-        zero_grav_gain.gripper_kd = (
-            self.controller_configs["left_config"].default_gripper_kd * 0.25
-        )
+        # Set gravity compensation gain
+        self.set_to_gravity_compensation_mode()
 
-        self.left_arm.set_gain(zero_grav_gain)
-        self.right_arm.set_gain(zero_grav_gain)
-
-        # connect cameras
+        # Connect cameras
         for cam in self.cameras.values():
             cam.connect()
 
         # Initialize command buffers for optimized send_action
-        self._left_cmd_buffer = arx5.JointState(
-            self.robot_configs["left_config"].joint_dof
-        )
-        self._right_cmd_buffer = arx5.JointState(
-            self.robot_configs["right_config"].joint_dof
-        )
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            self._left_eef_cmd_buffer = arx5.EEFState()
+            self._right_eef_cmd_buffer = arx5.EEFState()
+            self._left_cmd_buffer = None
+            self._right_cmd_buffer = None
+        else:
+            self._left_cmd_buffer = arx5.JointState(self.robot_configs["left_config"].joint_dof)
+            self._right_cmd_buffer = arx5.JointState(self.robot_configs["right_config"].joint_dof)
+            self._left_eef_cmd_buffer = None
+            self._right_eef_cmd_buffer = None
 
-        self._is_connected = True
-
-        # Set default control mode to gravity compensation after connection
-        self._is_gravity_compensation_mode = True
-        self._is_position_control_mode = False
-
-        # go to start position, ready for data collection or inference
         logger.info("Dual-ARX5 Robot connected.")
         if go_to_start:
             self.smooth_go_start(duration=2.0)
@@ -290,6 +345,7 @@ class BiARX5(Robot):
                 "Robot go to home position, both arms are now in gravity compensation mode"
             )
 
+        # Log current gain
         gain = self.left_arm.get_gain()
         logger.info(
             f"Current left arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
@@ -298,15 +354,39 @@ class BiARX5(Robot):
         logger.info(
             f"Current right arm gain: {gain.kp()}, {gain.kd()}, {gain.gripper_kp}, {gain.gripper_kd}"
         )
+
         if self.config.inference_mode:
-            self.set_to_normal_position_control()
-            logger.info("✓ Robot is now in normal position control mode for inference or MASTER/VR teleoperation")
+            if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+                self.set_to_normal_cartesian_control()
+                logger.info("✓ Robot is now in cartesian control mode for inference")
+            elif self.config.control_mode == BiARX5ControlMode.JOINT_CONTROL:
+                self.set_to_normal_position_control()
+                logger.info("✓ Robot is now in joint position control mode for inference")
+            else:
+                logger.error(f"Invalid inference time control mode: {self.config.control_mode.value}")
+                raise ValueError(f"Invalid inference time control mode: {self.config.control_mode.value}")
+            logger.info(f"✓ Robot is now connected and ready for inference in {self.config.control_mode.value} mode.")
+        else:  # Teleoperation mode
+            if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+                self.set_to_normal_cartesian_control()
+                logger.info("✓ Robot is now in cartesian control mode for teleoperation")
+            elif self.config.control_mode == BiARX5ControlMode.JOINT_CONTROL:
+                self.set_to_normal_position_control()
+                logger.info("✓ Robot is now in position control mode for teleoperation")
+            elif self.config.control_mode == BiARX5ControlMode.TEACH_MODE:
+                self.set_to_gravity_compensation_mode()
+                logger.info("✓ Robot is now in gravity compensation mode for teleoperation")
+            else:
+                logger.error(f"Invalid teleoperation control mode: {self.config.control_mode.value}")
+                raise ValueError(f"Invalid teleoperation control mode: {self.config.control_mode.value}")
+            logger.info(
+                f"✓ Robot is now connected and ready for teleoperation in {self.config.control_mode.value} mode."
+            )
 
     @property
     def is_calibrated(self) -> bool:
-        """
-        ARX5 does not need to calibrate in runtime
-        """
+        """ARX5 does not need to calibrate in runtime"""
+        logger.info("ARX5 does not need to calibrate in runtime, skip...")
         return self.is_connected
 
     def calibrate(self) -> None:
@@ -315,9 +395,8 @@ class BiARX5(Robot):
         return
 
     def configure(self) -> None:
-        """
-        Configure the robot
-        """
+        """Configure the robot"""
+        logger.info("ARX5 does not need to configure in runtime, skip...")
         pass
 
     def setup_motors(self) -> None:
@@ -337,31 +416,35 @@ class BiARX5(Robot):
 
         obs_dict = {}
 
-        # Add "left_" prefix - get joint state from left arm
-        left_joint_state = self.left_arm.get_joint_state()
-        left_pos = (
-            left_joint_state.pos().copy()
-        )  # numpy array of joint positions (deep copy)
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Cartesian mode: get EEF states
+            left_eef_state = self.left_arm.get_eef_state()
+            left_pose_6d = left_eef_state.pose_6d().copy()
+            for i, key in enumerate(["left_x", "left_y", "left_z", "left_roll", "left_pitch", "left_yaw"]):
+                obs_dict[key] = float(left_pose_6d[i])
+            obs_dict["left_gripper_pos"] = float(left_eef_state.gripper_pos)
 
-        # Create left arm observations with joint names matching _motors_ft
-        for i in range(6):  # 6 joints
-            obs_dict[f"left_joint_{i+1}.pos"] = float(left_pos[i])
-        obs_dict["left_gripper.pos"] = float(left_joint_state.gripper_pos)
+            right_eef_state = self.right_arm.get_eef_state()
+            right_pose_6d = right_eef_state.pose_6d().copy()
+            for i, key in enumerate(["right_x", "right_y", "right_z", "right_roll", "right_pitch", "right_yaw"]):
+                obs_dict[key] = float(right_pose_6d[i])
+            obs_dict["right_gripper_pos"] = float(right_eef_state.gripper_pos)
+        else:
+            # Joint mode (including teach mode): get joint states
+            left_joint_state = self.left_arm.get_joint_state()
+            left_pos = left_joint_state.pos().copy()
+            for i in range(6):
+                obs_dict[f"left_joint_{i+1}.pos"] = float(left_pos[i])
+            obs_dict["left_gripper.pos"] = float(left_joint_state.gripper_pos)
 
-        # Add "right_" prefix - get joint state from right arm
-        right_joint_state = self.right_arm.get_joint_state()
-        right_pos = (
-            right_joint_state.pos().copy()
-        )  # numpy array of joint positions (deep copy)
+            right_joint_state = self.right_arm.get_joint_state()
+            right_pos = right_joint_state.pos().copy()
+            for i in range(6):
+                obs_dict[f"right_joint_{i+1}.pos"] = float(right_pos[i])
+            obs_dict["right_gripper.pos"] = float(right_joint_state.gripper_pos)
 
-        # Create right arm observations with joint names matching _motors_ft
-        for i in range(6):  # 6 joints
-            obs_dict[f"right_joint_{i+1}.pos"] = float(right_pos[i])
-        obs_dict["right_gripper.pos"] = float(right_joint_state.gripper_pos)
-
-        # Add camera observations - read all cameras in parallel for better performance
+        # Add camera observations
         camera_times = {}
-
         for cam_key, cam in self.cameras.items():
             start = time.perf_counter()
             image = cam.async_read()
@@ -372,55 +455,52 @@ class BiARX5(Robot):
         # Store camera timing info for debugging
         self.last_camera_times = camera_times
 
-        # Print camera read times
-        # camera_summary = ", ".join(
-        #     [f"{k}:{v:.1f}ms" for k, v in sorted(camera_times.items())]
-        # )
-        # logger.info(f"📷 Cameras [{parallel_total:.1f}ms total]: {camera_summary}")
-
         return obs_dict
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Use pre-allocated JointState objects (avoid repeated allocation)
-        left_cmd = self._left_cmd_buffer
-        right_cmd = self._right_cmd_buffer
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Cartesian mode: use EEF commands
+            # Note: timestamp is not set here, SDK will use controller_config.default_preview_time
+            left_cmd = self._left_eef_cmd_buffer
+            left_pose_6d = left_cmd.pose_6d()
+            for i, key in enumerate(self._left_action_keys):
+                left_pose_6d[i] = action.get(key, left_pose_6d[i])
+            left_cmd.gripper_pos = action.get(self._left_gripper_key, left_cmd.gripper_pos)
+            # Debug: Print commands before sending
+            # print(
+            #     f"Left arm command - pose_6d: {left_cmd.pose_6d()}, gripper: {left_cmd.gripper_pos}"
+            # )
+            self.left_arm.set_eef_cmd(left_cmd)
 
-        # Batch extract using pre-computed keys for better performance
-        # Left arm: use single get() call with fallback to avoid 'in' checks
-        left_pos = left_cmd.pos()
-        for i, key in enumerate(self._left_joint_keys):
-            # Keep previous value if key missing
-            left_pos[i] = action.get(
-                key, left_pos[i]
-            )
+            right_cmd = self._right_eef_cmd_buffer
+            right_pose_6d = right_cmd.pose_6d()
+            for i, key in enumerate(self._right_action_keys):
+                right_pose_6d[i] = action.get(key, right_pose_6d[i])
+            right_cmd.gripper_pos = action.get(self._right_gripper_key, right_cmd.gripper_pos)
+            # Debug: Print commands before sending
+            # print(
+            #     f"Right arm command - pose_6d: {right_cmd.pose_6d()}, gripper: {right_cmd.gripper_pos}"
+            # )
+            self.right_arm.set_eef_cmd(right_cmd)
+        else:
+            # Joint mode (including teach mode): use joint commands
+            left_cmd = self._left_cmd_buffer
+            left_pos = left_cmd.pos()
+            for i, key in enumerate(self._left_action_keys):
+                left_pos[i] = action.get(key, left_pos[i])
+            left_cmd.gripper_pos = action.get(self._left_gripper_key, left_cmd.gripper_pos)
+            self.left_arm.set_joint_cmd(left_cmd)
 
-        left_cmd.gripper_pos = action.get("left_gripper.pos", left_cmd.gripper_pos)
+            right_cmd = self._right_cmd_buffer
+            right_pos = right_cmd.pos()
+            for i, key in enumerate(self._right_action_keys):
+                right_pos[i] = action.get(key, right_pos[i])
+            right_cmd.gripper_pos = action.get(self._right_gripper_key, right_cmd.gripper_pos)
+            self.right_arm.set_joint_cmd(right_cmd)
 
-        # Right arm: same optimization
-        right_pos = right_cmd.pos()
-        for i, key in enumerate(self._right_joint_keys):
-            # Keep previous value if key missing
-            right_pos[i] = action.get(
-                key, right_pos[i]
-            )
-
-        right_cmd.gripper_pos = action.get("right_gripper.pos", right_cmd.gripper_pos)
-
-        # Debug: Print commands before sending
-        # print(
-        #     f"Left arm command - pos: {left_cmd.pos()}, gripper: {left_cmd.gripper_pos}"
-        # )
-        # print(
-        #     f"Right arm command - pos: {right_cmd.pos()}, gripper: {right_cmd.gripper_pos}"
-        # )
-
-        self.left_arm.set_joint_cmd(left_cmd)
-        self.right_arm.set_joint_cmd(right_cmd)
-
-        # Simply return the input action
         return action
 
     @staticmethod
@@ -444,6 +524,9 @@ class BiARX5(Robot):
     ) -> None:
         """Move both arms smoothly towards the provided joint targets.
 
+        Uses send_action to send interpolated commands step by step, ensuring
+        both arms move synchronously in the same loop iteration.
+
         Args:
             target_joint_poses: A dictionary with "left" and "right" keys (each a
                 sequence of 6 or 7 joint values including the gripper) or a
@@ -458,7 +541,6 @@ class BiARX5(Robot):
             DeviceNotConnectedError: If the robot is not connected.
             ValueError: If inputs are malformed.
         """
-
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
@@ -484,12 +566,8 @@ class BiARX5(Robot):
         def _get_current_state() -> tuple[np.ndarray, np.ndarray]:
             left_state = self.left_arm.get_joint_state()
             right_state = self.right_arm.get_joint_state()
-            left = np.concatenate(
-                (left_state.pos().copy(), np.array([left_state.gripper_pos]))
-            )
-            right = np.concatenate(
-                (right_state.pos().copy(), np.array([right_state.gripper_pos]))
-            )
+            left = np.concatenate([left_state.pos().copy(), [left_state.gripper_pos]])
+            right = np.concatenate([right_state.pos().copy(), [right_state.gripper_pos]])
             return left, right
 
         current_left, current_right = _get_current_state()
@@ -505,13 +583,13 @@ class BiARX5(Robot):
                 )
 
             def _to_array(values: Sequence[float], default: np.ndarray) -> np.ndarray:
-                arr = np.asarray(values, dtype=float)
+                arr = np.asarray(values, dtype=np.float64)
                 if arr.shape[0] not in (6, 7):
                     raise ValueError(
                         "Each arm target must provide 6 joint values (+ optional gripper)"
                     )
                 if arr.shape[0] == 6:
-                    arr = np.concatenate((arr, np.array([default[-1]])))
+                    arr = np.concatenate([arr, [default[-1]]])
                 return arr
 
             left_target = _to_array(segment["left"], default_left)
@@ -519,12 +597,16 @@ class BiARX5(Robot):
             return left_target, right_target
 
         def _apply_easing(alpha: float) -> float:
-            alpha = max(0.0, min(1.0, alpha))
+            alpha = np.clip(alpha, 0.0, 1.0)
             if easing == "ease_in_out_quad":
                 return self._ease_in_out_quad(alpha)
             if easing == "linear":
                 return alpha
             raise ValueError(f"Unsupported easing profile: {easing}")
+
+        # Pre-store action keys for joint mode (avoid string formatting in loop)
+        left_joint_keys = [f"left_joint_{i+1}.pos" for i in range(6)]
+        right_joint_keys = [f"right_joint_{i+1}.pos" for i in range(6)]
 
         try:
             for segment, duration in zip(trajectory, segment_durations, strict=True):
@@ -533,10 +615,8 @@ class BiARX5(Robot):
                 )
 
                 if duration <= 0:
-                    action = {}
-                    for i in range(6):
-                        action[f"left_joint_{i+1}.pos"] = float(target_left[i])
-                        action[f"right_joint_{i+1}.pos"] = float(target_right[i])
+                    action = dict(zip(left_joint_keys, target_left[:6].tolist()))
+                    action.update(dict(zip(right_joint_keys, target_right[:6].tolist())))
                     action["left_gripper.pos"] = float(target_left[6])
                     action["right_gripper.pos"] = float(target_right[6])
                     self.send_action(action)
@@ -553,14 +633,10 @@ class BiARX5(Robot):
                     progress = step / steps
                     ratio = _apply_easing(progress)
                     interp_left = current_left + (target_left - current_left) * ratio
-                    interp_right = (
-                        current_right + (target_right - current_right) * ratio
-                    )
+                    interp_right = current_right + (target_right - current_right) * ratio
 
-                    action = {}
-                    for i in range(6):
-                        action[f"left_joint_{i+1}.pos"] = float(interp_left[i])
-                        action[f"right_joint_{i+1}.pos"] = float(interp_right[i])
+                    action = dict(zip(left_joint_keys, interp_left[:6].tolist()))
+                    action.update(dict(zip(right_joint_keys, interp_right[:6].tolist())))
                     action["left_gripper.pos"] = float(interp_left[6])
                     action["right_gripper.pos"] = float(interp_right[6])
 
@@ -573,113 +649,178 @@ class BiARX5(Robot):
                 "Joint trajectory interrupted by user. Holding current pose."
             )
 
-    def _disconnect_parallel(self):
-        """Disconnect both arms in parallel (reset to home + set to damping)"""
-        if self.left_arm is None or self.right_arm is None:
-            logger.warning(
-                "One or both arms are already None, skipping parallel disconnect"
+    def move_eef_trajectory(
+        self,
+        target_eef_poses: (
+            dict[str, Sequence[float]] | Sequence[dict[str, Sequence[float]]]
+        ),
+        durations: float | Sequence[float],
+        *,
+        easing: str = "linear",
+        steps_per_segment: int | None = None,
+    ) -> None:
+        """Move both arms smoothly towards the provided EEF targets (Cartesian mode).
+
+        Uses send_action to send interpolated commands step by step, ensuring
+        both arms move synchronously in the same loop iteration.
+
+        Args:
+            target_eef_poses: A dictionary with "left" and "right" keys (each a
+                sequence of 6 or 7 values for EEF pose + optional gripper) or a
+                sequence of such dictionaries to execute multiple segments.
+            durations: Duration in seconds for the corresponding target poses.
+            easing: Easing profile to apply ("ease_in_out_quad" or "linear").
+            steps_per_segment: Optional fixed number of interpolation steps per
+                segment. When omitted the controller's ``controller_dt`` is used
+                to compute the number of steps from the duration.
+
+        Raises:
+            DeviceNotConnectedError: If the robot is not connected.
+            ValueError: If inputs are malformed or not in Cartesian mode.
+        """
+        if not self._is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        if self.config.control_mode != BiARX5ControlMode.CARTESIAN_CONTROL:
+            raise ValueError("move_eef_trajectory requires CARTESIAN_CONTROL mode")
+
+        if isinstance(target_eef_poses, dict):
+            trajectory = [target_eef_poses]
+        else:
+            trajectory = list(target_eef_poses)
+
+        if isinstance(durations, (int, float)):
+            segment_durations = [float(durations)]
+        else:
+            segment_durations = [float(d) for d in durations]
+
+        if len(trajectory) != len(segment_durations):
+            raise ValueError(
+                "target_eef_poses and durations must have the same length"
             )
-            return
 
-        def disconnect_left_arm():
-            try:
-                logger.info("Disconnecting left arm...")
+        # Determine controller timestep (fallback to 10 ms if unavailable)
+        controller_dt = getattr(self.config, "interpolation_controller_dt", 0.01)
 
-                self.left_arm.reset_to_home()
-                self.left_arm.set_to_damping()
-                logger.info("✓ Left arm disconnected successfully")
-                return "left", None
-            except Exception as e:
-                logger.warning(f"Left arm disconnected failed: {e}")
-                return "left", e
+        # Fetch the current EEF positions as starting state
+        def _get_current_state() -> tuple[np.ndarray, np.ndarray]:
+            left_state = self.left_arm.get_eef_state()
+            right_state = self.right_arm.get_eef_state()
+            left = np.concatenate([left_state.pose_6d().copy(), [left_state.gripper_pos]])
+            right = np.concatenate([right_state.pose_6d().copy(), [right_state.gripper_pos]])
+            return left, right
 
-        def disconnect_right_arm():
-            try:
-                logger.info("Disconnecting right arm...")
+        current_left, current_right = _get_current_state()
 
-                self.right_arm.reset_to_home()
-                self.right_arm.set_to_damping()
-                logger.info("✓ Right arm disconnected successfully")
-                return "right", None
-            except Exception as e:
-                logger.warning(f"Right arm disconnected failed: {e}")
-                return "right", e
+        def _parse_target(
+            segment: dict[str, Sequence[float]],
+            default_left: np.ndarray,
+            default_right: np.ndarray,
+        ) -> tuple[np.ndarray, np.ndarray]:
+            if not {"left", "right"}.issubset(segment):
+                raise ValueError(
+                    "Each segment must contain both 'left' and 'right' targets"
+                )
 
-        completed_tasks = []
-        exceptions = []
+            def _to_array(values: Sequence[float], default: np.ndarray) -> np.ndarray:
+                arr = np.asarray(values, dtype=np.float64)
+                if arr.shape[0] not in (6, 7):
+                    raise ValueError(
+                        "Each arm target must provide 6 EEF values (+ optional gripper)"
+                    )
+                if arr.shape[0] == 6:
+                    arr = np.concatenate([arr, [default[-1]]])
+                return arr
 
-        # Use configurable timeout (default: rpc_timeout, fallback: 5.0s)
-        disconnect_timeout = getattr(
-            self.config, "disconnect_timeout", self.rpc_timeout
-        )
+            left_target = _to_array(segment["left"], default_left)
+            right_target = _to_array(segment["right"], default_right)
+            return left_target, right_target
+
+        def _apply_easing(alpha: float) -> float:
+            alpha = np.clip(alpha, 0.0, 1.0)
+            if easing == "ease_in_out_quad":
+                return self._ease_in_out_quad(alpha)
+            if easing == "linear":
+                return alpha
+            raise ValueError(f"Unsupported easing profile: {easing}")
 
         try:
-            fL = self._exec_left.submit(disconnect_left_arm)
-            fR = self._exec_right.submit(disconnect_right_arm)
-
-            for future in as_completed([fL, fR], timeout=disconnect_timeout):
-                side, error = future.result()
-                if error is None:
-                    completed_tasks.append(side)
-                else:
-                    exceptions.append(f"{side.capitalize()} arm: {error}")
-        except TimeoutError:
-            # check if left and right arm are done
-            if not fL.done():
-                exceptions.append(
-                    f"Left arm: timeout after {disconnect_timeout} seconds"
+            for segment, duration in zip(trajectory, segment_durations, strict=True):
+                target_left, target_right = _parse_target(
+                    segment, current_left, current_right
                 )
 
-            if not fR.done():
-                exceptions.append(
-                    f"Right arm: timeout after {disconnect_timeout} seconds"
+                if duration <= 0:
+                    action = dict(zip(self._left_action_keys, target_left[:6].tolist()))
+                    action[self._left_gripper_key] = float(target_left[6])
+                    action.update(dict(zip(self._right_action_keys, target_right[:6].tolist())))
+                    action[self._right_gripper_key] = float(target_right[6])
+                    self.send_action(action)
+                    current_left, current_right = target_left, target_right
+                    continue
+
+                steps = (
+                    steps_per_segment
+                    if steps_per_segment is not None
+                    else max(1, int(math.ceil(duration / controller_dt)))
                 )
 
-        if exceptions:
-            logger.warning(f"Some disconnect tasks failed: {'; '.join(exceptions)}")
-            logger.info(f"Successfully disconnected: {completed_tasks}")
-        else:
-            logger.info("Both arms disconnected and reset to home successfully")
+                for step in range(1, steps + 1):
+                    progress = step / steps
+                    ratio = _apply_easing(progress)
+                    interp_left = current_left + (target_left - current_left) * ratio
+                    interp_right = current_right + (target_right - current_right) * ratio
+
+                    action = dict(zip(self._left_action_keys, interp_left[:6].tolist()))
+                    action[self._left_gripper_key] = float(interp_left[6])
+                    action.update(dict(zip(self._right_action_keys, interp_right[:6].tolist())))
+                    action[self._right_gripper_key] = float(interp_right[6])
+
+                    self.send_action(action)
+                    time.sleep(duration / steps if steps_per_segment else controller_dt)
+
+                current_left, current_right = target_left, target_right
+        except KeyboardInterrupt:
+            logger.warning(
+                "EEF trajectory interrupted by user. Holding current pose."
+            )
 
     def disconnect(self):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # ARX5 SDK doesn't have explicit disconnect method
-        # Set arms to damping mode for safety before destroying objects in parallel
         try:
-            self._disconnect_parallel()
+            logger.info("Disconnecting arms...")
+            self.smooth_go_home(easing="ease_in_out_quad")  # Auto-calculated duration
+            # Set both arms to damping
+            self.left_arm.set_to_damping()
+            self.right_arm.set_to_damping()
+            logger.info("✓ Both arms disconnected successfully")
+        except KeyboardInterrupt:
+            logger.warning("Disconnect interrupted. Forcing damping mode on both arms...")
+            self.left_arm.set_to_damping()
+            self.right_arm.set_to_damping()
+            logger.info("✓ Both arms set to damping mode for safety")
         except Exception as e:
-            logger.warning(f"Failed to disconnect arms in parallel: {e}")
+            logger.warning(f"Failed to disconnect arms: {e}")
 
         # Disconnect cameras
         for cam in self.cameras.values():
             cam.disconnect()
 
-        # Destroy arm objects - this triggers SDK cleanup
+        # Destroy arm objects
         self.left_arm = None
         self.right_arm = None
 
-        # Shutdown thread pool executors
-        try:
-            logger.info("Shutting down thread pool executors...")
-            self._exec_left.shutdown(wait=True)
-            self._exec_right.shutdown(wait=True)
-            logger.info("✓ Thread pool executors shut down successfully")
-        except Exception as e:
-            logger.warning(f"Failed to shutdown thread pool executors: {e}")
-
         self._is_connected = False
-
         logger.info(f"{self} disconnected.")
 
     def set_log_level(self, level: str):
         """Set robot log level
 
         Args:
-            level: 日志级别字符串，支持: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL, OFF
+            level: Log level string, supports: TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL, OFF
         """
-        # Convert string to LogLevel enum
         log_level_map = {
             "TRACE": arx5.LogLevel.TRACE,
             "DEBUG": arx5.LogLevel.DEBUG,
@@ -697,75 +838,49 @@ class BiARX5(Robot):
 
         log_level = log_level_map[level.upper()]
 
-        # Set log level for both arms if connected
         if self.left_arm is not None:
             self.left_arm.set_log_level(log_level)
         if self.right_arm is not None:
             self.right_arm.set_log_level(log_level)
 
-    def _reset_to_home_parallel(self):
-        """Reset both arms to home position in parallel"""
-        if self.left_arm is None or self.right_arm is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        fL = self._exec_left.submit(self.left_arm.reset_to_home)
-        fR = self._exec_right.submit(self.right_arm.reset_to_home)
-        completed_tasks = []
-        exceptions = []
-
-        try:
-            for future in as_completed([fL, fR], timeout=5.0):
-                try:
-                    future.result()  # get result
-                    if future == fL:
-                        completed_tasks.append("left")
-                    else:
-                        completed_tasks.append("right")
-                except Exception as e:
-                    if future == fL:
-                        exceptions.append(f"Left arm: {e}")
-                    else:
-                        exceptions.append(f"Right arm: {e}")
-        except TimeoutError:
-            # check if left and right arm are done
-            if not fL.done():
-                exceptions.append("Left arm: timeout after 3 seconds")
-            if not fR.done():
-                exceptions.append("Right arm: timeout after 3 seconds")
-        if exceptions:
-            logger.warning(f"Some tasks failed: {'; '.join(exceptions)}")
-            logger.info(f"Completed tasks: {completed_tasks}")
-            raise Exception(f"Reset failed: {'; '.join(exceptions)}")
-
-        logger.info("Both arms reset to home position parallel completed.")
-
     def reset_to_home(self):
         """Reset both arms to home position"""
-        self._reset_to_home_parallel()
+        if self.left_arm is None or self.right_arm is None:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        self.left_arm.reset_to_home()
+        self.right_arm.reset_to_home()
+        logger.info("Both arms reset to home position.")
 
     def set_to_gravity_compensation_mode(self):
-        """Switch from normal position control to gravity compensation mode"""
+        """Switch from normal position control to gravity compensation mode.
+
+        Uses SDK's set_to_gravity_compensation() which:
+        1. Sets kp=0, kd=default (damping only, no position control)
+        2. Resets interpolator to current position (important for Cartesian mode)
+        """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        if self._is_gravity_compensation_mode:
+            logger.info("Both arms are already in gravity compensation mode")
+            return
+
         logger.info("Switching to gravity compensation mode...")
 
-        # reset to zero pd with 0.5 kd
-        zero_grav_gain = arx5.Gain(self.robot_configs["left_config"].joint_dof)
-        zero_grav_gain.kp()[:] = 0.0
-        zero_grav_gain.kd()[:] = (
-            self.controller_configs["left_config"].default_kd * 0.15
-        )
-        zero_grav_gain.gripper_kp = 0.0
-        zero_grav_gain.gripper_kd = (
-            self.controller_configs["left_config"].default_gripper_kd * 0.25
-        )
+        # Use SDK's set_to_gravity_compensation() which properly resets the interpolator
+        if self._is_joint_control_mode:
+            logger.info("Switching to gravity compensation mode from joint control mode...")
+        elif self._is_cartesian_control_mode:
+            logger.info("Switching to gravity compensation mode from cartesian control mode...")
 
-        self.left_arm.set_gain(zero_grav_gain)
-        self.right_arm.set_gain(zero_grav_gain)
+        self.left_arm.set_to_gravity_compensation()
+        self.right_arm.set_to_gravity_compensation()
 
         # Update control mode state
         self._is_gravity_compensation_mode = True
-        self._is_position_control_mode = False
+        self._is_joint_control_mode = False
+        self._is_cartesian_control_mode = False
 
         logger.info("✓ Both arms are now in gravity compensation mode")
 
@@ -776,40 +891,134 @@ class BiARX5(Robot):
 
         logger.info("Switching to normal position control mode...")
 
-        # reset to default gain
-        default_gain = self.left_arm.get_gain()
-        default_gain.kp()[:] = self.controller_configs["left_config"].default_kp * 0.5
-        default_gain.kd()[:] = self.controller_configs["left_config"].default_kd * 1.5
-        default_gain.gripper_kp = self.controller_configs[
-            "left_config"
-        ].default_gripper_kp
+        is_joint_mode = (
+            self.config.control_mode == BiARX5ControlMode.JOINT_CONTROL
+            or self.config.control_mode == BiARX5ControlMode.TEACH_MODE
+        )
 
-        default_gain.gripper_kd = self.controller_configs[
-            "left_config"
-        ].default_gripper_kd
+        if self._is_gravity_compensation_mode and is_joint_mode:
+            # Reset to default gain
+            left_cfg = self.controller_configs["left_config"]
+            default_gain = self.left_arm.get_gain()
+            default_gain.kp()[:] = left_cfg.default_kp * 0.5
+            default_gain.kd()[:] = left_cfg.default_kd * 1.5
+            default_gain.gripper_kp = left_cfg.default_gripper_kp
+            default_gain.gripper_kd = left_cfg.default_gripper_kd
 
-        self.left_arm.set_gain(default_gain)
-        self.right_arm.set_gain(default_gain)
+            self.left_arm.set_gain(default_gain)
+            self.right_arm.set_gain(default_gain)
 
-        # Update control mode state
-        self._is_gravity_compensation_mode = False
-        self._is_position_control_mode = True
+            # Update control mode state
+            self._is_joint_control_mode = True
+            self._is_cartesian_control_mode = False
+            self._is_gravity_compensation_mode = False
 
-        logger.info("✓ Both arms are now in normal position control mode")
+            logger.info("✓ Both arms are now in normal position control mode")
+        elif not self._is_gravity_compensation_mode and is_joint_mode:
+            logger.info("Both arms are already in normal position control mode")
+            return
+        else:
+            logger.warning(
+                f"Can't switch to position control from mode: {self.config.control_mode}"
+            )
+            return
+
+    def set_to_normal_cartesian_control(self):
+        """Switch from gravity compensation to normal cartesian control mode"""
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+
+        logger.info("Switching to normal cartesian control mode...")
+
+        is_cartesian_mode = self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL
+
+        if self._is_gravity_compensation_mode and is_cartesian_mode:
+            # Reset to default gain
+            left_cfg = self.controller_configs["left_config"]
+            default_gain = self.left_arm.get_gain()
+            default_gain.kp()[:] = left_cfg.default_kp
+            default_gain.kd()[:] = left_cfg.default_kd
+            default_gain.gripper_kp = left_cfg.default_gripper_kp
+            default_gain.gripper_kd = left_cfg.default_gripper_kd
+
+            self.left_arm.set_gain(default_gain)
+            self.right_arm.set_gain(default_gain)
+
+            # Update control mode state
+            self._is_joint_control_mode = False
+            self._is_cartesian_control_mode = True
+            self._is_gravity_compensation_mode = False
+
+            logger.info(
+                "✓ Both arms switched from gravity compensation to "
+                "normal cartesian control mode"
+            )
+        elif not self._is_gravity_compensation_mode and is_cartesian_mode:
+            logger.info("Both arms are already in normal cartesian control mode")
+            return
+        else:
+            logger.warning(
+                f"Can't switch to cartesian control from mode: {self.config.control_mode}"
+            )
+            return
+
+    def _calculate_motion_duration(
+        self,
+        target_left: np.ndarray,
+        target_right: np.ndarray,
+        min_duration: float = 1.0,
+        speed_factor: float = 2.0,
+    ) -> float:
+        """
+        Calculate motion duration based on maximum joint/EEF position error.
+
+        This follows the SDK's reset_to_home logic:
+        duration = max(max_pos_error, min_duration)
+
+        Args:
+            target_left: Target position for left arm (7 elements: 6 joints/pose + gripper)
+            target_right: Target position for right arm (7 elements: 6 joints/pose + gripper)
+            min_duration: Minimum duration in seconds (default: 1.0)
+            speed_factor: Multiplier for speed adjustment (default: 2.0)
+
+        Returns:
+            Calculated duration in seconds
+        """
+        # Always use Joint space for duration calculation (consistent units in radians)
+        # This follows SDK's reset_to_home logic which uses joint position error
+        left_state = self.left_arm.get_joint_state()
+        right_state = self.right_arm.get_joint_state()
+        current_left = np.concatenate([left_state.pos(), [left_state.gripper_pos]])
+        current_right = np.concatenate([right_state.pos(), [right_state.gripper_pos]])
+
+        # Calculate maximum position error across both arms (excluding gripper)
+        left_error = np.abs(current_left[:6] - target_left[:6]).max()
+        right_error = np.abs(current_right[:6] - target_right[:6]).max()
+        max_error = max(left_error, right_error)
+
+        # Duration = max(max_error, min_duration) * speed_factor
+        duration = max(max_error, min_duration) * speed_factor
+        logger.info(f"Calculated motion duration: {duration:.1f} seconds")
+        return duration
 
     def smooth_go_start(
-        self, duration: float = 2.0, easing: str = "ease_in_out_quad"
+        self, duration: float | None = None, easing: str = "ease_in_out_quad"
     ) -> None:
         """
         Smoothly move both arms to the start position using trajectory interpolation.
 
-        This method automatically:
+        For Joint mode:
         1. Switches to normal position control mode
-        2. Moves both arms to start position ([0,0,0,0,0,0,0]) over the specified duration
+        2. Moves both arms to start position over the specified duration
         3. Switches back to gravity compensation mode
 
+        For Cartesian mode:
+        1. Moves both arms to start EEF position over the specified duration
+        (No mode switching needed - already in position control)
+
         Args:
-            duration: Duration in seconds for the movement (default: 2.0)
+            duration: Duration in seconds for the movement. If None, automatically
+                calculated based on distance to target (like SDK's reset_to_home).
             easing: Easing profile to apply ("ease_in_out_quad" or "linear")
 
         Raises:
@@ -818,60 +1027,102 @@ class BiARX5(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        # Calculate duration if not provided
+        # Always use Joint space for duration calculation (consistent units in radians)
+        if duration is None:
+            target = np.array(self._start_position)  # Joint space target
+            duration = self._calculate_motion_duration(target, target)
+
         logger.info(f"Smoothly going to start position over {duration:.1f} seconds...")
 
-        # First, set current position as target to avoid large position error
-        left_state = self.left_arm.get_joint_state()
-        right_state = self.right_arm.get_joint_state()
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Cartesian mode: use EEF trajectory
+            logger.info("Cartesian mode: use EEF trajectory interpolation.")
 
-        # Set current position as command to avoid SDK protection
-        current_left_cmd = arx5.JointState(self.robot_configs["left_config"].joint_dof)
-        current_left_cmd.pos()[:] = left_state.pos()
-        current_left_cmd.gripper_pos = left_state.gripper_pos
+            # Set current position as command first (required for interpolator)
+            left_state = self.left_arm.get_eef_state()
+            right_state = self.right_arm.get_eef_state()
 
-        current_right_cmd = arx5.JointState(
-            self.robot_configs["right_config"].joint_dof
-        )
-        current_right_cmd.pos()[:] = right_state.pos()
-        current_right_cmd.gripper_pos = right_state.gripper_pos
+            left_cmd = arx5.EEFState(left_state.pose_6d(), left_state.gripper_pos)
+            left_cmd.timestamp = self.left_arm.get_timestamp() + 0.01
+            self.left_arm.set_eef_cmd(left_cmd)
 
-        self.left_arm.set_joint_cmd(current_left_cmd)
-        self.right_arm.set_joint_cmd(current_right_cmd)
+            right_cmd = arx5.EEFState(right_state.pose_6d(), right_state.gripper_pos)
+            right_cmd.timestamp = self.right_arm.get_timestamp() + 0.01
+            self.right_arm.set_eef_cmd(right_cmd)
 
-        # Now safe to switch to normal position control
-        self.set_to_normal_position_control()
+            # Switch to normal cartesian control
+            self.set_to_normal_cartesian_control()
 
-        # Prepare start poses for both arms
-        start_poses = {
-            "left": self._start_position.copy(),
-            "right": self._start_position.copy(),
-        }
+            # Prepare start poses for both arms
+            start_poses = {
+                "left": self._start_position_eef.copy(),
+                "right": self._start_position_eef.copy(),
+            }
 
-        # Execute smooth trajectory to start position
-        self.move_joint_trajectory(
-            target_joint_poses=start_poses, durations=duration, easing=easing
-        )
+            self.move_eef_trajectory(
+                target_eef_poses=start_poses,
+                durations=duration,
+                easing=easing,
+            )
+            logger.info(
+                f"✓ Successfully going to start position in "
+                f"{self.config.control_mode.value} mode"
+            )
+        else:
+            # Joint mode: use joint trajectory interpolation
+            logger.info("Joint mode: use joint trajectory interpolation.")
 
-        # Switch back to gravity compensation mode
-        self.set_to_gravity_compensation_mode()
+            # First, set current position as target to avoid large position error
+            left_state = self.left_arm.get_joint_state()
+            right_state = self.right_arm.get_joint_state()
 
-        logger.info(
-            "✓ Successfully going to start position and switched to gravity compensation mode"
-        )
+            current_left_cmd = arx5.JointState(self.robot_configs["left_config"].joint_dof)
+            current_left_cmd.pos()[:] = left_state.pos()
+            current_left_cmd.gripper_pos = left_state.gripper_pos
+
+            current_right_cmd = arx5.JointState(self.robot_configs["right_config"].joint_dof)
+            current_right_cmd.pos()[:] = right_state.pos()
+            current_right_cmd.gripper_pos = right_state.gripper_pos
+
+            self.left_arm.set_joint_cmd(current_left_cmd)
+            self.right_arm.set_joint_cmd(current_right_cmd)
+
+            # Now safe to switch to normal position control
+            self.set_to_normal_position_control()
+
+            # Prepare start poses for both arms
+            start_poses = {
+                "left": self._start_position.copy(),
+                "right": self._start_position.copy(),
+            }
+
+            # Execute smooth trajectory to start position
+            self.move_joint_trajectory(
+                target_joint_poses=start_poses, durations=duration, easing=easing
+            )
+            logger.info(
+                f"✓ Successfully going to start position in "
+                f"{self.config.control_mode.value} mode"
+            )
 
     def smooth_go_home(
-        self, duration: float = 2.0, easing: str = "ease_in_out_quad"
+        self, duration: float | None = None, easing: str = "ease_in_out_quad"
     ) -> None:
         """
         Smoothly move both arms to the home position using trajectory interpolation.
 
-        This method automatically:
+        For Joint mode:
         1. Switches to normal position control mode
-        2. Moves both arms to home position ([0,0,0,0,0,0,0]) over the specified duration
+        2. Moves both arms to home position over the specified duration
         3. Switches back to gravity compensation mode
 
+        For Cartesian mode:
+        1. Moves both arms to home EEF position over the specified duration
+
         Args:
-            duration: Duration in seconds for the movement (default: 2.0)
+            duration: Duration in seconds for the movement. If None, automatically
+                calculated based on distance to target (like SDK's reset_to_home).
             easing: Easing profile to apply ("ease_in_out_quad" or "linear")
 
         Raises:
@@ -880,45 +1131,83 @@ class BiARX5(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info(
-            f"Smoothly returning to home position over {duration:.1f} seconds..."
-        )
+        # Calculate duration if not provided
+        # Always use Joint space for duration calculation (consistent units in radians)
+        if duration is None:
+            target = np.array(self._home_position)  # Joint space target
+            duration = self._calculate_motion_duration(target, target)
 
-        # First, set current position as target to avoid large position error
-        left_state = self.left_arm.get_joint_state()
-        right_state = self.right_arm.get_joint_state()
+        logger.info(f"Smoothly returning to home position over {duration:.1f} seconds...")
 
-        # Set current position as command to avoid SDK protection
-        current_left_cmd = arx5.JointState(self.robot_configs["left_config"].joint_dof)
-        current_left_cmd.pos()[:] = left_state.pos()
-        current_left_cmd.gripper_pos = left_state.gripper_pos
+        if self.config.control_mode == BiARX5ControlMode.CARTESIAN_CONTROL:
+            # Cartesian mode: use EEF trajectory
+            logger.info("Cartesian mode: use EEF trajectory interpolation.")
 
-        current_right_cmd = arx5.JointState(
-            self.robot_configs["right_config"].joint_dof
-        )
-        current_right_cmd.pos()[:] = right_state.pos()
-        current_right_cmd.gripper_pos = right_state.gripper_pos
+            # Set current position as command first (required for interpolator)
+            left_state = self.left_arm.get_eef_state()
+            right_state = self.right_arm.get_eef_state()
 
-        self.left_arm.set_joint_cmd(current_left_cmd)
-        self.right_arm.set_joint_cmd(current_right_cmd)
+            left_cmd = arx5.EEFState(left_state.pose_6d(), left_state.gripper_pos)
+            left_cmd.timestamp = self.left_arm.get_timestamp() + 0.01
+            self.left_arm.set_eef_cmd(left_cmd)
 
-        # Now safe to switch to normal position control
-        self.set_to_normal_position_control()
+            right_cmd = arx5.EEFState(right_state.pose_6d(), right_state.gripper_pos)
+            right_cmd.timestamp = self.right_arm.get_timestamp() + 0.01
+            self.right_arm.set_eef_cmd(right_cmd)
 
-        # Prepare home poses for both arms
-        home_poses = {
-            "left": self._home_position.copy(),
-            "right": self._home_position.copy(),
-        }
+            # Switch to normal cartesian control (if in gravity compensation mode)
+            self.set_to_normal_cartesian_control()
 
-        # Execute smooth trajectory to home position
-        self.move_joint_trajectory(
-            target_joint_poses=home_poses, durations=duration, easing=easing
-        )
+            # Prepare home poses for both arms
+            home_poses = {
+                "left": self._home_position_eef.copy(),
+                "right": self._home_position_eef.copy(),
+            }
 
-        # Switch back to gravity compensation mode
-        self.set_to_gravity_compensation_mode()
+            self.move_eef_trajectory(
+                target_eef_poses=home_poses,
+                durations=duration,
+                easing=easing,
+            )
+            logger.info(
+                f"✓ Successfully returned to home position in "
+                f"{self.config.control_mode.value} mode"
+            )
+        else:
+            # Joint mode: use joint trajectory
+            # First, set current position as target to avoid large position error
+            left_state = self.left_arm.get_joint_state()
+            right_state = self.right_arm.get_joint_state()
 
-        logger.info(
-            "✓ Successfully returned to home position and switched to gravity compensation mode"
-        )
+            current_left_cmd = arx5.JointState(self.robot_configs["left_config"].joint_dof)
+            current_left_cmd.pos()[:] = left_state.pos()
+            current_left_cmd.gripper_pos = left_state.gripper_pos
+
+            current_right_cmd = arx5.JointState(self.robot_configs["right_config"].joint_dof)
+            current_right_cmd.pos()[:] = right_state.pos()
+            current_right_cmd.gripper_pos = right_state.gripper_pos
+
+            self.left_arm.set_joint_cmd(current_left_cmd)
+            self.right_arm.set_joint_cmd(current_right_cmd)
+
+            # Now safe to switch to normal position control
+            self.set_to_normal_position_control()
+
+            # Prepare home poses for both arms
+            home_poses = {
+                "left": self._home_position.copy(),
+                "right": self._home_position.copy(),
+            }
+
+            # Execute smooth trajectory to home position
+            self.move_joint_trajectory(
+                target_joint_poses=home_poses, durations=duration, easing=easing
+            )
+
+            # Switch back to gravity compensation mode
+            self.set_to_gravity_compensation_mode()
+
+            logger.info(
+                "✓ Successfully returned to home position and "
+                "switched to gravity compensation mode"
+            )

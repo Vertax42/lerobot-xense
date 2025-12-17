@@ -361,11 +361,11 @@ def arx5_teleop_loop(
 
                         if i < len(left_items):
                             motor_name = left_items[i][0].replace("left_", "")
-                            left_str = f"{motor_name}: {left_items[i][1]:>6.2f}"
+                            left_str = f"{motor_name}: {left_items[i][1]:>7.3f}"
 
                         if i < len(right_items):
                             motor_name = right_items[i][0].replace("right_", "")
-                            right_str = f"{motor_name}: {right_items[i][1]:>6.2f}"
+                            right_str = f"{motor_name}: {right_items[i][1]:>7.3f}"
 
                         print(f"{left_str:<{col_width}} | {right_str:<{col_width}}")
 

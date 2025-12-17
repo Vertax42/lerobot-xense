@@ -53,23 +53,23 @@ class ARX5FollowerConfig(RobotConfig):
     # Logging and threading
     log_level: str = "DEBUG"
     use_multithreading: bool = True
-    rpc_timeout: float = 10.0
 
     # Control parameters
     controller_dt: float = 0.005  # 200Hz low-level control frequency
-    interpolation_controller_dt: float = 0.05  # 20Hz high-level interpolation control frequency
+    interpolation_controller_dt: float = 0.02  # 50Hz high-level interpolation control frequency
 
-    # Mode settings
-    inference_mode: bool = False
     # default control mode is teach mode
     control_mode: ARX5ControlMode = ARX5ControlMode.TEACH_MODE
+    # default inference mode is false
+    inference_mode: bool = False
 
-    # Preview time in seconds for action interpolation during inference
+    # Preview time in seconds for control interpolation
     # Higher values (0.03-0.05) provide smoother motion but more delay
     # Lower values (0.01-0.02) are more responsive but may cause jittering
-    preview_time: float = 0.0  # Default 0ms, can be set to 30ms for smooth inference
+    # For Cartesian mode: use default preview time 0.1s in low-level SDK
+    preview_time: float = 0.03  # Default 30ms for Joint control
 
-    # Gripper calibration
+    # Gripper calibration (calibrated value from calibrate.py)
     gripper_open_readout: float = -3.4
     enable_tactile_sensors: bool = False
 
@@ -77,9 +77,13 @@ class ARX5FollowerConfig(RobotConfig):
     home_position: list[float] = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
     )
-    start_position: list[float] = field(
-        default_factory=lambda: [0.0, 0.948, 0.858, -0.573, 0.0, 0.0, 0.0]
-    )
+
+    # default start position is [0.0, 0.948, 0.858, -0.573, 0.0, 0.0, 0.0]
+    # modified cartesian start position is [0.0, 0.967, 1.290, -0.970, 0.0, 0.0, 0.0]
+    if control_mode == ARX5ControlMode.CARTESIAN_CONTROL:
+        start_position = [0.0, 0.967, 1.290, -0.970, 0.0, 0.0, 0.0]
+    else:
+        start_position = [0.0, 0.948, 0.858, -0.573, 0.0, 0.0, 0.0]
 
     # Camera configuration
     cameras: dict[str, CameraConfig] = field(default_factory=lambda: {})
