@@ -286,3 +286,21 @@ These tables show the results for `g=2` and `crf=30`, using `timestamps-modes=6_
 | aliberts/kitchen                   | avg_mse  | 2.50E-04 | 2.24E-04     | 4.28E-04 | 4.18E-04  | **1.53E-04** |
 |                                    | avg_psnr | 36.73    | 37.33        | 36.56    | 36.75     | **39.12**    |
 |                                    | avg_ssim | 95.47%   | 95.58%       | 95.52%   | 95.53%    | **96.82%**   |
+
+# Test on your own datasets
+```python
+# 1. Test decoding performance on your own datasets
+python benchmarks/video/test_dataset_video_decoding.py \
+    --repo-id Vertax/xense_bi_arx5_pick_and_place_cube
+
+# 2. Test PyTorch training performance (most important!)
+python benchmarks/video/test_training_video_backend.py \
+    --repo-id Vertax/xense_bi_arx5_pick_and_place_cube \
+    --batch-size 16 \
+    --num-workers 8
+# 3. long sequence testing
+python benchmarks/video/test_training_video_backend.py \
+    --repo-id Vertax/lerobot040_test_bi_arx5 \
+    --test-long-sequence \
+    --num-batches 10
+```
