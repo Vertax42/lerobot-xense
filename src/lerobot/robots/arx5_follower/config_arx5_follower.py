@@ -59,13 +59,14 @@ class ARX5FollowerConfig(RobotConfig):
     interpolation_controller_dt: float = 0.02  # 50Hz high-level interpolation control frequency
 
     # default control mode is teach mode
-    control_mode: ARX5ControlMode = ARX5ControlMode.TEACH_MODE
+    control_mode: ARX5ControlMode = ARX5ControlMode.CARTESIAN_CONTROL
     # default inference mode is false
     inference_mode: bool = False
 
     # Preview time in seconds for control interpolation
     # Higher values (0.03-0.05) provide smoother motion but more delay
     # Lower values (0.01-0.02) are more responsive but may cause jittering
+
     # For Cartesian mode: use default preview time 0.1s in low-level SDK
     preview_time: float = 0.03  # Default 30ms for Joint control
 

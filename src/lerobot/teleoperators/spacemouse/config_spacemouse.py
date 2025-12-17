@@ -44,8 +44,8 @@ class SpacemouseConfig(TeleoperatorConfig):
         gripper_width: Maximum gripper position in radians (for clamping).
     """
 
-    pos_sensitivity: float = 0.8  # m/s at max deflection
-    ori_sensitivity: float = 1.5  # rad/s at max deflection
+    pos_sensitivity: float = 0.4  # default 0.8 m/s at max deflection
+    ori_sensitivity: float = 1.0  # default 1.5 rad/s at max deflection
     gripper_speed: float = 0.4  # rad/s for gripper open/close
     deadzone: float = 0.1  # [0-1] threshold
     max_value: int = 500  # 300 for wired, 500 for wireless
@@ -53,11 +53,11 @@ class SpacemouseConfig(TeleoperatorConfig):
     filter_window_size: int = 3  # Moving average filter window size
     control_dt: float = 0.01  # Control loop period in seconds (should match external loop)
     invert_axes: Tuple[bool, bool, bool, bool, bool, bool] = (
+        True,  # x-reverse
+        True,  # y-reverse
         False,
-        False,
-        False,
-        False,
-        False,
+        True,  # roll-reverse
+        True,  # pitch-reverse
         False,
     )
     swap_gripper_buttons: bool = False  # default left button to close, right button to open

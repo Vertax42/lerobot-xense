@@ -204,15 +204,29 @@ def test(
         teleop = SpacemouseTeleop(config)
         logger.info("Connecting to spacemouse...")
         teleop.connect()
-        logger.info("Connected to spacemouse.")
+        logger.info("Connected to spacemouse. Press Ctrl+C to exit.")
+        print()  # Empty line for status display
         try:
             while True:
                 action = teleop.get_action()
-                logger.info(f"Action: {action}")
+                # Format action values with fixed width for stable display
+                x = action.get("x", 0.0)
+                y = action.get("y", 0.0)
+                z = action.get("z", 0.0)
+                roll = action.get("roll", 0.0)
+                pitch = action.get("pitch", 0.0)
+                yaw = action.get("yaw", 0.0)
+                # Print on same line using carriage return
+                print(
+                    f"\rPos: x={x:+7.3f} y={y:+7.3f} z={z:+7.3f} | "
+                    f"Rot: r={roll:+7.3f} p={pitch:+7.3f} y={yaw:+7.3f}",
+                    end="", flush=True
+                )
                 time.sleep(1 / 200)
         except KeyboardInterrupt:
             pass
         finally:
+            print()  # New line after same-line updates
             logger.info("Disconnecting from spacemouse...")
             teleop.disconnect()
     elif device == "pico4":

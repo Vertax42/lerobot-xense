@@ -74,16 +74,13 @@ class SpacemouseTeleop(Teleoperator):
         self._is_connected = False
         self._shm_manager: SharedMemoryManager | None = None
         self._spacemouse = None
-
+        self._start_pose_6d: np.ndarray = np.zeros(6, dtype=np.float32)
+        self._start_gripper_pos: float = 0.0
         # Smoothing filter queue (moving average)
         self._motion_queue: Queue = Queue(self.config.filter_window_size)
 
         # State tracking
         self._enabled: bool = False
-
-        # Accumulated target pose (x, y, z, roll, pitch, yaw)
-        self._target_pose_6d: np.ndarray = np.zeros(6, dtype=np.float32)
-        self._target_gripper_pos: float = 0.0
 
         # Event tracking for teleop events
         self._both_buttons_pressed_time: float | None = None
@@ -127,7 +124,7 @@ class SpacemouseTeleop(Teleoperator):
         """Spacemouse doesn't support feedback."""
         return {}
 
-    def connect(self, calibrate: bool = True) -> None:
+    def connect(self, calibrate: bool = True, start_eef_pose: np.ndarray = np.zeros(7, dtype=np.float32)) -> None:
         """Connect to the 3D Spacemouse."""
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
@@ -158,9 +155,9 @@ class SpacemouseTeleop(Teleoperator):
 
             self._is_connected = True
 
-            # Reset target pose on connect (will be set by set_target_pose())
-            self._target_pose_6d = np.zeros(6, dtype=np.float32)
-            self._target_gripper_pos = 0.0
+            # Set target pose on connect
+            self._target_pose_6d = start_eef_pose[:6]
+            self._target_gripper_pos = start_eef_pose[6]
 
             logger.info(f"{self} connected successfully.")
 
@@ -177,18 +174,6 @@ class SpacemouseTeleop(Teleoperator):
     def configure(self) -> None:
         """No additional configuration needed."""
         pass
-
-    def set_target_pose(self, pose_6d: np.ndarray, gripper_pos: float = 0.0) -> None:
-        """
-        Set the current target pose. Call this to initialize with robot's current EEF pose.
-
-        Args:
-            pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
-            gripper_pos: Gripper position in meters
-        """
-        self._target_pose_6d = np.array(pose_6d, dtype=np.float32)
-        self._target_gripper_pos = float(gripper_pos)
-        logger.info(f"Target pose set to: {self._target_pose_6d}, gripper: {self._target_gripper_pos}")
 
     def reset_to_pose(self, pose_6d: np.ndarray, gripper_pos: float = 0.0) -> None:
         """

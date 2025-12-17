@@ -465,6 +465,73 @@ def arx5_teleop_loop(
             return
 
 
+def spacemouse_teleop_loop(
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],
+    display_data: bool = False,
+    duration: float | None = None,
+):
+    """
+    Teleop loop for Spacemouse.
+    """
+    display_len = max(len(key) for key in robot.action_features)
+    start = time.perf_counter()
+
+    while True:
+        loop_start = time.perf_counter()
+
+        # Get robot observation
+        # Not really needed for now other than for visualization
+        # teleop_action_processor can take None as an observation
+        # given that it is the identity processor as default
+        obs = robot.get_observation()
+
+        # Get teleop action
+        raw_action = teleop.get_action()
+
+        # Process teleop action through pipeline
+        teleop_action = teleop_action_processor((raw_action, obs))
+
+        # Process action for robot through pipeline
+        robot_action_to_send = robot_action_processor((teleop_action, obs))
+
+        # Send processed action to robot (robot_action_processor.to_output should return dict[str, Any])
+        _ = robot.send_action(robot_action_to_send)
+
+        if display_data:
+            # Process robot observation through pipeline
+            obs_transition = robot_observation_processor(obs)
+
+            log_rerun_data(
+                observation=obs_transition,
+                action=teleop_action,
+            )
+
+            print("\n" + "-" * (display_len + 10))
+            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            # Display the final robot action that was sent
+            for motor, value in robot_action_to_send.items():
+                print(f"{motor:<{display_len}} | {value:>7.3f}")
+            move_cursor_up(len(robot_action_to_send) + 5)
+
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+        loop_s = time.perf_counter() - loop_start
+        print(f"\ntime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz)")
+
+        if duration is not None and time.perf_counter() - start >= duration:
+            return
+
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     init_logging()
@@ -480,26 +547,50 @@ def teleoperate(cfg: TeleoperateConfig):
         # Create robot instance
         robot = make_robot_from_config(cfg.robot)
         robot.connect()
+        logging.info(f"Start EEF pose: {robot.get_start_eef_pose()}")
         teleop_action_processor, robot_action_processor, robot_observation_processor = (
             make_default_processors()
         )
-        try:
-            arx5_teleop_loop(
-                robot=robot,
-                fps=cfg.fps,
-                display_data=cfg.display_data,
-                duration=cfg.teleop_time_s,
-                teleop_action_processor=teleop_action_processor,
-                robot_action_processor=robot_action_processor,
-                robot_observation_processor=robot_observation_processor,
-                debug_timing=cfg.debug_timing,
-            )
-        except KeyboardInterrupt:
-            pass
-        finally:
-            if cfg.display_data:
-                rr.rerun_shutdown()
-            robot.disconnect()
+        if cfg.teleop.type == "spacemouse":
+            teleop = make_teleoperator_from_config(cfg.teleop)
+            teleop.connect(start_eef_pose=robot.get_start_eef_pose())
+            logging.info("Connected to Spacemouse")
+            try:
+                spacemouse_teleop_loop(
+                    teleop=teleop,
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                )
+            except KeyboardInterrupt:
+                pass
+            finally:
+                if cfg.display_data:
+                    rr.rerun_shutdown()
+                robot.disconnect()
+                teleop.disconnect()
+        else:
+            try:
+                arx5_teleop_loop(
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                    debug_timing=cfg.debug_timing,
+                )
+            except KeyboardInterrupt:
+                pass
+            finally:
+                if cfg.display_data:
+                    rr.rerun_shutdown()
+                robot.disconnect()
     else:
         teleop = make_teleoperator_from_config(cfg.teleop)
         robot = make_robot_from_config(cfg.robot)

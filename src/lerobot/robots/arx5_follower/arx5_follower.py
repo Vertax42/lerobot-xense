@@ -127,15 +127,15 @@ class ARX5Follower(Robot):
             home_joint_pos = np.array(self._home_position[:6], dtype=np.float64)
             start_joint_pos = np.array(self._start_position[:6], dtype=np.float64)
             # Replace with EEF positions (x, y, z, roll, pitch, yaw, gripper)
-            self._home_position = np.concatenate([
+            self._home_position_eef = np.concatenate([
                 self._solver.forward_kinematics(home_joint_pos),
                 [self._home_position[6]]  # gripper
             ])
             # For start position: use FK for xyz, but set rpy to 0 for better teleoperation
             # This ensures the end-effector is parallel to XYZ axes
             start_eef_pose = self._solver.forward_kinematics(start_joint_pos)
-            # start_eef_pose[3:6] = 0.0  # Set roll, pitch, yaw to 0
-            self._start_position = np.concatenate([
+            start_eef_pose[3:6] = 0.0  # Set roll, pitch, yaw to 0
+            self._start_position_eef = np.concatenate([
                 start_eef_pose,
                 [self._start_position[6]]  # gripper
             ])
@@ -362,6 +362,13 @@ class ARX5Follower(Robot):
         logger.info("  - Gripper motor: 8")
         logger.info("Make sure your hardware matches these ID configurations")
         return
+
+    def get_start_eef_pose(self) -> np.ndarray:
+        if not self.is_connected:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        if self.config.control_mode != ARX5ControlMode.CARTESIAN_CONTROL:
+            raise ValueError("get_start_eef_pose requires CARTESIAN_CONTROL mode")
+        return self._start_position_eef
 
     def get_observation(self) -> dict[str, Any]:
         if not self.is_connected:
@@ -902,7 +909,7 @@ class ARX5Follower(Robot):
             self.set_to_normal_cartesian_control()
 
             self.move_eef_trajectory(
-                target_eef_poses=self._start_position.copy(),
+                target_eef_poses=self._start_position_eef.copy(),
                 durations=duration,
                 easing=easing,
             )
@@ -980,7 +987,7 @@ class ARX5Follower(Robot):
             self.set_to_normal_cartesian_control()
 
             self.move_eef_trajectory(
-                target_eef_poses=self._home_position.copy(),
+                target_eef_poses=self._home_position_eef.copy(),
                 durations=duration,
                 easing=easing,
             )
