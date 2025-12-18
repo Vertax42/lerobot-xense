@@ -136,8 +136,8 @@ class SpacemouseTeleop(Teleoperator):
             from lerobot.teleoperators.spacemouse.peripherals import Spacemouse
         except ImportError as e:
             raise ImportError(
-                "spnav is required for Spacemouse teleoperator. "
-                "Install it with: pip install spnav. "
+                "spnav is required for Spacemouse teleoperator."
+                "Install it with: pip install spnav."
                 "Also ensure spacenavd is installed and running: sudo apt install spacenavd"
             ) from e
 
