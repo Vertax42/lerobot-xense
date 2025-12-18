@@ -43,31 +43,6 @@ def get_safe_default_codec():
         return "pyav"
 
 
-# def get_safe_default_codec():
-#     """
-#     Returns the best available video codec for decoding.
-#     Prefers torchcodec over pyav for better performance.
-#     """
-#     if importlib.util.find_spec("torchcodec"):
-#         try:
-#             # Actually try to import the decoder to verify it works
-#             from torchcodec.decoders import VideoDecoder  # noqa: F401
-
-#             return "torchcodec"
-#         except ImportError as e:
-#             logging.warning(
-#                 f"torchcodec is installed but failed to import VideoDecoder: {e}. "
-#                 "Falling back to 'pyav' as default decoder"
-#             )
-#             return "pyav"
-#     else:
-#         logging.warning(
-#             "'torchcodec' is not available in your platform, "
-#             "falling back to 'pyav' as a default decoder"
-#         )
-#         return "pyav"
-
-
 def decode_video_frames(
     video_path: Path | str,
     timestamps: list[float],

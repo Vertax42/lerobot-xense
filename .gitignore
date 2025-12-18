@@ -179,3 +179,6 @@ arx5_interface*.so
 src/lerobot/teleoperators/pico4/xensevr-pc-service-pybind/include/
 src/lerobot/teleoperators/pico4/xensevr-pc-service-pybind/lib/
 src/lerobot/teleoperators/pico4/xensevr-pc-service-pybind/dependencies/
+
+# flexivrdk generated documentation (keep Doxyfile.in and logo)
+docs/flexivrdk/html/

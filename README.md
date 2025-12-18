@@ -8,19 +8,38 @@ This repository is tested on Ubuntu 22.04, NVIDIA Unix Driver Archive >= 570.144
 
 ### 📦 Environment Setup
 
+**Step 1:** 📥 Download and install the XenseVR PC Service `.deb` package from [XenseVR-PC-Service v0.1.0 Release](https://github.com/Vertax42/XenseVR-PC-Service/releases/tag/v0.1.0).
+
+> ⚠️ **Note:** This package has only been tested on **x86_64 Ubuntu 22.04**. Other architectures or distributions may not work right now.
+
+```bash
+# After downloading the .deb file, install it with:
+sudo dpkg -i xensevr-pc-service_*.deb
+# or simply run:
+sudo apt-get install ./xensevr-pc-service_*.deb
+```
+
+**Step 2:** 📂 Clone the repository and navigate into the directory:
+
+```bash
+git clone https://github.com/Vertax42/lerobot-xense.git
+cd lerobot-xense
+```
+
+**Step 3:** 🐍 Create and activate the conda/mamba environment, then install dependencies:
+
 ```bash
 bash ./setup_env.sh --mamba <optional_env_name>
 mamba activate <optional_env_name> # or conda activate <optional_env_name>
 bash ./setup_env.sh --install # you need to enter password for sudo access to install the dependencies
 ```
 
-📌 Check if FFmpeg 7.X is installed in your environment and 'libsvtav1' encoder is supported:
+**Step 4:** 📌 Check if FFmpeg 7.X is installed in your environment and `libsvtav1` encoder is supported:
 
 ```bash
 mamba list | grep ffmpeg
 ffmpeg -encoders | grep libsvtav1
 ```
-
 
 ## 📊 Weights & Biases
 
