@@ -279,6 +279,7 @@ select = [
 ]
 ignore = [
     "E501", # Line too long
+    "E203", # Whitespace before ':' - conflicts with Ruff/Black slice formatting
     "T201", # Print statement found
     "T203", # Pprint statement found
     "B008", # Perform function call in argument defaults

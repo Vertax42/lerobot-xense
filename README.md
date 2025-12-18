@@ -19,14 +19,22 @@ sudo dpkg -i xensevr-pc-service_*.deb
 sudo apt-get install ./xensevr-pc-service_*.deb
 ```
 
-**Step 2:** 📂 Clone the repository and navigate into the directory:
+**Step 2:** 🐭 Install the spacenavd service for 3D spacemouse Cartesian control:
+
+```bash
+sudo apt install libspnav-dev spacenavd
+sudo systemctl enable spacenavd.service
+sudo systemctl start spacenavd.service
+```
+
+**Step 3:** 📂 Clone the repository and navigate into the directory:
 
 ```bash
 git clone https://github.com/Vertax42/lerobot-xense.git
 cd lerobot-xense
 ```
 
-**Step 3:** 🐍 Create and activate the conda/mamba environment, then install dependencies:
+**Step 4:** 🐍 Create and activate the conda/mamba environment, then install dependencies:
 
 ```bash
 bash ./setup_env.sh --mamba <optional_env_name>
@@ -34,7 +42,7 @@ mamba activate <optional_env_name> # or conda activate <optional_env_name>
 bash ./setup_env.sh --install # you need to enter password for sudo access to install the dependencies
 ```
 
-**Step 4:** 📌 Check if FFmpeg 7.X is installed in your environment and `libsvtav1` encoder is supported:
+**Step 5:** 📌 Check if FFmpeg 7.X is installed in your environment and `libsvtav1` encoder is supported:
 
 ```bash
 mamba list | grep ffmpeg

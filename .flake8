@@ -1,2 +1,4 @@
 [flake8]
 max-line-length = 180
+# E203: whitespace before ':' - conflicts with Black formatter in slice notation
+extend-ignore = E203
