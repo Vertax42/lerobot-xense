@@ -22,6 +22,15 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
+## Flexiv Rizon4 Robot lerobot-teleoperate command
+
+```python
+lerobot-teleoperate \
+    --robot.type=flexiv_rizon4 \
+    --teleop.type=spacemouse \
+    --fps=100
+```
+
 ## BiARX5 Robot lerobot-record command
 
 ```python
