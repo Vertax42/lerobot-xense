@@ -100,6 +100,7 @@ from lerobot.robots import (  # noqa: F401
     arx5_follower,
     bi_so100_follower,
     bi_arx5,
+    flexiv_rizon4,  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,

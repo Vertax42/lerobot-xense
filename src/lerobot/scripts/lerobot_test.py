@@ -42,200 +42,300 @@ import code
 from collections import deque
 import importlib
 import logging
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass
+from pprint import pformat
 from typing import Any
-from lerobot.processor import make_default_processors
-from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
-import time
-import rerun as rr
+
 import numpy as np
+import time
+
+from lerobot.cameras.configs import CameraConfig
+from lerobot.configs import parser
+from lerobot.robots.config import RobotConfig
+from lerobot.teleoperators.config import TeleoperatorConfig
+from lerobot.utils.utils import init_logging
+# Delay import of rerun and visualization utils - only needed for camera tests
+# import rerun as rr
+# from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+# from lerobot.processor import make_default_processors
 
 logger = logging.getLogger(__name__)
 
 
-def test(
-    device: str,
+@dataclass
+class TestConfig:
+    """Configuration for testing devices.
+    
+    At least one of robot, camera, or teleop must be specified.
+    """
+    # Robot to test (optional)
+    robot: RobotConfig | None = None
+    # Camera to test (optional)  
+    camera: CameraConfig | None = None
+    # Teleoperator to test (optional)
+    teleop: TeleoperatorConfig | None = None
+    # Camera read mode for camera tests: "async" or "sync"
+    camera_read_mode: str = "async"
+    # Camera timing window size (samples)
+    camera_timing_window: int = 120
+    # Camera timing log period in seconds
+    camera_timing_log_period_s: float = 1.0
+    # Do not auto-import third-party plugins
+    no_plugins: bool = False
+
+
+def _test_robot(
+    robot_config: RobotConfig,
     camera_read_mode: str = "async",
     camera_timing_window: int = 120,
     camera_timing_log_period_s: float = 1.0,
 ):
-    if device == "xense-camera":
-        from lerobot.cameras.xense import XenseCameraConfig
-        from lerobot.cameras.realsense import RealSenseCameraConfig
-        init_rerun(session_name="xense-camera-test")
-        config = {
-            "xense_camera": XenseCameraConfig(
-                serial_number="OG000456",
-                fps=30,
-                output_types=["force_resultant"],
-                # image output: [rectify, difference, depth]
-                # force output: [force, force_norm, force_resultant]
-                # marker output: [marker_2d]
-                # mesh output: [mesh_3d, mesh_3d_init, mesh_3d_flow]
-            ),
-            "realsense_camera": RealSenseCameraConfig(
-                serial_number_or_name="230422271416", fps=60, width=640, height=480
-            ),
-        }
-
-        _, _, robot_observation_processor = make_default_processors()
-
-        from lerobot.cameras import make_cameras_from_configs
-        cameras = make_cameras_from_configs(config)
-        logger.info(f"Initializing cameras: {cameras}")
-        for cam_key, cam in cameras.items():
-            logger.info(f"Connecting to {cam_key}...")
-            cam.connect()
-            logger.info(f"Connected to {cam_key}.")
-
-        timing_history: dict[str, deque[float]] = {
-            cam_key: deque(maxlen=max(1, int(camera_timing_window))) for cam_key in cameras.keys()
-        }
-        total_history: deque[float] = deque(maxlen=max(1, int(camera_timing_window)))
-        last_timing_log_t = time.perf_counter()
-
-        def get_observation() -> dict[str, Any]:
-            nonlocal last_timing_log_t
-            t0 = time.perf_counter()
-            obs_dict = {}
-            camera_times = {}
-            for cam_key, cam in cameras.items():
-                start = time.perf_counter()
-                if camera_read_mode == "sync":
-                    # Blocking call that waits on the camera hardware / SDK.
-                    data = cam.read()
-                    print(f"DEBUG: {cam_key} read data shape: {data.shape}")
-                else:
-                    # NOTE: Most camera implementations use a background thread; async_read()
-                    # typically returns the *latest cached* frame and will often be near-0ms
-                    # once the background reader is running.
-                    data = cam.async_read()
-                dt_ms = (time.perf_counter() - start) * 1e3
-                # Xense camera may return:
-                # - np.ndarray when only one output type is requested
-                # - dict[str, np.ndarray] when multiple output types are requested
-                if isinstance(data, dict):
-                    for out_k, out_v in data.items():
-                        obs_dict[f"{cam_key}.{out_k}"] = out_v
-                else:
-                    # Single output: use fixed key (cam_key) so Rerun viewer doesn't need
-                    # manual adjustment when switching output_types between runs.
-                    obs_dict[cam_key] = data
-                camera_times[cam_key] = dt_ms
-
-            total_dt_ms = (time.perf_counter() - t0) * 1e3
-            # Update timing history and log aggregated stats at a fixed cadence.
-            now = time.perf_counter()
-            for cam_key, dt_ms in camera_times.items():
-                timing_history[cam_key].append(float(dt_ms))
-            total_history.append(float(total_dt_ms))
-
-            if (now - last_timing_log_t) >= float(camera_timing_log_period_s):
-                last_timing_log_t = now
-
-                mode_label = "read" if camera_read_mode == "sync" else "async_read(cached)"
-                cam_lines: list[str] = []
-                total_last = 0.0
-                total_avg = 0.0
-                total_p95 = 0.0
-                total_max = 0.0
-                if total_history:
-                    tarr = np.asarray(total_history, dtype=np.float32)
-                    total_last = float(tarr[-1])
-                    total_avg = float(tarr.mean())
-                    total_p95 = float(np.percentile(tarr, 95))
-                    total_max = float(tarr.max())
-
-                cam_keys = sorted(timing_history.keys())
-                name_w = max((len(k) for k in cam_keys), default=0)
-                name_w = min(max(name_w, 10), 32)  # keep it sane
-
-                for cam_key in cam_keys:
-                    hist = timing_history[cam_key]
-                    if not hist:
-                        continue
-                    arr = np.asarray(hist, dtype=np.float32)
-                    last = float(arr[-1])
-                    avg = float(arr.mean())
-                    p95 = float(np.percentile(arr, 95))
-                    mx = float(arr.max())
-                    cam_lines.append(
-                        f"  - {cam_key:<{name_w}}  last {last:7.3f} ms  avg {avg:7.3f} ms  "
-                        f"p95 {p95:7.3f} ms  max {mx:7.3f} ms"
-                    )
-
-                n = max((len(h) for h in timing_history.values()), default=0)
-                header = (
-                    f"📷 get_observation {mode_label} stats "
-                    f"(window={int(camera_timing_window)}, n={n}, every={camera_timing_log_period_s:.1f}s): "
-                    f"total last {total_last:.3f} ms  avg {total_avg:.3f} ms  "
-                    f"p95 {total_p95:.3f} ms  max {total_max:.3f} ms"
-                )
-                lines = [header, *cam_lines] if cam_lines else [header]
-                logger.info("\n".join(lines))
-            return obs_dict
+    """Test a robot by continuously fetching and printing observations."""
+    from lerobot.robots import make_robot_from_config
+    
+    robot = None
+    try:
+        logger.info(f"Creating {robot_config.type} robot...")
+        robot = make_robot_from_config(robot_config)
+        
+        # Connect to robot with error handling
+        try:
+            logger.info("Connecting to robot...")
+            robot.connect(go_to_start=True)
+            logger.info("✓ Robot connected. Starting observation loop. Press Ctrl+C to stop.")
+            print()
+        except Exception as e:
+            logger.error(f"Failed to connect to robot: {e}")
+            logger.exception("Connection failed")
+            raise
+        
+        # Send initial TCP pose action (only for CARTESIAN_MOTION_FORCE mode)
+        try:
+            from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
+            if hasattr(robot.config, 'control_mode') and robot.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
+                target_tcp_pose = [0.68783, -0.115326, 0.328386, 0.004519, 0.003284, 0.999984, 0.001275]
+                # Format: [x, y, z, qw, qx, qy, qz]
+                action = {
+                    "tcp.x": target_tcp_pose[0],
+                    "tcp.y": target_tcp_pose[1],
+                    "tcp.z": target_tcp_pose[2],
+                    "tcp.qw": target_tcp_pose[3],
+                    "tcp.qx": target_tcp_pose[4],
+                    "tcp.qy": target_tcp_pose[5],
+                    "tcp.qz": target_tcp_pose[6],
+                    "gripper.pos": 0.0,  # Keep gripper at current position or set to 0
+                }
+                logger.info(f"Sending initial TCP pose action: {target_tcp_pose}")
+                time.sleep(0.5)
+                robot.send_action(action)
+                logger.info("✓ Initial TCP pose action sent.")
+                time.sleep(0.5)  # Give robot time to start moving
+        except (ImportError, AttributeError):
+            # Not a Flexiv robot or control_mode not available, skip
+            pass
+        except Exception as e:
+            logger.warning(f"Failed to send initial TCP pose action: {e}")
+            # Continue anyway - this is not critical
+        
+        # Continuous observation loop
+        loop_count = 0
         try:
             while True:
-                obs = get_observation()
-                obs_processed = robot_observation_processor(obs)
-                log_rerun_data(observation=obs_processed)
-                # Rerun logging is expensive; throttle the visualization loop.
-                time.sleep(1 / 60)
+                try:
+                    obs = robot.get_observation()
+                    
+                    # Print observation data (same line update)
+                    # print(f"\r[{loop_count:06d}] ", end="", flush=True)
+                    # for key, value in obs.items():
+                    #     if isinstance(value, (int, float)):
+                    #         print(f"{key}={value:8.4f} ", end="", flush=True)
+                    #     elif isinstance(value, np.ndarray):
+                    #         print(f"{key}=array{value.shape} ", end="", flush=True)
+                    #     else:
+                    #         print(f"{key}={str(value)[:20]} ", end="", flush=True)
+                    
+                    loop_count += 1
+                    time.sleep(0.1)  # 10 Hz update rate
+                except Exception as e:
+                    logger.error(f"Error getting observation: {e}")
+                    # Continue loop - don't break on single observation error
+                    time.sleep(0.1)
+                
         except KeyboardInterrupt:
-            pass
-        finally:
-            for cam_key, cam in cameras.items():
-                cam.disconnect()
-            rr.rerun_shutdown()
-            logger.info("Exiting xense-camera test loop...")
-
-    elif device == "spacemouse":
-        from lerobot.teleoperators.spacemouse import SpacemouseTeleop
-        from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
-        config = SpacemouseConfig(
-            pos_sensitivity=0.8,
-            ori_sensitivity=1.5,
-            deadzone=0.0,
-            max_value=500,
-            frequency=200,
-            filter_window_size=3,
-        )
-
-        teleop = SpacemouseTeleop(config)
-        logger.info("Connecting to spacemouse...")
-        teleop.connect()
-        logger.info("Connected to spacemouse. Press Ctrl+C to exit.")
-        print()  # Empty line for status display
-        try:
-            while True:
-                action = teleop.get_action()
-                # Format action values with fixed width for stable display
-                x = action.get("x", 0.0)
-                y = action.get("y", 0.0)
-                z = action.get("z", 0.0)
-                roll = action.get("roll", 0.0)
-                pitch = action.get("pitch", 0.0)
-                yaw = action.get("yaw", 0.0)
-                # Print on same line using carriage return
-                print(
-                    f"\rPos: x={x:+7.3f} y={y:+7.3f} z={z:+7.3f} | "
-                    f"Rot: r={roll:+7.3f} p={pitch:+7.3f} y={yaw:+7.3f}",
-                    end="", flush=True
-                )
-                time.sleep(1 / 200)
-        except KeyboardInterrupt:
-            pass
-        finally:
             print()  # New line after same-line updates
-            logger.info("Disconnecting from spacemouse...")
-            teleop.disconnect()
-    elif device == "pico4":
-        from lerobot.teleoperators.pico4 import Pico4
-        teleop = Pico4()
-        teleop.connect()
+            logger.info("Observation loop interrupted by user")
+            
+    except KeyboardInterrupt:
+        logger.warning("Interrupted by user (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"Error during robot testing: {e}")
+        logger.exception("Test failed")
+    finally:
+        # Final safety check - ensure robot is safely disconnected
+        if robot is not None:
+            try:
+                if robot.is_connected:
+                    logger.info("Safely disconnecting robot...")
+                    robot.disconnect()
+                    logger.info("✓ Robot safely disconnected.")
+            except Exception as e:
+                logger.error(f"Error during robot disconnect: {e}")
+                # Force cleanup for Flexiv robots
+                try:
+                    if hasattr(robot, '_robot') and robot._robot is not None:
+                        logger.warning("Attempting emergency stop...")
+                        robot._robot.Stop()
+                except Exception as stop_error:
+                    logger.error(f"Error during emergency stop: {stop_error}")
+
+
+def _test_camera(
+    camera_config: CameraConfig,
+    camera_read_mode: str = "async",
+    camera_timing_window: int = 120,
+    camera_timing_log_period_s: float = 1.0,
+):
+    """Test a camera by continuously reading and displaying frames."""
+    # Lazy import of heavy dependencies - only needed for camera tests
+    import rerun as rr
+    from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
+    from lerobot.processor import make_default_processors
+    from lerobot.cameras import make_cameras_from_configs
+    
+    init_rerun(session_name=f"{camera_config.type}-test")
+    config = {camera_config.type: camera_config}
+    
+    _, _, robot_observation_processor = make_default_processors()
+    
+    cameras = make_cameras_from_configs(config)
+    logger.info(f"Initializing cameras: {cameras}")
+    for cam_key, cam in cameras.items():
+        logger.info(f"Connecting to {cam_key}...")
+        cam.connect()
+        logger.info(f"Connected to {cam_key}.")
+    
+    timing_history: dict[str, deque[float]] = {
+        cam_key: deque(maxlen=max(1, int(camera_timing_window))) for cam_key in cameras.keys()
+    }
+    total_history: deque[float] = deque(maxlen=max(1, int(camera_timing_window)))
+    last_timing_log_t = time.perf_counter()
+    
+    def get_observation() -> dict[str, Any]:
+        nonlocal last_timing_log_t
+        t0 = time.perf_counter()
+        obs_dict = {}
+        camera_times = {}
+        for cam_key, cam in cameras.items():
+            start = time.perf_counter()
+            if camera_read_mode == "sync":
+                data = cam.read()
+            else:
+                data = cam.async_read()
+            dt_ms = (time.perf_counter() - start) * 1e3
+            if isinstance(data, dict):
+                for out_k, out_v in data.items():
+                    obs_dict[f"{cam_key}.{out_k}"] = out_v
+            else:
+                obs_dict[cam_key] = data
+            camera_times[cam_key] = dt_ms
+        
+        total_dt_ms = (time.perf_counter() - t0) * 1e3
+        now = time.perf_counter()
+        for cam_key, dt_ms in camera_times.items():
+            timing_history[cam_key].append(float(dt_ms))
+        total_history.append(float(total_dt_ms))
+        
+        if (now - last_timing_log_t) >= float(camera_timing_log_period_s):
+            last_timing_log_t = now
+            mode_label = "read" if camera_read_mode == "sync" else "async_read(cached)"
+            cam_lines: list[str] = []
+            total_last = 0.0
+            total_avg = 0.0
+            total_p95 = 0.0
+            total_max = 0.0
+            if total_history:
+                tarr = np.asarray(total_history, dtype=np.float32)
+                total_last = float(tarr[-1])
+                total_avg = float(tarr.mean())
+                total_p95 = float(np.percentile(tarr, 95))
+                total_max = float(tarr.max())
+            
+            cam_keys = sorted(timing_history.keys())
+            name_w = max((len(k) for k in cam_keys), default=0)
+            name_w = min(max(name_w, 10), 32)
+            
+            for cam_key in cam_keys:
+                hist = timing_history[cam_key]
+                if not hist:
+                    continue
+                arr = np.asarray(hist, dtype=np.float32)
+                last = float(arr[-1])
+                avg = float(arr.mean())
+                p95 = float(np.percentile(arr, 95))
+                mx = float(arr.max())
+                cam_lines.append(
+                    f"  - {cam_key:<{name_w}}  last {last:7.3f} ms  avg {avg:7.3f} ms  "
+                    f"p95 {p95:7.3f} ms  max {mx:7.3f} ms"
+                )
+            
+            n = max((len(h) for h in timing_history.values()), default=0)
+            header = (
+                f"📷 get_observation {mode_label} stats "
+                f"(window={int(camera_timing_window)}, n={n}, every={camera_timing_log_period_s:.1f}s): "
+                f"total last {total_last:.3f} ms  avg {total_avg:.3f} ms  "
+                f"p95 {total_p95:.3f} ms  max {total_max:.3f} ms"
+            )
+            lines = [header, *cam_lines] if cam_lines else [header]
+            logger.info("\n".join(lines))
+        return obs_dict
+    
+    try:
+        while True:
+            obs = get_observation()
+            obs_processed = robot_observation_processor(obs)
+            log_rerun_data(observation=obs_processed)
+            time.sleep(1 / 60)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        for cam_key, cam in cameras.items():
+            cam.disconnect()
+        rr.rerun_shutdown()
+        logger.info("Exiting camera test loop...")
+
+
+def _test_teleop(teleop_config: TeleoperatorConfig):
+    """Test a teleoperator by continuously reading and displaying actions."""
+    from lerobot.teleoperators import make_teleoperator_from_config
+    
+    teleop = make_teleoperator_from_config(teleop_config)
+    logger.info(f"Connecting to {teleop_config.type}...")
+    teleop.connect()
+    logger.info(f"Connected to {teleop_config.type}. Press Ctrl+C to exit.")
+    print()
+    try:
+        while True:
+            action = teleop.get_action()
+            # Format action values with fixed width for stable display
+            x = action.get("x", 0.0)
+            y = action.get("y", 0.0)
+            z = action.get("z", 0.0)
+            roll = action.get("roll", 0.0)
+            pitch = action.get("pitch", 0.0)
+            yaw = action.get("yaw", 0.0)
+            # Print on same line using carriage return
+            print(
+                f"\rPos: x={x:+7.3f} y={y:+7.3f} z={z:+7.3f} | "
+                f"Rot: r={roll:+7.3f} p={pitch:+7.3f} y={yaw:+7.3f}",
+                end="", flush=True
+            )
+            time.sleep(1 / 200)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print()  # New line after same-line updates
+        logger.info("Disconnecting from teleoperator...")
         teleop.disconnect()
-    else:
-        raise ValueError(f"Invalid device for testing: {device}")
 
 
 def _safe_import(module: str) -> tuple[bool, str | None]:
@@ -247,15 +347,19 @@ def _safe_import(module: str) -> tuple[bool, str | None]:
         return False, f"{type(e).__name__}: {e}"
 
 
-def _register_builtin_devices() -> dict[str, dict[str, str | None]]:
+def _register_builtin_devices(device_types: list[str] | None = None) -> dict[str, dict[str, str | None]]:
     """
     Import config modules so draccus ChoiceRegistry subclasses get registered.
+
+    Args:
+        device_types: Optional list of device types to register. If None, registers all.
+                     Valid values: "robots", "cameras", "teleoperators"
 
     Returns a dict describing import errors (if any).
     """
     # NOTE: Importing *config* modules is preferred over importing the full package,
     # because some packages' __init__ import hardware-backed implementations.
-    modules: dict[str, list[str]] = {
+    all_modules: dict[str, list[str]] = {
         "cameras": [
             "lerobot.cameras.opencv.configuration_opencv",
             "lerobot.cameras.realsense.configuration_realsense",
@@ -268,6 +372,7 @@ def _register_builtin_devices() -> dict[str, dict[str, str | None]]:
             "lerobot.robots.bi_so100_follower.config_bi_so100_follower",
             "lerobot.robots.bi_arx5.config_bi_arx5",
             "lerobot.robots.arx5_follower.config_arx5_follower",
+            "lerobot.robots.flexiv_rizon4.config_flexiv_rizon4",
         ],
         "teleoperators": [
             "lerobot.teleoperators.keyboard.configuration_keyboard",
@@ -282,6 +387,12 @@ def _register_builtin_devices() -> dict[str, dict[str, str | None]]:
             "lerobot.teleoperators.spacemouse.config_spacemouse",
         ],
     }
+
+    # Filter modules based on device_types if specified
+    if device_types is not None:
+        modules = {k: v for k, v in all_modules.items() if k in device_types}
+    else:
+        modules = all_modules
 
     errors: dict[str, dict[str, str | None]] = {k: {} for k in modules}
     for group, paths in modules.items():
@@ -454,141 +565,181 @@ def _to_printable(x: Any) -> Any:
     return x
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        prog="lerobot-test",
-        description="Dev sandbox for importing and experimenting with LeRobot robots/teleoperators/cameras.",
-    )
-    parser.add_argument(
-        "--list",
-        choices=["robots", "teleoperators", "cameras", "all"],
-        default=None,
-        help="Print registered type names (best-effort).",
-    )
-    parser.add_argument(
-        "--device",
-        choices=["spacemouse", "pico4", "xense-camera", "xense-flare", "arx5_follower", "dobot_nova5"],
-        default=None,
-        help="Test device.",
-    )
-    parser.add_argument(
-        "--camera-read-mode",
-        choices=["async", "sync"],
-        default="sync",
-        help=(
-            "For camera device tests: use async_read (default, often cached/near-0ms after warmup) "
-            "or sync read (blocking call that measures actual camera read latency)."
-        ),
-    )
-    parser.add_argument(
-        "--camera-timing-window",
-        type=int,
-        default=120,
-        help="Rolling window size (samples) for camera timing stats.",
-    )
-    parser.add_argument(
-        "--camera-timing-log-period",
-        type=float,
-        default=1.0,
-        help="Seconds between aggregated camera timing logs.",
-    )
-    parser.add_argument(
-        "--repl",
-        action="store_true",
-        help="Start a Python REPL with common symbols and sample configs preloaded.",
-    )
-    parser.add_argument(
-        "--no-plugins",
-        action="store_true",
-        help="Do not auto-import third-party plugins (lerobot_robot_*, lerobot_camera_*, lerobot_teleoperator_*).",
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Enable INFO logging.",
-    )
-    args = parser.parse_args(argv)
-
-    # Default to INFO when running device tests so timing logs show up.
-    # Use force=True so it still works if another library configured logging already.
-    log_level = logging.INFO if (args.verbose or args.device is not None) else logging.WARNING
-    logging.basicConfig(level=log_level, force=True)
-
-    if not args.no_plugins:
+@parser.wrap()
+def test_with_config(cfg: TestConfig):
+    """Test device using configuration interface.
+    
+    Examples:
+        lerobot-test --robot.type=flexiv_rizon4
+        lerobot-test --teleop.type=spacemouse
+        lerobot-test --camera.type=opencv
+    """
+    init_logging()
+    logging.info(pformat(asdict(cfg)))
+    
+    # Determine what device type to test and only register that type for faster startup
+    device_types_to_register = []
+    if cfg.robot is not None:
+        device_types_to_register.append("robots")
+    if cfg.camera is not None:
+        device_types_to_register.append("cameras")
+    if cfg.teleop is not None:
+        device_types_to_register.append("teleoperators")
+    
+    # Only register third-party plugins if needed (they can be slow to import)
+    # Skip if no device specified or if explicitly disabled
+    if device_types_to_register and not cfg.no_plugins:
         try:
             from lerobot.utils.import_utils import register_third_party_devices
-
             register_third_party_devices()
         except Exception:
             logger.exception("Failed importing third-party plugins.")
-
-    import_errors = _register_builtin_devices()
-
-    if args.list is not None:
-        choices = _list_registered_choices()
-        if args.list == "all":
-            for group in ("robots", "teleoperators", "cameras"):
-                print(f"\n[{group}]")
-                for name in choices.get(group, []):
-                    print(f"- {name}")
-        else:
-            print(f"\n[{args.list}]")
-            for name in choices.get(args.list, []):
-                print(f"- {name}")
-
-    # Always show import issues (if any) so it's obvious what failed in the current environment.
-    failed = {
-        group: {m: err for m, err in errs.items() if err is not None}
-        for group, errs in import_errors.items()
-    }
-    failed = {g: v for g, v in failed.items() if v}
-    if failed:
-        print("\n[import errors]")
-        for group, errs in failed.items():
-            print(f"- {group}:")
-            for mod, err in errs.items():
-                print(f"  - {mod}: {err}")
-
-    if args.repl:
-        # Common imports exposed in the interactive namespace.
-        from lerobot.cameras import Camera, CameraConfig, make_cameras_from_configs
-        from lerobot.robots import Robot, RobotConfig, make_robot_from_config
-        from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
-
-        # Sample configs (best-effort)
-        samples = _build_sample_configs()
-
-        banner_lines = [
-            "LeRobot dev REPL",
-            "",
-            "Available symbols:",
-            "  - RobotConfig, TeleoperatorConfig, CameraConfig",
-            "  - make_robot_from_config(cfg), make_teleoperator_from_config(cfg), make_cameras_from_configs(dict)",
-            "  - samples (dict): a few ready-to-use config instances",
-            "",
-            "Tip: configs do NOT connect to hardware by default. You can instantiate/connect manually.",
-        ]
-        local_vars = {
-            "Robot": Robot,
-            "RobotConfig": RobotConfig,
-            "Teleoperator": Teleoperator,
-            "TeleoperatorConfig": TeleoperatorConfig,
-            "Camera": Camera,
-            "CameraConfig": CameraConfig,
-            "make_robot_from_config": make_robot_from_config,
-            "make_teleoperator_from_config": make_teleoperator_from_config,
-            "make_cameras_from_configs": make_cameras_from_configs,
-            "samples": {k: _to_printable(v) for k, v in samples.items()},
-            "_raw_samples": samples,
-        }
-        code.interact(banner="\n".join(banner_lines), local=local_vars)
+    
+    # Only register the device type we need (much faster than registering all)
+    if device_types_to_register:
+        _register_builtin_devices(device_types_to_register)
     else:
-        test(
-            args.device,
-            camera_read_mode=args.camera_read_mode,
-            camera_timing_window=args.camera_timing_window,
-            camera_timing_log_period_s=args.camera_timing_log_period,
+        # If nothing specified, register all for --list functionality
+        _register_builtin_devices()
+    
+    # Determine what to test based on config
+    if cfg.robot is not None:
+        _test_robot(cfg.robot, cfg.camera_read_mode, cfg.camera_timing_window, cfg.camera_timing_log_period_s)
+    elif cfg.camera is not None:
+        _test_camera(cfg.camera, cfg.camera_read_mode, cfg.camera_timing_window, cfg.camera_timing_log_period_s)
+    elif cfg.teleop is not None:
+        _test_teleop(cfg.teleop)
+    else:
+        # If nothing specified, just show help or list
+        logger.warning("No device specified. Use --robot.type, --camera.type, or --teleop.type")
+        logger.info("Use --list to see available devices")
+
+
+def main(argv: list[str] | None = None) -> None:
+    import sys
+    if argv is None:
+        argv = sys.argv[1:]
+    
+    # Check for --list or --repl (special commands that don't need config)
+    if "--list" in argv or "--repl" in argv or len(argv) == 0:
+        # Use argparse for these special commands
+        parser = argparse.ArgumentParser(
+            prog="lerobot-test",
+            description="Dev sandbox for importing and experimenting with LeRobot robots/teleoperators/cameras.",
         )
+        parser.add_argument(
+            "--list",
+            choices=["robots", "teleoperators", "cameras", "all"],
+            default=None,
+            help="Print registered type names (best-effort).",
+        )
+        parser.add_argument(
+            "--repl",
+            action="store_true",
+            help="Start a Python REPL with common symbols and sample configs preloaded.",
+        )
+        parser.add_argument(
+            "--no-plugins",
+            action="store_true",
+            help="Do not auto-import third-party plugins (lerobot_robot_*, lerobot_camera_*, lerobot_teleoperator_*).",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Enable INFO logging.",
+        )
+        args = parser.parse_args(argv)
+
+        # Default to INFO when running device tests so timing logs show up.
+        log_level = logging.INFO if args.verbose else logging.WARNING
+        logging.basicConfig(level=log_level, force=True)
+
+        # Determine which device types to register based on --list argument
+        if args.list == "all":
+            device_types_to_register = None  # Register all
+        elif args.list is not None:
+            device_types_to_register = [args.list]  # Only register the requested type
+        else:
+            device_types_to_register = None  # For --repl or no args, register all
+
+        # Only register third-party plugins if needed (they can be slow to import)
+        if not args.no_plugins and device_types_to_register is not None:
+            try:
+                from lerobot.utils.import_utils import register_third_party_devices
+                register_third_party_devices()
+            except Exception:
+                logger.exception("Failed importing third-party plugins.")
+
+        import_errors = _register_builtin_devices(device_types_to_register)
+
+        if args.list is not None:
+            choices = _list_registered_choices()
+            if args.list == "all":
+                for group in ("robots", "teleoperators", "cameras"):
+                    print(f"\n[{group}]")
+                    for name in choices.get(group, []):
+                        print(f"- {name}")
+            else:
+                print(f"\n[{args.list}]")
+                for name in choices.get(args.list, []):
+                    print(f"- {name}")
+
+        # Show import errors
+        failed = {
+            group: {m: err for m, err in errs.items() if err is not None}
+            for group, errs in import_errors.items()
+        }
+        failed = {g: v for g, v in failed.items() if v}
+        if failed:
+            print("\n[import errors]")
+            for group, errs in failed.items():
+                print(f"- {group}:")
+                for mod, err in errs.items():
+                    print(f"  - {mod}: {err}")
+
+        if args.repl:
+            _start_repl()
+        
+        return
+    
+    # Use new config-based interface for device testing
+    test_with_config()
+
+
+def _start_repl() -> None:
+    """Start a Python REPL with common symbols and sample configs preloaded."""
+    # Common imports exposed in the interactive namespace.
+    from lerobot.cameras import Camera, CameraConfig, make_cameras_from_configs
+    from lerobot.robots import Robot, RobotConfig, make_robot_from_config
+    from lerobot.teleoperators import Teleoperator, TeleoperatorConfig, make_teleoperator_from_config
+
+    # Sample configs (best-effort)
+    samples = _build_sample_configs()
+
+    banner_lines = [
+        "LeRobot dev REPL",
+        "",
+        "Available symbols:",
+        "  - RobotConfig, TeleoperatorConfig, CameraConfig",
+        "  - make_robot_from_config(cfg), make_teleoperator_from_config(cfg), make_cameras_from_configs(dict)",
+        "  - samples (dict): a few ready-to-use config instances",
+        "",
+        "Tip: configs do NOT connect to hardware by default. You can instantiate/connect manually.",
+    ]
+    local_vars = {
+        "Robot": Robot,
+        "RobotConfig": RobotConfig,
+        "Teleoperator": Teleoperator,
+        "TeleoperatorConfig": TeleoperatorConfig,
+        "Camera": Camera,
+        "CameraConfig": CameraConfig,
+        "make_robot_from_config": make_robot_from_config,
+        "make_teleoperator_from_config": make_teleoperator_from_config,
+        "make_cameras_from_configs": make_cameras_from_configs,
+        "samples": {k: _to_printable(v) for k, v in samples.items()},
+        "_raw_samples": samples,
+    }
+    code.interact(banner="\n".join(banner_lines), local=local_vars)
 
 
 if __name__ == "__main__":
