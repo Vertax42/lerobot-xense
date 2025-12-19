@@ -206,8 +206,23 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
     def wrapper_outer(fn: F) -> F:
         @wraps(fn)
         def wrapper_inner(*args: Any, **kwargs: Any) -> Any:
-            argspec = inspect.getfullargspec(fn)
-            argtype = argspec.annotations[argspec.args[0]]
+            # Use inspect.signature() for better support of from __future__ import annotations
+            # Fall back to getfullargspec for older Python versions
+            try:
+                sig = inspect.signature(fn)
+                params = list(sig.parameters.values())
+                if params:
+                    param = params[0]
+                    argtype = param.annotation
+                    # If it's a string (forward reference from __future__ import annotations), resolve it
+                    if isinstance(argtype, str):
+                        module = inspect.getmodule(fn)
+                        if module is not None:
+                            argtype = getattr(module, argtype)
+            except (AttributeError, KeyError, TypeError, ValueError):
+                # Fallback to old method for compatibility
+                argspec = inspect.getfullargspec(fn)
+                argtype = argspec.annotations[argspec.args[0]]
             if len(args) > 0 and type(args[0]) is argtype:
                 cfg = args[0]
                 args = args[1:]
@@ -221,6 +236,26 @@ def wrap(config_path: Path | None = None) -> Callable[[F], F]:
                         # add the relevant CLI arg to the error message
                         raise PluginLoadError(f"{e}\nFailed plugin CLI Arg: {plugin_cli_arg}") from e
                     cli_args = filter_arg(plugin_cli_arg, cli_args)
+                
+                # Register third-party devices before parsing (needed for draccus ChoiceRegistry)
+                try:
+                    from lerobot.utils.import_utils import register_third_party_devices
+                    register_third_party_devices()
+                except (ImportError, AttributeError):
+                    pass
+                
+                # Register built-in devices before parsing (needed for draccus ChoiceRegistry)
+                # This ensures all config subclasses are registered before draccus.parse() is called
+                # Only do this if the function module has _register_builtin_devices
+                try:
+                    module = inspect.getmodule(fn)
+                    if module is not None and hasattr(module, "_register_builtin_devices"):
+                        _register_builtin_devices = getattr(module, "_register_builtin_devices")
+                        _register_builtin_devices()
+                except (AttributeError, ImportError, TypeError):
+                    # If _register_builtin_devices is not available, continue without it
+                    pass
+                
                 config_path_cli = parse_arg("config_path", cli_args)
                 if has_method(argtype, "__get_path_fields__"):
                     path_fields = argtype.__get_path_fields__()

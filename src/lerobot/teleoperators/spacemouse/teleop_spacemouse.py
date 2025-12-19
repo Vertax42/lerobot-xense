@@ -40,6 +40,7 @@ from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +125,7 @@ class SpacemouseTeleop(Teleoperator):
         """Spacemouse doesn't support feedback."""
         return {}
 
-    def connect(self, calibrate: bool = True, start_eef_pose: np.ndarray = np.zeros(7, dtype=np.float32)) -> None:
+    def connect(self, calibrate: bool = True, current_tcp_pose_euler: np.ndarray = np.zeros(7, dtype=np.float32)) -> None:
         """Connect to the 3D Spacemouse."""
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
@@ -155,9 +156,12 @@ class SpacemouseTeleop(Teleoperator):
 
             self._is_connected = True
 
-            # Set target pose on connect
-            self._target_pose_6d = start_eef_pose[:6]
-            self._target_gripper_pos = start_eef_pose[6]
+            # Set target pose on connect and save initial pose for reset
+            self._target_pose_6d = current_tcp_pose_euler[:6].copy()
+            self._target_gripper_pos = current_tcp_pose_euler[6]
+            # Save initial pose for reset functionality
+            self._start_pose_6d = current_tcp_pose_euler[:6].copy()
+            self._start_gripper_pos = current_tcp_pose_euler[6]
 
             logger.info(f"{self} connected successfully.")
 
@@ -183,7 +187,9 @@ class SpacemouseTeleop(Teleoperator):
             pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
             gripper_pos: Gripper position in meters
         """
-        self.set_target_pose(pose_6d, gripper_pos)
+        self._target_pose_6d = np.array(pose_6d, dtype=np.float32).copy()
+        self._target_gripper_pos = float(gripper_pos)
+        logger.info(f"Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
 
     def _get_filtered_state(self) -> np.ndarray:
         """Get filtered spacemouse state with moving average."""
@@ -359,6 +365,41 @@ class SpacemouseTeleop(Teleoperator):
 
         self._is_connected = False
         logger.info(f"{self} disconnected.")
+
+    def convert_to_flexiv_action(self, spacemouse_action: dict[str, Any]) -> dict[str, Any]:
+        """Convert spacemouse action (Euler angles) to Flexiv Rizon4 action (quaternion).
+        
+        This matches the behavior of spacemouse_teleop.py example:
+        - Spacemouse maintains absolute pose in Euler angles [x, y, z, roll, pitch, yaw]
+        - Convert to quaternion format [x, y, z, qw, qx, qy, qz] for Flexiv SDK
+        
+        Args:
+            spacemouse_action: Dictionary with keys {x, y, z, roll, pitch, yaw, gripper_pos}
+        
+        Returns:
+            Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
+        """
+        # Convert Euler angles to quaternion (matching spacemouse_teleop.py euler_to_quaternion)
+        qw, qx, qy, qz = euler_to_quaternion(
+            spacemouse_action["roll"],
+            spacemouse_action["pitch"],
+            spacemouse_action["yaw"],
+        )
+        
+        # Normalize quaternion to ensure unit length (matching spacemouse_teleop.py normalize_quaternion)
+        qw, qx, qy, qz = normalize_quaternion(qw, qx, qy, qz)
+        
+        # Map to Flexiv action format (matching Flexiv SDK SendCartesianMotionForce signature)
+        return {
+            "tcp.x": spacemouse_action["x"],
+            "tcp.y": spacemouse_action["y"],
+            "tcp.z": spacemouse_action["z"],
+            "tcp.qw": qw,
+            "tcp.qx": qx,
+            "tcp.qy": qy,
+            "tcp.qz": qz,
+            "gripper.pos": spacemouse_action["gripper_pos"],
+        }
 
     def __del__(self):
         """Cleanup on deletion."""
