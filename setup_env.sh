@@ -159,6 +159,42 @@ elif [[ "$1" == "--install" ]]; then
         cmake ..
         sudo make install -j4
         echo "[INFO] ARX5 SDK built successfully!"
+        
+        # Set real-time scheduling capability for Python (required by ARX5 SDK)
+        echo "[INFO] Setting real-time scheduling capability for Python..."
+        PYTHON_REAL_PATH=$(readlink -f "$CONDA_PREFIX/bin/python")
+        sudo setcap cap_sys_nice=ep "$PYTHON_REAL_PATH"
+        echo "[INFO] Real-time scheduling capability set for: $PYTHON_REAL_PATH"
+        
+        # Create sitecustomize.py to preload conda's libstdc++ (fixes CXXABI version issues)
+        echo "[INFO] Creating sitecustomize.py for C++ ABI compatibility..."
+        PY_VER="$(python -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
+        SITE_PACKAGES_DIR="${CONDA_PREFIX}/lib/${PY_VER}/site-packages"
+        SITECUSTOMIZE_FILE="${SITE_PACKAGES_DIR}/sitecustomize.py"
+        
+        cat > "$SITECUSTOMIZE_FILE" << 'EOF'
+"""
+Sitecustomize for conda environment.
+
+This file is automatically executed when Python starts.
+It preloads the conda environment's libstdc++.so.6 to ensure C++ extensions
+compiled with GCC 14.3.0 can find the required CXXABI_1.3.15 symbols.
+"""
+import os
+import ctypes
+
+conda_prefix = os.environ.get('CONDA_PREFIX')
+if conda_prefix:
+    libstdcxx_path = os.path.join(conda_prefix, 'lib', 'libstdc++.so.6')
+    if os.path.exists(libstdcxx_path):
+        try:
+            # Preload with RTLD_GLOBAL so all subsequently loaded modules can use it
+            ctypes.CDLL(libstdcxx_path, mode=ctypes.RTLD_GLOBAL)
+        except Exception:
+            # Silently fail if preloading doesn't work
+            pass
+EOF
+        echo "[INFO] sitecustomize.py created at: $SITECUSTOMIZE_FILE"
     fi
     cd "$PROJECT_ROOT"
     echo "[INFO] Installing Lerobot from pyproject.toml"
