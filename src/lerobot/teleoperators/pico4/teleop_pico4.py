@@ -15,40 +15,53 @@
 # limitations under the License.
 
 """
-Pico4 VR teleoperator using xensevr_pc_service_sdk.
+Pico4 VR teleoperator for end-effector control.
 
-This teleoperator provides:
-- Left/Right controller poses (position + quaternion)
-- Headset pose
-- Trigger and grip inputs for both controllers
+This teleoperator provides 6-DoF absolute pose control using VR controllers,
+similar to Spacemouse. It outputs accumulated target_pose_6d that can be
+directly sent to a Cartesian controller.
+
+The output format matches ARX5 SDK's spacemouse_teleop.py example:
+- target_pose_6d: [x, y, z, roll, pitch, yaw] - absolute EEF pose
+- gripper_pos: absolute gripper position in meters
 """
 
 import logging
 import time
+from queue import Queue
 from typing import Any
 
 import numpy as np
+import spdlog
 
 from lerobot.teleoperators.pico4.config_pico4 import Pico4Config
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion
 
 logger = logging.getLogger(__name__)
 
 
 class Pico4(Teleoperator):
     """
-    Pico4 VR teleoperator using XenseVR PC Service SDK.
+    Pico4 VR teleoperator for end-effector control.
 
-    This teleoperator reads pose data from Pico4 VR controllers and headset,
-    as well as trigger and grip inputs. It can be used to control robots
-    in teleoperation scenarios.
+    This teleoperator reads pose data from Pico4 VR controllers and maintains
+    an accumulated target_pose_6d suitable for Cartesian control of robotic arms.
 
-    The SDK provides:
-    - Left/Right controller poses (x, y, z, qx, qy, qz, qw)
-    - Headset pose (x, y, z, qx, qy, qz, qw)
+    The VR controller provides:
+    - Absolute pose: (x, y, z, qx, qy, qz, qw) - position and quaternion
     - Trigger values (0-1) for both controllers
     - Grip values (0-1) for both controllers
+    - Buttons: A, B, X, Y, menu, axis click
+
+    Output action format (matches ARX5 SDK spacemouse_teleop.py):
+    - x, y, z, roll, pitch, yaw: absolute EEF target pose (accumulated)
+    - gripper_pos: absolute gripper position in meters
+
+    Usage:
+    1. Call reset_to_pose() to initialize with robot's current EEF pose
+    2. Call get_action() to get updated target_pose_6d based on VR controller input
     """
 
     config_class = Pico4Config
@@ -59,14 +72,26 @@ class Pico4(Teleoperator):
         self.config = config
         self._is_connected = False
         self._xrt = None
+        self.logger = spdlog.ConsoleLogger("Pico4Teleop")
 
-        # Calibration data
-        self._left_calib_pos: np.ndarray | None = None
-        self._left_calib_quat_inv: np.ndarray | None = None
-        self._right_calib_pos: np.ndarray | None = None
-        self._right_calib_quat_inv: np.ndarray | None = None
-        self._headset_calib_pos: np.ndarray | None = None
-        self._headset_calib_quat_inv: np.ndarray | None = None
+        # Target pose tracking (position in xyz, orientation in quaternion)
+        self._target_pos: np.ndarray = np.zeros(3, dtype=np.float32)  # [x, y, z]
+        self._target_quat: np.ndarray = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)  # [qx, qy, qz, qw]
+        self._target_gripper_pos: float = 0.0
+        self._start_pos: np.ndarray = np.zeros(3, dtype=np.float32)  # [x, y, z]
+        self._start_quat: np.ndarray = np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)  # [qx, qy, qz, qw]
+        self._start_gripper_pos: float = 0.0
+
+        # Reference pose for relative control (calibration pose)
+        self._ref_controller_pose: np.ndarray | None = None  # [x, y, z, qx, qy, qz, qw]
+        self._ref_controller_quat: np.ndarray | None = None  # [qx, qy, qz, qw] for quaternion math
+
+        # Smoothing filter queues (moving average) for absolute position and quaternion
+        self._pos_queue: Queue = Queue(self.config.filter_window_size)
+        self._quat_queue: Queue = Queue(self.config.filter_window_size)
+
+        # State tracking
+        self._enabled: bool = False
 
     @property
     def is_connected(self) -> bool:
@@ -74,53 +99,44 @@ class Pico4(Teleoperator):
 
     @property
     def is_calibrated(self) -> bool:
-        """Check if the teleoperator is calibrated."""
-        # TODO: Implement calibration check when calibration is enabled
+        """Pico4 doesn't require calibration."""
         return True
 
     @property
-    def action_features(self) -> dict[str, type]:
-        """Return the action features provided by this teleoperator."""
-        features = {}
-        if self.config.use_left_controller:
-            features.update(
-                {
-                    "left.pos": np.ndarray,  # shape (3,) - raw position
-                    "left.quat": np.ndarray,  # shape (4,) - raw quaternion (xyzw)
-                    "left.trigger": float,
-                    "left.grip": float,
-                    "left.enabled": bool,  # True if grip > threshold
-                }
-            )
-        if self.config.use_right_controller:
-            features.update(
-                {
-                    "right.pos": np.ndarray,  # shape (3,) - raw position
-                    "right.quat": np.ndarray,  # shape (4,) - raw quaternion (xyzw)
-                    "right.trigger": float,
-                    "right.grip": float,
-                    "right.enabled": bool,  # True if grip > threshold
-                }
-            )
-        features.update(
-            {
-                "headset.pos": np.ndarray,  # shape (3,) - raw position
-                "headset.quat": np.ndarray,  # shape (4,) - raw quaternion (xyzw)
-            }
-        )
-        return features
+    def action_features(self) -> dict:
+        """
+        Return action features matching ARX5 SDK's target_pose_6d format.
+
+        Returns a dictionary with dtype, shape, and names for the action space:
+        - x, y, z: absolute EEF position (meters)
+        - roll, pitch, yaw: absolute EEF orientation (radians)
+        - gripper_pos: absolute gripper position (meters)
+        """
+        return {
+            "dtype": "float32",
+            "shape": (7,),
+            "names": {
+                "x": 0,
+                "y": 1,
+                "z": 2,
+                "roll": 3,
+                "pitch": 4,
+                "yaw": 5,
+                "gripper_pos": 6,
+            },
+        }
 
     @property
     def feedback_features(self) -> dict[str, type]:
-        """Return feedback features (not implemented for Pico4)."""
+        """Pico4 doesn't support feedback."""
         return {}
 
-    def connect(self, calibrate: bool = True) -> None:
+    def connect(self, calibrate: bool = True, current_tcp_pose_euler: np.ndarray = np.zeros(7, dtype=np.float32)) -> None:
         """Connect to the Pico4 VR headset via XenseVR SDK."""
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        logger.info("Connecting to Pico4 VR headset...")
+        self.logger.info("Connecting to Pico4 VR headset...")
         try:
             import xensevr_pc_service_sdk as xrt
         except ImportError as e:
@@ -128,280 +144,392 @@ class Pico4(Teleoperator):
                 "xensevr_pc_service_sdk is required for Pico4 teleoperator. "
                 "Please install it according to your Pico4 SDK documentation."
             ) from e
+
         try:
-            self._xrt = xrt.init()
-            logger.info("XenseVR SDK initialized successfully.")
+            xrt.init()
+            self._xrt = xrt
+            self.logger.info("XenseVR SDK initialized successfully.")
             time.sleep(1.0)  # Wait for SDK to stabilize
+
+            # Set target pose on connect and save initial pose for reset
+            # Convert Euler angles to quaternion for internal storage
+            roll, pitch, yaw = current_tcp_pose_euler[3:6]
+            qw, qx, qy, qz = euler_to_quaternion(roll, pitch, yaw)
+            qw, qx, qy, qz = normalize_quaternion(qw, qx, qy, qz)
+            
+            self._target_pos = current_tcp_pose_euler[:3].copy()
+            self._target_quat = np.array([qx, qy, qz, qw], dtype=np.float32)
+            self._target_gripper_pos = current_tcp_pose_euler[6]
+            
+            # Save initial pose for reset functionality
+            self._start_pos = current_tcp_pose_euler[:3].copy()
+            self._start_quat = np.array([qx, qy, qz, qw], dtype=np.float32)
+            self._start_gripper_pos = current_tcp_pose_euler[6]
+
+            # Initialize reference pose tracking (will be set on first frame)
+            self._ref_controller_pose = None
+            self._ref_controller_quat = None
+
             self._is_connected = True
-            logger.info(f"{self} connected.")
+            self.logger.info(f"{self} connected successfully.")
         except RuntimeError as e:
             raise RuntimeError(f"Failed to initialize XenseVR SDK: {e}") from e
 
     def calibrate(self) -> None:
-        """Calibrate the teleoperator by capturing the current pose as the reference."""
-        # TODO: Implement calibration when needed
+        """No calibration needed for Pico4."""
         pass
-        # if not self._is_connected:
-        #     raise DeviceNotConnectedError(f"{self} is not connected.")
-        #
-        # print("\n" + "=" * 60)
-        # print("  Pico4 Calibration")
-        # print("=" * 60)
-        # print("\nHold the controllers in your desired starting position.")
-        # print("Press and hold both GRIP buttons to capture the calibration pose...")
-        # print("=" * 60 + "\n")
-        #
-        # # Wait for user to press both grips
-        # while True:
-        #     left_grip = self._xrt.get_left_grip()
-        #     right_grip = self._xrt.get_right_grip()
-        #
-        #     if left_grip > self.config.grip_threshold and right_grip > self.config.grip_threshold:
-        #         break
-        #     time.sleep(0.02)
-        #
-        # # Capture calibration poses
-        # if self.config.use_left_controller:
-        #     left_pose = self._xrt.get_left_controller_pose()
-        #     self._left_calib_pos = np.array(left_pose[:3])
-        #     # Store quaternion as xyzw for scipy compatibility
-        #     self._left_calib_quat_inv = self._quat_inverse(
-        #         np.array([left_pose[3], left_pose[4], left_pose[5], left_pose[6]])
-        #     )
-        #
-        # if self.config.use_right_controller:
-        #     right_pose = self._xrt.get_right_controller_pose()
-        #     self._right_calib_pos = np.array(right_pose[:3])
-        #     self._right_calib_quat_inv = self._quat_inverse(
-        #         np.array([right_pose[3], right_pose[4], right_pose[5], right_pose[6]])
-        #     )
-        #
-        # # Calibrate headset
-        # headset_pose = self._xrt.get_headset_pose()
-        # self._headset_calib_pos = np.array(headset_pose[:3])
-        # self._headset_calib_quat_inv = self._quat_inverse(
-        #     np.array([headset_pose[3], headset_pose[4], headset_pose[5], headset_pose[6]])
-        # )
-        #
-        # print("\nCalibration complete!\n")
 
     def configure(self) -> None:
-        """Configure the teleoperator (no additional configuration needed)."""
+        """No additional configuration needed."""
         pass
 
+    def reset_to_pose(self, pose_6d: np.ndarray, gripper_pos: float = 0.0) -> None:
+        """
+        Reset target pose to a specific pose (e.g., home pose).
+
+        Args:
+            pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
+            gripper_pos: Gripper position in meters
+        """
+        # Convert Euler angles to quaternion
+        roll, pitch, yaw = pose_6d[3:6]
+        qw, qx, qy, qz = euler_to_quaternion(roll, pitch, yaw)
+        qw, qx, qy, qz = normalize_quaternion(qw, qx, qy, qz)
+        
+        self._target_pos = np.array(pose_6d[:3], dtype=np.float32).copy()
+        self._target_quat = np.array([qx, qy, qz, qw], dtype=np.float32)
+        self._target_gripper_pos = float(gripper_pos)
+        
+        # Reset reference pose to current controller pose (if available)
+        if self._is_connected and self._xrt is not None:
+            try:
+                if self.config.use_right_controller:
+                    controller_pose_raw = self._xrt.get_right_controller_pose()
+                elif self.config.use_left_controller:
+                    controller_pose_raw = self._xrt.get_left_controller_pose()
+                else:
+                    controller_pose_raw = None
+                
+                if controller_pose_raw is not None:
+                    self._ref_controller_pose = np.array(controller_pose_raw, dtype=np.float32)
+                    self._ref_controller_quat = np.array([
+                        controller_pose_raw[3], controller_pose_raw[4], 
+                        controller_pose_raw[5], controller_pose_raw[6]
+                    ])  # [qx, qy, qz, qw]
+                    self._ref_controller_quat = self._normalize_quaternion(self._ref_controller_quat)
+            except Exception:
+                pass  # If controller not available, keep None
+        self.logger.info(f"Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
+
+    def _quaternion_to_euler(self, qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float]:
+        """Convert quaternion [qw, qx, qy, qz] to Euler angles (roll, pitch, yaw).
+        
+        Based on spacemouse_teleop.py implementation.
+        """
+        roll = np.arctan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy))
+        sinp = 2 * (qw * qy - qz * qx)
+        pitch = np.copysign(np.pi / 2, sinp) if abs(sinp) >= 1 else np.arcsin(sinp)
+        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+        return (roll, pitch, yaw)
+
+    def _quaternion_multiply(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        """Multiply two quaternions q1 * q2. Both in [qx, qy, qz, qw] format."""
+        qx1, qy1, qz1, qw1 = q1
+        qx2, qy2, qz2, qw2 = q2
+        
+        qw = qw1 * qw2 - qx1 * qx2 - qy1 * qy2 - qz1 * qz2
+        qx = qw1 * qx2 + qx1 * qw2 + qy1 * qz2 - qz1 * qy2
+        qy = qw1 * qy2 - qx1 * qz2 + qy1 * qw2 + qz1 * qx2
+        qz = qw1 * qz2 + qx1 * qy2 - qy1 * qx2 + qz1 * qw2
+        
+        return np.array([qx, qy, qz, qw])
+
+    def _quaternion_inverse(self, q: np.ndarray) -> np.ndarray:
+        """Compute quaternion inverse. Input in [qx, qy, qz, qw] format."""
+        qx, qy, qz, qw = q
+        norm_sq = qx * qx + qy * qy + qz * qz + qw * qw
+        if norm_sq < 1e-10:
+            return np.array([0.0, 0.0, 0.0, 1.0])
+        return np.array([-qx, -qy, -qz, qw]) / norm_sq
+
+    def _quaternion_delta(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+        """Compute orientation delta between two quaternions.
+        
+        Args:
+            q1: Previous quaternion [qx, qy, qz, qw]
+            q2: Current quaternion [qx, qy, qz, qw]
+        
+        Returns:
+            Delta as Euler angles (roll, pitch, yaw) in radians.
+        """
+        # Compute relative rotation: q_delta = q2 * q1^-1
+        q1_inv = self._quaternion_inverse(q1)
+        q_delta = self._quaternion_multiply(q2, q1_inv)
+        
+        # Convert to Euler angles
+        roll, pitch, yaw = self._quaternion_to_euler(q_delta[3], q_delta[0], q_delta[1], q_delta[2])
+        return np.array([roll, pitch, yaw])
+
+    def _normalize_quaternion(self, q: np.ndarray) -> np.ndarray:
+        """Normalize quaternion to unit length."""
+        norm = np.linalg.norm(q)
+        if norm < 1e-10:
+            return np.array([0.0, 0.0, 0.0, 1.0])  # Return identity quaternion
+        return q / norm
+
+    def _slerp_quaternion(self, q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
+        """Spherical linear interpolation between two quaternions.
+        
+        Args:
+            q1: First quaternion [qx, qy, qz, qw]
+            q2: Second quaternion [qx, qy, qz, qw]
+            t: Interpolation factor [0, 1]
+        
+        Returns:
+            Interpolated quaternion [qx, qy, qz, qw]
+        """
+        # Normalize inputs
+        q1 = self._normalize_quaternion(q1)
+        q2 = self._normalize_quaternion(q2)
+        
+        # Compute dot product
+        dot = np.dot(q1, q2)
+        
+        # If dot product is negative, negate one quaternion for shortest path
+        if dot < 0.0:
+            q2 = -q2
+            dot = -dot
+        
+        # Clamp dot product to valid range
+        dot = np.clip(dot, -1.0, 1.0)
+        
+        # If quaternions are very close, use linear interpolation
+        if abs(dot) > 0.9995:
+            result = q1 + t * (q2 - q1)
+            return self._normalize_quaternion(result)
+        
+        # Compute angle
+        theta = np.arccos(abs(dot))
+        sin_theta = np.sin(theta)
+        
+        # Spherical interpolation
+        w1 = np.sin((1 - t) * theta) / sin_theta
+        w2 = np.sin(t * theta) / sin_theta
+        result = w1 * q1 + w2 * q2
+        
+        return self._normalize_quaternion(result)
+
+    def _get_filtered_pose(self, controller_pose: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Get filtered absolute position and quaternion with moving average.
+        
+        Args:
+            controller_pose: Current controller pose [x, y, z, qx, qy, qz, qw]
+        
+        Returns:
+            Tuple of (filtered_pos, filtered_quat) where:
+            - filtered_pos: [x, y, z] absolute position
+            - filtered_quat: [qx, qy, qz, qw] absolute quaternion
+        """
+        # Extract position and quaternion
+        pos = controller_pose[:3].copy()
+        quat = np.array([controller_pose[3], controller_pose[4], controller_pose[5], controller_pose[6]])  # [qx, qy, qz, qw]
+        quat = self._normalize_quaternion(quat)
+
+        # Moving average filter for position
+        if self._pos_queue.full():
+            self._pos_queue.get()
+        self._pos_queue.put(pos)
+        filtered_pos = np.mean(np.array(list(self._pos_queue.queue)), axis=0)
+
+        # For quaternion, use simple averaging (normalize at the end)
+        # Note: Proper quaternion averaging would use SLERP, but for small changes this works
+        if self._quat_queue.full():
+            self._quat_queue.get()
+        self._quat_queue.put(quat)
+        
+        # Average quaternions (simple approach - normalize at the end)
+        quat_list = list(self._quat_queue.queue)
+        filtered_quat = np.mean(np.array(quat_list), axis=0)
+        filtered_quat = self._normalize_quaternion(filtered_quat)
+
+        return filtered_pos, filtered_quat
+
     def get_action(self) -> dict[str, Any]:
-        """Get the current action from the Pico4 controllers."""
-        if not self._is_connected:
+        """
+        Get the current target pose from the Pico4 VR controller.
+
+        Returns a dictionary with absolute EEF pose (matching ARX5 SDK format):
+        - x, y, z: absolute EEF position (meters)
+        - roll, pitch, yaw: absolute EEF orientation (radians)
+        - gripper_pos: absolute gripper position (meters)
+        """
+        if not self._is_connected or self._xrt is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        action = {}
-
-        # Left controller
-        if self.config.use_left_controller:
-            left_pose = self._xrt.get_left_controller_pose()
-            left_pos = np.array(left_pose[:3])
-            left_quat = np.array([left_pose[3], left_pose[4], left_pose[5], left_pose[6]])  # xyzw
-
-            # TODO: Apply calibration when enabled
-            # pos_cal = self._quat_rotate_vector(self._left_calib_quat_inv, left_pos - self._left_calib_pos)
-            # quat_cal = self._quat_multiply(self._left_calib_quat_inv, left_quat)
-
-            left_trigger = self._xrt.get_left_trigger()
-            left_grip = self._xrt.get_left_grip()
-
-            action["left.pos"] = left_pos
-            action["left.quat"] = left_quat
-            action["left.trigger"] = float(left_trigger)
-            action["left.grip"] = float(left_grip)
-            action["left.enabled"] = left_grip > self.config.grip_threshold
-
-        # Right controller
+        # Get controller pose (use right controller by default, or left if right not available)
         if self.config.use_right_controller:
-            right_pose = self._xrt.get_right_controller_pose()
-            right_pos = np.array(right_pose[:3])
-            right_quat = np.array([right_pose[3], right_pose[4], right_pose[5], right_pose[6]])  # xyzw
-
-            # TODO: Apply calibration when enabled
-            # pos_cal = self._quat_rotate_vector(self._right_calib_quat_inv, right_pos - self._right_calib_pos)
-            # quat_cal = self._quat_multiply(self._right_calib_quat_inv, right_quat)
-
-            right_trigger = self._xrt.get_right_trigger()
-            right_grip = self._xrt.get_right_grip()
-
-            action["right.pos"] = right_pos
-            action["right.quat"] = right_quat
-            action["right.trigger"] = float(right_trigger)
-            action["right.grip"] = float(right_grip)
-            action["right.enabled"] = right_grip > self.config.grip_threshold
-
-        # Headset
-        headset_pose = self._xrt.get_headset_pose()
-        headset_pos = np.array(headset_pose[:3])
-        headset_quat = np.array([headset_pose[3], headset_pose[4], headset_pose[5], headset_pose[6]])  # xyzw
-
-        # TODO: Apply calibration when enabled
-        # headset_pos_cal = self._quat_rotate_vector(
-        #     self._headset_calib_quat_inv, headset_pos - self._headset_calib_pos
-        # )
-        # headset_quat_cal = self._quat_multiply(self._headset_calib_quat_inv, headset_quat)
-
-        action["headset.pos"] = headset_pos
-        action["headset.quat"] = headset_quat
-
-        return action
-
-    def get_key_value_by_name(self, name: str) -> float:
-        """Returns the trigger/grip value by name (float).
-        Valid names: "left_trigger", "right_trigger", "left_grip", "right_grip".
-        """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        if name == "left_trigger":
-            return self._xrt.get_left_trigger()
-        elif name == "right_trigger":
-            return self._xrt.get_right_trigger()
-        elif name == "left_grip":
-            return self._xrt.get_left_grip()
-        elif name == "right_grip":
-            return self._xrt.get_right_grip()
+            controller_pose_raw = self._xrt.get_right_controller_pose()
+        elif self.config.use_left_controller:
+            controller_pose_raw = self._xrt.get_left_controller_pose()
         else:
-            raise ValueError(
-                f"Invalid name: {name}. Valid names are: 'left_trigger', 'right_trigger', 'left_grip', 'right_grip'."
+            raise ValueError("At least one controller must be enabled (use_left_controller or use_right_controller)")
+
+        controller_pose = np.array(controller_pose_raw, dtype=np.float32)  # [x, y, z, qx, qy, qz, qw]
+
+        # Get filtered absolute pose
+        filtered_pos, filtered_quat = self._get_filtered_pose(controller_pose)
+
+        # Set reference pose on first frame (if not set)
+        if self._ref_controller_pose is None:
+            self._ref_controller_pose = controller_pose.copy()
+            self._ref_controller_quat = filtered_quat.copy()
+            # Initialize target pose to current robot pose (already set in connect)
+            # Convert quaternion to Euler for output
+            roll, pitch, yaw = self._quaternion_to_euler(
+                self._target_quat[3], self._target_quat[0], self._target_quat[1], self._target_quat[2]
             )
-
-    def get_button_state_by_name(self, name: str) -> bool:
-        """Returns the button state by name (bool).
-        Valid names: "A", "B", "X", "Y",
-                      "left_menu_button", "right_menu_button",
-                      "left_axis_click", "right_axis_click"
-        """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if name == "A":
-            return self._xrt.get_A_button()
-        elif name == "B":
-            return self._xrt.get_B_button()
-        elif name == "X":
-            return self._xrt.get_X_button()
-        elif name == "Y":
-            return self._xrt.get_Y_button()
-        elif name == "left_menu_button":
-            return self._xrt.get_left_menu_button()
-        elif name == "right_menu_button":
-            return self._xrt.get_right_menu_button()
-        elif name == "left_axis_click":
-            return self._xrt.get_left_axis_click()
-        elif name == "right_axis_click":
-            return self._xrt.get_right_axis_click()
-        else:
-            raise ValueError(
-                f"Invalid name: {name}. Valid names are: 'A', 'B', 'X', 'Y', "
-                "'left_menu_button', 'right_menu_button', 'left_axis_click', 'right_axis_click'."
-            )
-
-    def get_timestamp_ns(self) -> int:
-        """Returns the current timestamp in nanoseconds (int)."""
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        return self._xrt.get_time_stamp_ns()
-
-    def get_hand_tracking_state(self, hand: str) -> np.ndarray | None:
-        """Returns the hand tracking state for the specified hand.
-        Valid hands: "left", "right".
-        State is a 27 x 7 numpy array, where each row is [x, y, z, qx, qy, qz, qw] for each joint.
-        Returns None if hand tracking is inactive (low quality).
-        """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if hand.lower() == "left":
-            if not self._xrt.get_left_hand_is_active():
-                logger.warning("Left hand data is not active.")
-                return None
-            return self._xrt.get_left_hand_tracking_state()
-        elif hand.lower() == "right":
-            if not self._xrt.get_right_hand_is_active():
-                logger.warning("Right hand data is not active.")
-                return None
-            return self._xrt.get_right_hand_tracking_state()
-        else:
-            raise ValueError(f"Invalid hand: {hand}. Valid hands are: 'left', 'right'.")
-
-    def get_joystick_state(self, controller: str) -> list[float]:
-        """Returns the joystick state for the specified controller.
-        Valid controllers: "left", "right".
-        State is a list with shape (2) representing [x, y] for each joystick.
-        """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        if controller.lower() == "left":
-            return self._xrt.get_left_axis()
-        elif controller.lower() == "right":
-            return self._xrt.get_right_axis()
-        else:
-            raise ValueError(
-                f"Invalid controller: {controller}. Valid controllers are: 'left', 'right'."
-            )
-
-    def get_motion_tracker_data(self) -> dict:
-        """Returns a dictionary of motion tracker data, where the keys are the tracker serial numbers.
-        Each value is a dictionary containing the pose, velocity, and acceleration of the tracker.
-        """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
-        num_motion_data = self._xrt.num_motion_data_available()
-        if num_motion_data == 0:
-            logger.warning("Motion tracker data is not available.")
-            return {}
-
-        poses = self._xrt.get_motion_tracker_pose()
-        velocities = self._xrt.get_motion_tracker_velocity()
-        accelerations = self._xrt.get_motion_tracker_acceleration()
-        serial_numbers = self._xrt.get_motion_tracker_serial_numbers()
-
-        tracker_data = {}
-        for i in range(num_motion_data):
-            serial = serial_numbers[i]
-            tracker_data[serial] = {
-                "pose": poses[i],
-                "velocity": velocities[i],
-                "acceleration": accelerations[i],
+            return {
+                "x": float(self._target_pos[0]),
+                "y": float(self._target_pos[1]),
+                "z": float(self._target_pos[2]),
+                "roll": float(roll),
+                "pitch": float(pitch),
+                "yaw": float(yaw),
+                "gripper_pos": float(self._target_gripper_pos),
             }
 
-        return tracker_data
+        # Compute relative position (delta) from reference
+        rel_pos = filtered_pos - self._ref_controller_pose[:3]
+        
+        # Apply sensitivity scaling to position delta
+        scaled_rel_pos = rel_pos * self.config.pos_sensitivity
 
-    def get_body_tracking_data(self) -> dict | None:
-        """Returns complete body tracking data or None if unavailable.
+        # Apply deadzone to position
+        pos_norm = np.linalg.norm(scaled_rel_pos)
+        if pos_norm < self.config.deadzone:
+            scaled_rel_pos = np.zeros(3, dtype=np.float32)
+        else:
+            # Scale to remove deadzone
+            scaled_rel_pos = scaled_rel_pos * (pos_norm - self.config.deadzone) / pos_norm
+
+        # Update target position: start_pos + relative movement (accumulate delta)
+        self._target_pos = self._start_pos + scaled_rel_pos
+
+        # For orientation, use quaternion directly: target_quat = filtered_quat * ref_quat^-1 * start_quat
+        # This applies the relative rotation from reference to the start orientation
+        ref_quat_inv = self._quaternion_inverse(self._ref_controller_quat)
+        rel_quat = self._quaternion_multiply(filtered_quat, ref_quat_inv)
+        self._target_quat = self._quaternion_multiply(rel_quat, self._start_quat)
+        self._target_quat = self._normalize_quaternion(self._target_quat)
+
+        # Use fixed control_dt for consistent velocity scaling
+        dt = self.config.control_dt
+
+        # Get button states for gripper control
+        if self.config.use_right_controller:
+            button_open = self._xrt.get_A_button()  # A button on right controller
+            button_close = self._xrt.get_B_button()  # B button on right controller
+        else:
+            button_open = self._xrt.get_X_button()  # X button on left controller
+            button_close = self._xrt.get_Y_button()  # Y button on left controller
+
+        if self.config.swap_gripper_buttons:
+            button_open, button_close = button_close, button_open
+
+        # Compute gripper command
+        if button_open and not button_close:
+            gripper_cmd = 1  # Open
+        elif button_close and not button_open:
+            gripper_cmd = -1  # Close
+        else:
+            gripper_cmd = 0  # Stay
+
+        # Update gripper position with clamping
+        self._target_gripper_pos += gripper_cmd * self.config.gripper_speed * dt
+        if self._target_gripper_pos >= self.config.gripper_width:
+            self._target_gripper_pos = self.config.gripper_width
+        elif self._target_gripper_pos <= 0:
+            self._target_gripper_pos = 0
+
+        # Check if any input is active
+        # Compute orientation change magnitude for motion detection
+        rel_quat_magnitude = np.linalg.norm(rel_quat[:3])  # Use vector part magnitude as approximation
+        motion_active = np.any(np.abs(scaled_rel_pos) > 0.001) or rel_quat_magnitude > 0.001
+        self._enabled = motion_active or button_open or button_close
+
+        # Convert target quaternion to Euler angles for output
+        roll, pitch, yaw = self._quaternion_to_euler(
+            self._target_quat[3], self._target_quat[0], self._target_quat[1], self._target_quat[2]
+        )
+
+        # Return absolute pose dict
+        return {
+            "x": float(self._target_pos[0]),
+            "y": float(self._target_pos[1]),
+            "z": float(self._target_pos[2]),
+            "roll": float(roll),
+            "pitch": float(pitch),
+            "yaw": float(yaw),
+            "gripper_pos": float(self._target_gripper_pos),
+        }
+
+    def get_target_pose_array(self) -> tuple[np.ndarray, float]:
+        """
+        Get the current target pose as numpy array (for direct use with ARX5 SDK).
 
         Returns:
-            Dict with keys: 'poses', 'velocities', 'accelerations', 'imu_timestamps', 'body_timestamp'
-            - poses: (24, 7) array [x,y,z,qx,qy,qz,qw] for each joint
-            - velocities: (24, 6) array [vx,vy,vz,wx,wy,wz] for each joint
-            - accelerations: (24, 6) array [ax,ay,az,wax,way,waz] for each joint
+            Tuple of (pose_6d, gripper_pos) where pose_6d is [x, y, z, roll, pitch, yaw]
         """
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
+        roll, pitch, yaw = self._quaternion_to_euler(
+            self._target_quat[3], self._target_quat[0], self._target_quat[1], self._target_quat[2]
+        )
+        pose_6d = np.array([
+            self._target_pos[0],
+            self._target_pos[1],
+            self._target_pos[2],
+            roll,
+            pitch,
+            yaw,
+        ], dtype=np.float32)
+        return pose_6d, self._target_gripper_pos
 
-        if not self._xrt.is_body_data_available():
-            logger.warning("Body tracking data is not available.")
-            return None
-
+    def convert_to_flexiv_action(self, pico4_action: dict[str, Any]) -> dict[str, Any]:
+        """Convert Pico4 action (Euler angles) to Flexiv Rizon4 action (quaternion).
+        
+        This matches the behavior of spacemouse_teleop.py example:
+        - Pico4 maintains absolute pose in Euler angles [x, y, z, roll, pitch, yaw]
+        - Convert to quaternion format [x, y, z, qw, qx, qy, qz] for Flexiv SDK
+        
+        Args:
+            pico4_action: Dictionary with keys {x, y, z, roll, pitch, yaw, gripper_pos}
+        
+        Returns:
+            Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
+        """
+        # Convert Euler angles to quaternion
+        qw, qx, qy, qz = euler_to_quaternion(
+            pico4_action["roll"],
+            pico4_action["pitch"],
+            pico4_action["yaw"],
+        )
+        
+        # Normalize quaternion
+        qw, qx, qy, qz = normalize_quaternion(qw, qx, qy, qz)
+        
+        # Map to Flexiv action format
         return {
-            "poses": self._xrt.get_body_joints_pose(),
-            "velocities": self._xrt.get_body_joints_velocity(),
-            "accelerations": self._xrt.get_body_joints_acceleration(),
+            "tcp.x": pico4_action["x"],
+            "tcp.y": pico4_action["y"],
+            "tcp.z": pico4_action["z"],
+            "tcp.qw": qw,
+            "tcp.qx": qx,
+            "tcp.qy": qy,
+            "tcp.qz": qz,
+            "gripper.pos": pico4_action["gripper_pos"],
         }
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        """Send feedback to the teleoperator (not implemented for Pico4)."""
-        # Haptic feedback could be implemented here if the SDK supports it
-        if not self._is_connected or self._xrt is None:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-
+        """Pico4 doesn't support feedback."""
         raise NotImplementedError("Feedback is not implemented for Pico4 teleoperator.")
 
     def disconnect(self) -> None:
@@ -409,7 +537,7 @@ class Pico4(Teleoperator):
         if not self._is_connected or self._xrt is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info("Closing XenseVR SDK...")
+        self.logger.info("Closing XenseVR SDK...")
         try:
             self._xrt.close()
         except RuntimeError as e:
@@ -417,4 +545,12 @@ class Pico4(Teleoperator):
         finally:
             self._is_connected = False
             self._xrt = None
-            logger.info(f"{self} disconnected.")
+            self.logger.info(f"{self} disconnected.")
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        if self._is_connected:
+            try:
+                self.disconnect()
+            except Exception:
+                pass
