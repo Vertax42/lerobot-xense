@@ -697,6 +697,40 @@ class FlexivRizon4(Robot):
             gripper_pos,
         ], dtype=np.float32)
 
+    def get_current_tcp_pose_quat(self) -> np.ndarray:
+        """Get current TCP pose in quaternion format [x, y, z, qw, qx, qy, qz, gripper_pos].
+        
+        This method can be used for getting the current TCP pose in quaternion format for initializing teleoperators (e.g., pico4) with the robot's
+        current TCP pose. Only available in CARTESIAN_MOTION_FORCE mode.
+        
+        Returns:
+            numpy array of shape (8,) with [x, y, z, qw, qx, qy, qz, gripper_pos]
+        """
+        if not self.is_connected or self._robot is None:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        
+        if self.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
+            raise ValueError("get_current_tcp_pose_quat requires CARTESIAN_MOTION_FORCE mode")
+        
+        # Get current TCP pose (quaternion format)
+        states = self._robot.states()
+        tcp_pose = states.tcp_pose  # [x, y, z, qw, qx, qy, qz]
+        
+        # Get gripper position
+        gripper_pos = float(self._gripper.get_state()) if self._has_gripper else 0.0
+        
+        # Return [x, y, z, qw, qx, qy, qz, gripper_pos]
+        return np.array([
+            float(tcp_pose[0]),  # x
+            float(tcp_pose[1]),  # y
+            float(tcp_pose[2]),  # z
+            float(tcp_pose[3]),  # qw
+            float(tcp_pose[4]),  # qx
+            float(tcp_pose[5]),  # qy
+            float(tcp_pose[6]),  # qz
+            gripper_pos,
+        ], dtype=np.float32)
+
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send action command to the robot.
 

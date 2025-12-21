@@ -16,6 +16,8 @@ import math
 import platform
 import time
 
+import numpy as np
+
 
 def busy_wait(seconds):
     if platform.system() == "Darwin" or platform.system() == "Windows":
@@ -53,16 +55,46 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, f
     return (qw, qx, qy, qz)
 
 
-def normalize_quaternion(qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float, float]:
-    """Normalize quaternion to unit length.
+def normalize_quaternion(qw: float | np.ndarray, qx: float | None = None, qy: float | None = None, qz: float | None = None) -> np.ndarray | tuple[float, float, float, float]:
+    """Normalize quaternion to unit length using optimized NumPy operations.
+    
+    Supports two calling conventions:
+    1. normalize_quaternion(q: np.ndarray) -> np.ndarray
+    2. normalize_quaternion(qw, qx, qy, qz) -> tuple[float, float, float, float]
     
     Args:
-        qw, qx, qy, qz: Quaternion components
+        qw: If qx is None, this is a numpy array [qw, qx, qy, qz] or [qx, qy, qz, qw]
+            Otherwise, this is the w component of the quaternion
+        qx: x component (if provided, all 4 components must be provided)
+        qy: y component
+        qz: z component
     
     Returns:
-        Normalized quaternion as tuple (qw, qx, qy, qz)
+        Normalized quaternion as numpy array or tuple (qw, qx, qy, qz)
     """
-    norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
-    if norm < 1e-10:
-        return (1.0, 0.0, 0.0, 0.0)
-    return (qw / norm, qx / norm, qy / norm, qz / norm)
+    # Handle two calling conventions
+    if qx is None:
+        # Single argument: numpy array - optimized NumPy path
+        q = np.asarray(qw, dtype=np.float32)
+        if q.ndim > 1:
+            q = q.flatten()
+        if len(q) != 4:
+            raise ValueError(f"Quaternion must have 4 components, got {len(q)}")
+        
+        # Optimized: use np.linalg.norm (BLAS-optimized) and vectorized division
+        norm = np.linalg.norm(q)
+        if norm < 1e-10:
+            return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)  # Identity [qx, qy, qz, qw]
+        # Vectorized division - NumPy handles this efficiently
+        return (q / norm).astype(np.float32)
+    else:
+        # Four separate arguments: (qw, qx, qy, qz) - convert to array for NumPy operations
+        q = np.array([float(qw), float(qx), float(qy), float(qz)], dtype=np.float32)
+        norm = np.linalg.norm(q)
+        
+        if norm < 1e-10:
+            return (1.0, 0.0, 0.0, 0.0)  # Identity quaternion (qw, qx, qy, qz)
+        
+        # Use NumPy for normalization, then convert back to tuple
+        normalized = q / norm
+        return (float(normalized[0]), float(normalized[1]), float(normalized[2]), float(normalized[3]))

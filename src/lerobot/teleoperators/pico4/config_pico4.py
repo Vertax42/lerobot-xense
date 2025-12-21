@@ -15,7 +15,6 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field  # noqa: F401
-from typing import Tuple
 
 from ..config import TeleoperatorConfig
 
@@ -38,8 +37,6 @@ class Pico4Config(TeleoperatorConfig):
         deadzone: Deadzone threshold [0-1] for position/orientation changes. Values below this are treated as zero.
         filter_window_size: Moving average filter window size for smoothing pose changes.
         control_dt: Control loop period in seconds. Should match external loop (e.g., 1/fps).
-        invert_axes: Tuple of 6 bools to invert each axis (tx, ty, tz, rx, ry, rz).
-        swap_gripper_buttons: If True, swap left/right button for gripper open/close.
         gripper_width: Maximum gripper position in meters (for clamping).
         trigger_threshold: Threshold value (0-1) for trigger to be considered pressed.
         grip_threshold: Threshold value (0-1) for grip to be considered pressed.
@@ -53,15 +50,6 @@ class Pico4Config(TeleoperatorConfig):
     deadzone: float = 0.001  # [0-1] threshold for position/orientation changes
     filter_window_size: int = 5  # Moving average filter window size
     control_dt: float = 0.01  # Control loop period in seconds
-    invert_axes: Tuple[bool, bool, bool, bool, bool, bool] = (
-        False,  # x
-        False,  # y
-        False,  # z
-        False,  # roll
-        False,  # pitch
-        False,  # yaw
-    )
-    swap_gripper_buttons: bool = False
     gripper_width: float = 0.1  # Maximum gripper position in meters
     trigger_threshold: float = 0.5
     grip_threshold: float = 0.5

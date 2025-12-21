@@ -647,6 +647,97 @@ def teleoperate(cfg: TeleoperateConfig):
                 if cfg.display_data:
                     rr.rerun_shutdown()
                 robot.disconnect()
+    # Check if this is Flexiv Rizon4 robot with pico4
+    elif cfg.robot.type == "flexiv_rizon4" and cfg.teleop.type == "pico4":
+        from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
+        
+        logging.info("Detected Flexiv Rizon4 robot with Pico4, using specialized teleop loop")
+        
+        robot = None
+        teleop = None
+        
+        try:
+            # Create robot instance
+            robot = make_robot_from_config(cfg.robot)
+            
+            # Ensure robot is in CARTESIAN_MOTION_FORCE mode for pico4 teleop
+            if robot.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
+                raise ValueError(
+                    f"Pico4 teleoperation requires CARTESIAN_MOTION_FORCE mode, "
+                    f"but robot is configured with {robot.config.control_mode.value}"
+                )
+            
+            # Connect to robot with error handling
+            try:
+                robot.connect(go_to_start=True)
+                logging.info(f"Start EEF pose: {robot.get_current_tcp_pose_quat()}")
+            except Exception as e:
+                logging.error(f"Failed to connect to robot: {e}")
+                raise
+            
+            teleop_action_processor, robot_action_processor, robot_observation_processor = (
+                make_default_processors()
+            )
+            
+            # Connect to teleoperator with error handling
+            try:
+                teleop = make_teleoperator_from_config(cfg.teleop)
+                teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
+                logging.info("Connected to Pico4")
+            except Exception as e:
+                logging.error(f"Failed to connect to Pico4: {e}")
+                raise
+            
+            # Run teleoperation loop
+            try:
+                spacemouse_teleop_loop(
+                    teleop=teleop,
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                )
+            except KeyboardInterrupt:
+                logging.info("Teleoperation interrupted by user")
+            except Exception as e:
+                logging.error(f"Error during teleoperation loop: {e}")
+                raise
+                
+        except Exception as e:
+            logging.error(f"Error in teleoperation setup or execution: {e}")
+            logging.exception("Teleoperation failed")
+        finally:
+            # Safe disconnect - ensure both robot and teleop are disconnected
+            if cfg.display_data:
+                try:
+                    rr.rerun_shutdown()
+                except Exception as e:
+                    logging.warning(f"Error shutting down rerun: {e}")
+            
+            if teleop is not None:
+                try:
+                    if teleop.is_connected:
+                        teleop.disconnect()
+                        logging.info("Pico4 disconnected")
+                except Exception as e:
+                    logging.error(f"Error disconnecting Pico4: {e}")
+            
+            if robot is not None:
+                try:
+                    if robot.is_connected:
+                        robot.disconnect()
+                        logging.info("Robot safely disconnected")
+                except Exception as e:
+                    logging.error(f"Error disconnecting robot: {e}")
+                    # Force cleanup even if disconnect fails
+                    try:
+                        if hasattr(robot, '_robot') and robot._robot is not None:
+                            robot._robot.Stop()
+                    except Exception:
+                        pass
     # Check if this is Flexiv Rizon4 robot with spacemouse
     elif cfg.robot.type == "flexiv_rizon4" and cfg.teleop.type == "spacemouse":
         from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
