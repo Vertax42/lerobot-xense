@@ -24,10 +24,19 @@ lerobot-teleoperate \
 
 ## Flexiv Rizon4 Robot lerobot-teleoperate command
 
-```python
+```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
+    --robot.control_mode=cartesian_motion_force_control \
     --teleop.type=spacemouse \
+    --fps=100
+```
+
+```bash
+lerobot-teleoperate \
+    --robot.type=flexiv_rizon4 \
+    --robot.control_mode=cartesian_motion_force_control \
+    --teleop.type=pico4 \
     --fps=100
 ```
 
