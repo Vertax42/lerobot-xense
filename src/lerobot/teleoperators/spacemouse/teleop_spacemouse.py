@@ -28,21 +28,19 @@ The output format matches ARX5 SDK's spacemouse_teleop.py example:
 Based on the 3Dconnexion SpaceMouse using the spnav library.
 """
 
-import logging
 import time
 from multiprocessing.managers import SharedMemoryManager
 from queue import Queue
 from typing import Any
 
 import numpy as np
+import spdlog
 
 from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion
-
-logger = logging.getLogger(__name__)
 
 
 class SpacemouseTeleop(Teleoperator):
@@ -72,6 +70,7 @@ class SpacemouseTeleop(Teleoperator):
     def __init__(self, config: SpacemouseConfig):
         super().__init__(config)
         self.config = config
+        self.logger = spdlog.ConsoleLogger("SpacemouseTeleop")
         self._is_connected = False
         self._shm_manager: SharedMemoryManager | None = None
         self._spacemouse = None
@@ -130,7 +129,7 @@ class SpacemouseTeleop(Teleoperator):
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
 
-        logger.info("Connecting to 3D Spacemouse...")
+        self.logger.info("Connecting to 3D Spacemouse...")
 
         # Lazy import to avoid requiring spnav when module is loaded but not used
         try:
@@ -163,7 +162,7 @@ class SpacemouseTeleop(Teleoperator):
             self._start_pose_6d = current_tcp_pose_euler[:6].copy()
             self._start_gripper_pos = current_tcp_pose_euler[6]
 
-            logger.info(f"{self} connected successfully.")
+            self.logger.info(f"{self} connected successfully.")
 
         except Exception as e:
             if self._shm_manager is not None:
@@ -189,7 +188,7 @@ class SpacemouseTeleop(Teleoperator):
         """
         self._target_pose_6d = np.array(pose_6d, dtype=np.float32).copy()
         self._target_gripper_pos = float(gripper_pos)
-        logger.info(f"Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
+        self.logger.info(f"Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
 
     def _get_filtered_state(self) -> np.ndarray:
         """Get filtered spacemouse state with moving average."""
@@ -332,7 +331,7 @@ class SpacemouseTeleop(Teleoperator):
                 terminate_episode = True
                 rerecord_episode = True
                 self._reset_triggered = True
-                logger.info("Both buttons held - triggering episode reset")
+                self.logger.info("Both buttons held - triggering episode reset")
         else:
             self._both_buttons_pressed_time = None
             self._reset_triggered = False
@@ -353,7 +352,7 @@ class SpacemouseTeleop(Teleoperator):
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info("Disconnecting from Spacemouse...")
+        self.logger.info("Disconnecting from Spacemouse...")
 
         if self._spacemouse is not None:
             self._spacemouse.stop(wait=True)
@@ -364,7 +363,7 @@ class SpacemouseTeleop(Teleoperator):
             self._shm_manager = None
 
         self._is_connected = False
-        logger.info(f"{self} disconnected.")
+        self.logger.info(f"{self} disconnected.")
 
     def convert_to_flexiv_action(self, spacemouse_action: dict[str, Any]) -> dict[str, Any]:
         """Convert spacemouse action (Euler angles) to Flexiv Rizon4 action (quaternion).
