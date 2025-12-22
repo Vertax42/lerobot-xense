@@ -551,20 +551,20 @@ class FlexivRizon4(Robot):
 
     def reset_to_initial_position(self) -> None:
         """Reset robot to initial position based on config.go_to_start.
-        
+
         If config.go_to_start=True, calls _go_to_start().
         Otherwise, calls _go_to_home().
         """
         if not self._is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if self.config.go_to_start:
             logger.info("Resetting to start position (config.go_to_start=True)")
             self._go_to_start()
         else:
             logger.info("Resetting to home position (config.go_to_start=False)")
             self._go_to_home()
-        
+
         # Switch back to control mode after reset
         self._switch_to_control_mode()
 

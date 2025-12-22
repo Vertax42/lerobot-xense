@@ -368,36 +368,35 @@ class SpacemouseTeleop(Teleoperator):
 
     def convert_to_flexiv_action(self, spacemouse_action: dict[str, Any]) -> dict[str, Any]:
         """Convert spacemouse action (Euler angles) to Flexiv Rizon4 action (quaternion).
-        
+
         This matches the behavior of spacemouse_teleop.py example:
         - Spacemouse maintains absolute pose in Euler angles [x, y, z, roll, pitch, yaw]
         - Convert to quaternion format [x, y, z, qw, qx, qy, qz] for Flexiv SDK
-        
+
         Args:
             spacemouse_action: Dictionary with keys {x, y, z, roll, pitch, yaw, gripper_pos}
-        
         Returns:
             Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
         """
         # Convert Euler angles to quaternion (matching spacemouse_teleop.py euler_to_quaternion)
-        qw, qx, qy, qz = euler_to_quaternion(
+        quat_tuple = euler_to_quaternion(
             spacemouse_action["roll"],
             spacemouse_action["pitch"],
             spacemouse_action["yaw"],
-        )
-        
-        # Normalize quaternion to ensure unit length (matching spacemouse_teleop.py normalize_quaternion)
-        qw, qx, qy, qz = normalize_quaternion(qw, qx, qy, qz)
-        
+        )  # Returns (qw, qx, qy, qz)
+
+        # Normalize quaternion to ensure unit length
+        quat = normalize_quaternion(np.array(quat_tuple), input_format="wxyz")
+
         # Map to Flexiv action format (matching Flexiv SDK SendCartesianMotionForce signature)
         return {
             "tcp.x": spacemouse_action["x"],
             "tcp.y": spacemouse_action["y"],
             "tcp.z": spacemouse_action["z"],
-            "tcp.qw": qw,
-            "tcp.qx": qx,
-            "tcp.qy": qy,
-            "tcp.qz": qz,
+            "tcp.qw": float(quat[0]),
+            "tcp.qx": float(quat[1]),
+            "tcp.qy": float(quat[2]),
+            "tcp.qz": float(quat[3]),
             "gripper.pos": spacemouse_action["gripper_pos"],
         }
 
