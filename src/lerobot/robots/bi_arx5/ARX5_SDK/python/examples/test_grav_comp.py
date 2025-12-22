@@ -133,7 +133,7 @@ def main(model: str, interface: str):
 
     # 应用gain设置
     arx5_joint_controller.set_gain(gain)
-    print("✓ Gain设置完成:")
+    print("✅ Gain设置完成:")
     print(f"  关节 kp={gain.kp()}, kd={gain.kd()}")
     print(f"  夹爪 kp={gain.gripper_kp}, kd={gain.gripper_kd}")
 
@@ -155,7 +155,7 @@ def main(model: str, interface: str):
     # 先重置到home位置
     print("重置机器人到home位置...")
     # arx5_joint_controller.reset_to_home()
-    print("✓ 机器人已重置到home位置")
+    print("✅ 机器人已重置到home位置")
 
     # 进入重力补偿模式，不发送运动指令
     print("进入重力补偿模式...")

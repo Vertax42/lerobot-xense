@@ -102,7 +102,7 @@ def _test_robot(
         try:
             logger.info("Connecting to robot...")
             robot.connect(go_to_start=True)
-            logger.info("✓ Robot connected. Starting observation loop. Press Ctrl+C to stop.")
+            logger.info("✅ Robot connected. Starting observation loop. Press Ctrl+C to stop.")
             print()
         except Exception as e:
             logger.error(f"Failed to connect to robot: {e}")
@@ -128,7 +128,7 @@ def _test_robot(
                 logger.info(f"Sending initial TCP pose action: {target_tcp_pose}")
                 time.sleep(0.5)
                 robot.send_action(action)
-                logger.info("✓ Initial TCP pose action sent.")
+                logger.info("✅ Initial TCP pose action sent.")
                 time.sleep(0.5)  # Give robot time to start moving
         except (ImportError, AttributeError):
             # Not a Flexiv robot or control_mode not available, skip
@@ -177,7 +177,7 @@ def _test_robot(
                 if robot.is_connected:
                     logger.info("Safely disconnecting robot...")
                     robot.disconnect()
-                    logger.info("✓ Robot safely disconnected.")
+                    logger.info("✅ Robot safely disconnected.")
             except Exception as e:
                 logger.error(f"Error during robot disconnect: {e}")
                 # Force cleanup for Flexiv robots

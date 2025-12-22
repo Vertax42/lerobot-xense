@@ -114,13 +114,13 @@ def run_tests():
                     if max_read_time > 50:
                         print(f"  ⚠️  WARNING: High SDK latency detected ({max_read_time:.1f}ms)")
                     else:
-                        print(f"  ✓  SDK latency OK")
+                        print(f"  ✅  SDK latency OK")
                 if jump_count > 0:
                     jump_rate = jump_count / (i + 1) * 100
                     if jump_rate > 1:
                         print(f"  ⚠️  WARNING: Position jumps detected ({jump_rate:.1f}% of frames)")
                     else:
-                        print(f"  ✓  Position continuity OK (jump rate: {jump_rate:.2f}%)")
+                        print(f"  ✅  Position continuity OK (jump rate: {jump_rate:.2f}%)")
                 
                 # Check if all data is zero
                 current_time = time.monotonic()

@@ -344,7 +344,7 @@ class FlexivRizon4(Robot):
         while not self._robot.primitive_states()["terminated"]:
             time.sleep(0.1)
 
-        self.logger.info("✓ Force-torque sensor zeroed")
+        self.logger.info("✅ Force-torque sensor zeroed")
 
     def configure(self) -> None:
         """Configure the robot based on control mode.
@@ -474,7 +474,7 @@ class FlexivRizon4(Robot):
             if self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
                 mode_desc += " (force enabled)" if self.config.use_force else " (motion only)"
             gripper_status = f"with {self.config.gripper.gripper_type.value} gripper" if self._has_gripper else "without gripper"
-            self.logger.info(f"✓ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
+            self.logger.info(f"✅ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Flexiv robot: {e}")
@@ -515,7 +515,7 @@ class FlexivRizon4(Robot):
             time.sleep(0.1)
         self._home_tcp_pose = np.array(self._robot.states().tcp_pose)
         self.logger.info(f"Home TCP pose: {self._home_tcp_pose}")
-        self.logger.info("✓ Robot at home position.")
+        self.logger.info("✅ Robot at home position.")
 
     def _go_to_start(self) -> None:
         """Move robot to start position using MoveJ primitive.
@@ -548,7 +548,7 @@ class FlexivRizon4(Robot):
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
 
-        self.logger.info("✓ Robot at start position.")
+        self.logger.info("✅ Robot at start position.")
 
     def reset_to_initial_position(self) -> None:
         """Reset robot to initial position based on config.go_to_start.
@@ -601,7 +601,7 @@ class FlexivRizon4(Robot):
         self._robot.SwitchMode(flexiv_mode)
         self._current_mode = flexiv_mode
 
-        self.logger.info(f"✓ Now in {self.config.control_mode.value} mode.")
+        self.logger.info(f"✅ Now in {self.config.control_mode.value} mode.")
 
     def get_observation(self) -> dict[str, Any]:
         """Get current robot observation based on control_mode and use_force.
@@ -860,7 +860,7 @@ class FlexivRizon4(Robot):
         self.logger.info("Attempting to clear fault...")
         result = self._robot.ClearFault()
         if result:
-            self.logger.info("✓ Fault cleared successfully.")
+            self.logger.info("✅ Fault cleared successfully.")
         else:
             self.logger.error("Failed to clear fault.")
         return result
@@ -909,4 +909,4 @@ class FlexivRizon4(Robot):
             self._gripper = None
             self._is_connected = False
             self._current_mode = None
-            self.logger.info("✓ Flexiv Rizon4 disconnected.")
+            self.logger.info("✅ Flexiv Rizon4 disconnected.")

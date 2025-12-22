@@ -143,7 +143,7 @@ def replay(cfg: ReplayConfig):
         if robot.is_connected:
             logging.info("Disconnecting robot...")
             robot.disconnect()
-            logging.info("✓ Robot disconnected safely")
+            logging.info("✅ Robot disconnected safely")
 
 
 def main():

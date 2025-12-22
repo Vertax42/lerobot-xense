@@ -440,7 +440,7 @@ def bi_arx5_record_loop(
                 try:
                     robot.smooth_go_start(duration=3.0)
                     logging.info(
-                        "✓ smooth_go_start completed successfully in 2 seconds"
+                        "✅ smooth_go_start completed successfully in 2 seconds"
                     )
                 except Exception as e:
                     logging.error(f"Error during smooth_go_start: {e}")
@@ -876,7 +876,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             if robot.is_connected:
                 logging.info("Disconnecting robot...")
                 robot.disconnect()
-                logging.info("✓ Robot disconnected safely")
+                logging.info("✅ Robot disconnected safely")
         except Exception as e:
             logging.error(f"Error during robot disconnect: {e}")
 
@@ -888,7 +888,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             ):
                 logging.info("Disconnecting teleop...")
                 teleop.disconnect()
-                logging.info("✓ Teleop disconnected safely")
+                logging.info("✅ Teleop disconnected safely")
         except Exception as e:
             logging.error(f"Error during teleop disconnect: {e}")
 

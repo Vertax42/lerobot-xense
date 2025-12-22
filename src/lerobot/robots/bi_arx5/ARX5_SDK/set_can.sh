@@ -28,12 +28,12 @@ if pgrep slcand >/dev/null 2>&1; then
     fi
     
     if ! pgrep slcand >/dev/null 2>&1; then
-        echo "✓ slcand进程已成功停止"
+        echo "✅ slcand进程已成功停止"
     else
         echo "✗ 无法停止slcand进程，请手动检查"
     fi
 else
-    echo "✓ 未发现slcand进程"
+    echo "✅ 未发现slcand进程"
 fi
 
 # 检查并停止arx_can相关进程
@@ -44,12 +44,12 @@ if pgrep -f "arx_can.*\.sh" >/dev/null 2>&1; then
     sleep 1
     
     if ! pgrep -f "arx_can.*\.sh" >/dev/null 2>&1; then
-        echo "✓ arx_can脚本进程已成功停止"
+        echo "✅ arx_can脚本进程已成功停止"
     else
         echo "✗ 无法停止arx_can脚本进程，请手动检查"
     fi
 else
-    echo "✓ 未发现arx_can脚本进程"
+    echo "✅ 未发现arx_can脚本进程"
 fi
 
 echo ""
@@ -73,7 +73,7 @@ configure_slcan_interface() {
     # 使用slcand命令创建CAN接口
     echo "  使用slcand创建 $interface 接口..."
     if sudo slcand -o -f -s8 "$device" "$interface" 2>/dev/null; then
-        echo "  ✓ slcand创建 $interface 成功"
+        echo "  ✅ slcand创建 $interface 成功"
     else
         echo "  ✗ slcand创建 $interface 失败"
         return 1
@@ -85,7 +85,7 @@ configure_slcan_interface() {
     # 启动接口
     echo "  启动 $interface..."
     if sudo ifconfig "$interface" up 2>/dev/null; then
-        echo "  ✓ $interface 启动成功"
+        echo "  ✅ $interface 启动成功"
     else
         echo "  ✗ $interface 启动失败"
         return 1
@@ -94,7 +94,7 @@ configure_slcan_interface() {
     # 验证配置
     if ip link show "$interface" >/dev/null 2>&1; then
         local current_state=$(ip -details link show "$interface" | grep -o "state [A-Z-]*" | cut -d' ' -f2)
-        echo "  ✓ $interface 配置验证成功 (状态: $current_state, 波特率: 1000000 bps via SLCAN)"
+        echo "  ✅ $interface 配置验证成功 (状态: $current_state, 波特率: 1000000 bps via SLCAN)"
         return 0
     else
         echo "  ✗ $interface 配置验证失败"
@@ -121,7 +121,7 @@ echo "配置完成!"
 echo "成功配置: $success_count/$total_count 个接口"
 
 if [ $success_count -eq $total_count ]; then
-    echo "✓ 所有CAN接口配置成功"
+    echo "✅ 所有CAN接口配置成功"
     echo ""
     echo "当前CAN接口状态:"
     for interface in "${interfaces[@]}"; do
