@@ -37,13 +37,13 @@ Note: Python API can only use NRT modes due to language timing limitations.
 Reference: https://rdk.flexiv.com/api/
 """
 
-import logging
 import math
 import time
 from functools import cached_property
 from typing import Any
 
 import numpy as np
+import spdlog
 
 try:
     import flexivrdk
@@ -59,8 +59,6 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 from ..robot import Robot
 from .config_flexiv_rizon4 import ControlMode, FlexivRizon4Config
 from .gripper import Gripper, GripperType, make_gripper
-
-logger = logging.getLogger(__name__)
 
 # Alias for flexivrdk.Mode for convenience
 Mode = flexivrdk.Mode
@@ -109,6 +107,9 @@ class FlexivRizon4(Robot):
     def __init__(self, config: FlexivRizon4Config):
         super().__init__(config)
         self.config = config
+
+        # Logger
+        self.logger = spdlog.ConsoleLogger("FlexivRizon4")
 
         # Robot interface (initialized on connect)
         # Note: Python API only supports NRT (Non-Real-Time) modes, no Scheduler needed
@@ -316,7 +317,7 @@ class FlexivRizon4(Robot):
 
     def calibrate(self) -> None:
         """Flexiv robots are factory calibrated, no runtime calibration needed."""
-        logger.info(
+        self.logger.info(
             "Flexiv Rizon4 is factory calibrated, no runtime calibration needed."
         )
 
@@ -329,7 +330,7 @@ class FlexivRizon4(Robot):
         if not self.is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.warning(
+        self.logger.warn(
             "Zeroing force-torque sensors, make sure nothing is in contact with the robot"
         )
 
@@ -343,7 +344,7 @@ class FlexivRizon4(Robot):
         while not self._robot.primitive_states()["terminated"]:
             time.sleep(0.1)
 
-        logger.info("✓ Force-torque sensor zeroed")
+        self.logger.info("✓ Force-torque sensor zeroed")
 
     def configure(self) -> None:
         """Configure the robot based on control mode.
@@ -354,7 +355,7 @@ class FlexivRizon4(Robot):
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info(f"Configuring robot for {self.config.control_mode.value} mode...")
+        self.logger.info(f"Configuring robot for {self.config.control_mode.value} mode...")
 
         # Get robot info for nominal impedance values
         robot_info = self._robot.info()
@@ -365,15 +366,15 @@ class FlexivRizon4(Robot):
                 K_q_nom = robot_info.K_q_nom
                 new_Kq = np.multiply(K_q_nom, self.config.stiffness_ratio)
                 self._robot.SetJointImpedance(new_Kq)
-                logger.info(f"Joint impedance mode - set stiffness (ratio={self.config.stiffness_ratio}): {new_Kq}")
+                self.logger.info(f"Joint impedance mode - set stiffness (ratio={self.config.stiffness_ratio}): {new_Kq}")
             else:
-                logger.info(f"Joint impedance mode - using nominal stiffness: {robot_info.K_q_nom}")
+                self.logger.info(f"Joint impedance mode - using nominal stiffness: {robot_info.K_q_nom}")
                 return
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
             # Cartesian mode configuration
             K_x_nom = robot_info.K_x_nom
-            logger.info(f"Cartesian mode - nominal Cartesian stiffness K_x_nom: {K_x_nom}")
+            self.logger.info(f"Cartesian mode - nominal Cartesian stiffness K_x_nom: {K_x_nom}")
 
             # Configure force control if use_force is enabled
             if self.config.use_force:
@@ -383,22 +384,22 @@ class FlexivRizon4(Robot):
 
                 # Set force control frame (flexivrdk.CoordType.WORLD or TCP)
                 self._robot.SetForceControlFrame(self.config.force_control_frame)
-                logger.info(f"Set force control frame: {self.config.force_control_frame}")
+                self.logger.info(f"Set force control frame: {self.config.force_control_frame}")
 
                 # Set which axes use force control (use pre-cached tuple)
                 self._robot.SetForceControlAxis(list(self._force_control_axis))
-                logger.info(f"Set force control axis: {self._force_control_axis}")
+                self.logger.info(f"Set force control axis: {self._force_control_axis}")
 
                 # Disable max contact wrench regulation after force control is activated
                 # This allows explicit force control on force-controlled axes without interference
                 # from the max contact wrench limit. Force-controlled axes will be explicitly
                 # regulated, preventing force spikes after disabling the limit.
                 self._robot.SetMaxContactWrench([float("inf")] * 6)
-                logger.info("Max contact wrench regulation disabled (force control active)")
+                self.logger.info("Max contact wrench regulation disabled (force control active)")
             else:
                 # Pure motion control: set max contact wrench for safety
                 self._robot.SetMaxContactWrench(self._max_contact_wrench)
-                logger.info(f"Set max contact wrench: {self._max_contact_wrench}")
+                self.logger.info(f"Set max contact wrench: {self._max_contact_wrench}")
 
     def connect(self, calibrate: bool = False, go_to_start: bool = True) -> None:
         """Connect to the Flexiv robot.
@@ -413,14 +414,14 @@ class FlexivRizon4(Robot):
             )
 
         try:
-            logger.info(f"Connecting to Flexiv robot: {self.config.robot_sn}")
+            self.logger.info(f"Connecting to Flexiv robot: {self.config.robot_sn}")
 
             # Create robot interface
             self._robot = flexivrdk.Robot(self.config.robot_sn)
 
             # Clear any existing fault
             if self._robot.fault():
-                logger.warning(
+                self.logger.warn(
                     "Fault occurred on the connected robot, trying to clear ..."
                 )
                 # Try to clear the fault
@@ -428,10 +429,10 @@ class FlexivRizon4(Robot):
                     raise RuntimeError(
                         "Failed to clear robot fault. Check the robot status."
                     )
-                logger.info("Fault on the connected robot is cleared")
+                self.logger.info("Fault on the connected robot is cleared")
 
             # Enable the robot
-            logger.info("Enabling robot...")
+            self.logger.info("Enabling robot...")
             self._robot.Enable()
 
             # Wait for robot to become operational
@@ -444,7 +445,7 @@ class FlexivRizon4(Robot):
                     )
                 time.sleep(0.1)
 
-            logger.info("Robot is now operational.")
+            self.logger.info("Robot is now operational.")
 
             # Connect gripper (using abstraction layer)
             if self._has_gripper:
@@ -473,10 +474,10 @@ class FlexivRizon4(Robot):
             if self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
                 mode_desc += " (force enabled)" if self.config.use_force else " (motion only)"
             gripper_status = f"with {self.config.gripper.gripper_type.value} gripper" if self._has_gripper else "without gripper"
-            logger.info(f"✓ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
+            self.logger.info(f"✓ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
 
         except Exception as e:
-            logger.error(f"Failed to connect to Flexiv robot: {e}")
+            self.logger.error(f"Failed to connect to Flexiv robot: {e}")
             self._robot = None
             self._is_connected = False
             raise
@@ -491,7 +492,7 @@ class FlexivRizon4(Robot):
         if not self._is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info("Moving to home position...")
+        self.logger.info("Moving to home position...")
 
         # Switch to primitive execution mode
         self._robot.SwitchMode(flexivrdk.Mode.NRT_PRIMITIVE_EXECUTION)
@@ -513,8 +514,8 @@ class FlexivRizon4(Robot):
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
         self._home_tcp_pose = np.array(self._robot.states().tcp_pose)
-        logger.info(f"Home TCP pose: {self._home_tcp_pose}")
-        logger.info("✓ Robot at home position.")
+        self.logger.info(f"Home TCP pose: {self._home_tcp_pose}")
+        self.logger.info("✓ Robot at home position.")
 
     def _go_to_start(self) -> None:
         """Move robot to start position using MoveJ primitive.
@@ -526,7 +527,7 @@ class FlexivRizon4(Robot):
         if not self._is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        logger.info("Moving to start position...")
+        self.logger.info("Moving to start position...")
 
         # Switch to primitive execution mode
         self._robot.SwitchMode(flexivrdk.Mode.NRT_PRIMITIVE_EXECUTION)
@@ -547,7 +548,7 @@ class FlexivRizon4(Robot):
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
 
-        logger.info("✓ Robot at start position.")
+        self.logger.info("✓ Robot at start position.")
 
     def reset_to_initial_position(self) -> None:
         """Reset robot to initial position based on config.go_to_start.
@@ -559,10 +560,10 @@ class FlexivRizon4(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if self.config.go_to_start:
-            logger.info("Resetting to start position (config.go_to_start=True)")
+            self.logger.info("Resetting to start position (config.go_to_start=True)")
             self._go_to_start()
         else:
-            logger.info("Resetting to home position (config.go_to_start=False)")
+            self.logger.info("Resetting to home position (config.go_to_start=False)")
             self._go_to_home()
 
         # Switch back to control mode after reset
@@ -592,15 +593,15 @@ class FlexivRizon4(Robot):
 
         current_mode = self._robot.mode()
         if current_mode == flexiv_mode:
-            logger.info(f"Already in {self.config.control_mode.value} mode.")
+            self.logger.info(f"Already in {self.config.control_mode.value} mode.")
             return
 
-        logger.info(f"Switching from {current_mode} to {self.config.control_mode.value}...")
+        self.logger.info(f"Switching from {current_mode} to {self.config.control_mode.value}...")
 
         self._robot.SwitchMode(flexiv_mode)
         self._current_mode = flexiv_mode
 
-        logger.info(f"✓ Now in {self.config.control_mode.value} mode.")
+        self.logger.info(f"✓ Now in {self.config.control_mode.value} mode.")
 
     def get_observation(self) -> dict[str, Any]:
         """Get current robot observation based on control_mode and use_force.
@@ -853,15 +854,15 @@ class FlexivRizon4(Robot):
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
         if not self._robot.fault():
-            logger.info("No fault to clear.")
+            self.logger.info("No fault to clear.")
             return True
 
-        logger.info("Attempting to clear fault...")
+        self.logger.info("Attempting to clear fault...")
         result = self._robot.ClearFault()
         if result:
-            logger.info("✓ Fault cleared successfully.")
+            self.logger.info("✓ Fault cleared successfully.")
         else:
-            logger.error("Failed to clear fault.")
+            self.logger.error("Failed to clear fault.")
         return result
 
     def disconnect(self) -> None:
@@ -877,17 +878,17 @@ class FlexivRizon4(Robot):
         All errors are caught and logged, but the disconnect process continues to ensure cleanup.
         """
         if not self._is_connected:
-            logger.warning(f"{self} is not connected, skipping disconnect.")
+            self.logger.warn(f"{self} is not connected, skipping disconnect.")
             return
 
         try:
-            logger.info("Disconnecting from Flexiv robot...")
+            self.logger.info("Disconnecting from Flexiv robot...")
 
             # Move to home position before disconnecting
             try:
                 self._go_to_home()
             except Exception as e:
-                logger.warning(f"Failed to move to home before disconnect: {e}")
+                self.logger.warn(f"Failed to move to home before disconnect: {e}")
 
             # Stop any ongoing motion
             if self._robot is not None:
@@ -902,10 +903,10 @@ class FlexivRizon4(Robot):
                 cam.disconnect()
 
         except Exception as e:
-            logger.error(f"Error during disconnect: {e}")
+            self.logger.error(f"Error during disconnect: {e}")
         finally:
             self._robot = None
             self._gripper = None
             self._is_connected = False
             self._current_mode = None
-            logger.info("✓ Flexiv Rizon4 disconnected.")
+            self.logger.info("✓ Flexiv Rizon4 disconnected.")
