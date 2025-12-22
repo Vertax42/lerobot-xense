@@ -22,6 +22,7 @@ from ..config import TeleoperatorConfig
 @TeleoperatorConfig.register_subclass("pico4")
 @dataclass
 class Pico4Config(TeleoperatorConfig):
+    id: str = "pico4"  # Default id for Pico4 teleoperator
     """Configuration for Pico4 VR teleoperator.
 
     This teleoperator provides 6-DoF absolute pose control using VR controllers,
@@ -32,7 +33,9 @@ class Pico4Config(TeleoperatorConfig):
         use_left_controller: Whether to use the left controller for teleoperation.
         use_right_controller: Whether to use the right controller for teleoperation.
         pos_sensitivity: Sensitivity multiplier for position control (scales delta position).
-        ori_sensitivity: Sensitivity multiplier for orientation control (scales delta orientation).
+                         1.0 = 1:1 mapping, 0.5 = half speed.
+        ori_sensitivity: Sensitivity multiplier for orientation control.
+                         1.0 = full tracking, 0.5 = half speed rotation.
         filter_window_size: Moving average filter window size for smoothing pose changes.
         gripper_width: Maximum gripper position in meters (for clamping).
         grip_threshold: Threshold value (0-1) for grip to be considered pressed (enable control).
@@ -43,9 +46,11 @@ class Pico4Config(TeleoperatorConfig):
 
     use_left_controller: bool = False
     use_right_controller: bool = True
-    pos_sensitivity: float = 1.0  # Scale factor for position delta
-    ori_sensitivity: float = 1.0  # Scale factor for orientation delta
-    filter_window_size: int = 5  # Moving average filter window size
+    pos_sensitivity: float = 1.0  # Scale factor for position delta (1.0 = 1:1 mapping, 0.5 = half speed)
+    ori_sensitivity: float = 1.0  # Scale factor for orientation delta (1.0 = 1:1 mapping)
+    filter_window_size: int = 1  # Moving average filter window size
     gripper_width: float = 0.1  # Maximum gripper position in meters
-    grip_threshold: float = 0.5  # Threshold for grip to enable control
-    orientation_offset_warning_deg: float = 10.0  # Warning threshold for orientation offset (degrees)
+    grip_enable_threshold: float = 0.5  # Threshold for grip to enable control (must exceed to enable)
+    grip_disable_threshold: float = 0.3  # Threshold for grip to disable control (must drop below to disable)
+    orientation_offset_warning_deg: float = 180.0  # Warning threshold for orientation offset (degrees). Set to 180 to disable check.
+    position_jump_threshold: float = 0.06  # Max allowed position change per frame (meters). Larger jumps are filtered out.

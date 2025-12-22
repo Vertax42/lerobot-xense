@@ -31,7 +31,6 @@ The output format matches ARX5 SDK's spacemouse_teleop.py example:
 - gripper_pos: absolute gripper position in meters
 """
 
-import logging
 import time
 from queue import Queue
 from typing import Any
@@ -44,8 +43,6 @@ from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import normalize_quaternion
 
-logger = logging.getLogger(__name__)
-
 
 class Pico4(Teleoperator):
     """
@@ -55,7 +52,7 @@ class Pico4(Teleoperator):
     a target pose suitable for Cartesian control of robotic arms.
 
     Control scheme:
-    - Grip button: Enable control (must be held to move robot, value > grip_threshold)
+    - Grip button: Enable control (must be held to move robot, with hysteresis thresholds)
     - Trigger: Directly controls gripper position (0=closed, 1=open)
     - Controller pose: Controls robot TCP pose (only when grip is held)
 
@@ -70,6 +67,9 @@ class Pico4(Teleoperator):
 
     Coordinate systems:
     - Pico4: Right-handed, X right, Y up, Z toward user
+      * Origin: Set as the headset position when the Unity application starts (when Unity app launches)
+      * NOT when xrt.init() is called, and NOT when clicking connect button in Unity
+      * This means the coordinate system is fixed when Unity app launches, and remains constant until Unity restarts
     - Flexiv: Right-handed, X forward (away from base), Y left, Z up
 
     Output action format (Flexiv Rizon4):
@@ -95,6 +95,7 @@ class Pico4(Teleoperator):
 
         # Start pose (robot pose when grip is pressed/enabled, in Flexiv frame)
         self._start_pos: np.ndarray = np.zeros(3, dtype=np.float32)  # [x, y, z]
+        self._start_quat: np.ndarray = np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)  # [qw, qx, qy, qz]
 
         # Reference position for relative position control (controller pos when enabled, in Flexiv frame)
         self._ref_pos: np.ndarray | None = None  # [x, y, z] in Flexiv frame
@@ -114,6 +115,13 @@ class Pico4(Teleoperator):
         self._enabled: bool = False
         self._was_enabled: bool = False  # Track previous enable state for edge detection
         self._orientation_control_active: bool = True  # Whether orientation control is active (disabled if offset too large)
+        self._was_reset_button_pressed: bool = False  # Track previous reset button state for edge detection
+        self._last_grip: float = 0.0  # Last grip value for debugging
+        self._last_a_button: bool = False  # Last A button state (cached from get_action)
+        
+        # Position jump filtering
+        self._last_raw_pose: np.ndarray | None = None  # Last raw pose for jump detection
+        self._jump_filter_count: int = 0  # Count of filtered jumps for debugging
 
     @property
     def is_connected(self) -> bool:
@@ -158,6 +166,15 @@ class Pico4(Teleoperator):
     def connect(self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray = np.zeros(8, dtype=np.float32)) -> None:
         """Connect to the Pico4 VR headset via xrt SDK.
 
+        Important: The Pico4 coordinate system origin is set when the Unity application
+        starts (when Unity app launches), NOT when xrt.init() is called, and NOT when
+        clicking the connect button in Unity. This means:
+        - The coordinate origin is fixed when Unity app launches (as soon as Unity starts)
+        - The coordinate origin remains fixed as long as Unity app is running
+        - If Unity app restarts, the origin will be reset to the new headset position
+        - xrt.init() only connects to the service, it does not change the coordinate origin
+        - Clicking connect/disconnect in Unity does NOT change the coordinate origin
+
         Args:
             calibrate: Unused, kept for compatibility with Teleoperator interface
             current_tcp_pose_quat: Current TCP pose in quaternion format [x, y, z, qw, qx, qy, qz, gripper_pos]
@@ -178,7 +195,35 @@ class Pico4(Teleoperator):
             xrt.init()
             self._xrt = xrt
             self.logger.info("XenseVR SDK initialized successfully.")
-            time.sleep(0.01)  # Wait for SDK to stabilize
+
+            # Validate device connection - wait for controller data to be available
+            # Total wait time ~3s (same as previous async version)
+            time.sleep(0.5)  # Initial wait for SDK to stabilize
+            max_retries = 25
+            retry_interval = 0.1
+            for attempt in range(max_retries):
+                if self.config.use_right_controller:
+                    pose = xrt.get_right_controller_pose()
+                elif self.config.use_left_controller:
+                    pose = xrt.get_left_controller_pose()
+                else:
+                    raise RuntimeError("No controller configured")
+                
+                # Check if pose data is valid
+                pose_has_data = any(abs(v) > 1e-6 for v in pose)
+                if pose_has_data:
+                    self.logger.info(f"Controller data received (attempt {attempt + 1})")
+                    break
+                time.sleep(retry_interval)
+            else:
+                self._xrt = None
+                raise DeviceNotConnectedError(
+                    f"Pico4 VR device is not connected. "
+                    f"All controller data is zero after {0.5 + max_retries * retry_interval:.1f}s. "
+                    f"Please try: 1) Restart the VR Client app on Pico4 headset, "
+                    f"2) Ensure the PC service is running, "
+                    f"3) Check that controllers are powered on and paired."
+                )
 
             # Set target pose on connect
             # Input format: [x, y, z, qw, qx, qy, qz, gripper_pos] (Flexiv wxyz format)
@@ -193,10 +238,26 @@ class Pico4(Teleoperator):
             self._ref_pos = None
             self._quat_offset = None
 
+            # Reset state tracking
+            self._enabled = False
+            self._was_enabled = False
+            self._was_reset_button_pressed = False
+            self._orientation_control_active = True
+
             self._is_connected = True
             self.logger.info(f"{self} connected successfully.")
         except RuntimeError as e:
+            self._xrt = None
             raise RuntimeError(f"Failed to initialize XenseVR SDK: {e}") from e
+        except DeviceNotConnectedError:
+            # Re-raise DeviceNotConnectedError as-is
+            raise
+        except Exception as e:
+            self._xrt = None
+            raise DeviceNotConnectedError(
+                f"Failed to connect to Pico4 VR device: {e}. "
+                f"Please ensure the Pico VR service is running and the device is connected."
+            ) from e
 
     def calibrate(self) -> None:
         """No calibration needed for Pico4."""
@@ -221,6 +282,20 @@ class Pico4(Teleoperator):
         # Reset reference/offset - will be recalculated when grip is pressed
         self._ref_pos = None
         self._quat_offset = None
+
+        # Reset enable state tracking - so next grip press will be detected as "just enabled"
+        self._was_enabled = False
+        self._enabled = False
+        self._orientation_control_active = True  # Re-enable orientation control
+
+        # Clear filter queues to avoid stale data affecting new control
+        while not self._raw_pos_queue.empty():
+            self._raw_pos_queue.get()
+        while not self._raw_quat_queue.empty():
+            self._raw_quat_queue.get()
+
+        # Reset jump filter state
+        self._last_raw_pose = None
 
         self.logger.info(f"Reset target pose to: pos={pose_7d[:3]}, quat={pose_7d[3:7]}, gripper={gripper_pos}")
 
@@ -312,6 +387,8 @@ class Pico4(Teleoperator):
         For position: Simple moving average (arithmetic mean)
         For quaternion: Sequential SLERP interpolation through the window
 
+        When filter_window_size=1, no filtering is applied (pass-through mode).
+
         Args:
             controller_pose_raw: Raw controller pose from SDK [x, y, z, qx, qy, qz, qw] in Pico4 frame
                                  Note: Pico4 SDK uses xyzw quaternion format
@@ -331,6 +408,10 @@ class Pico4(Teleoperator):
             controller_pose_raw[5],  # qz
         ], dtype=np.float32)  # [qw, qx, qy, qz] in Pico4 frame
         quat = normalize_quaternion(quat, input_format="wxyz")
+
+        # When window_size=1, skip filtering and return raw data directly
+        if self.config.filter_window_size <= 1:
+            return pos, quat
 
         # Moving average filter for position (window filter)
         if self._raw_pos_queue.full():
@@ -449,7 +530,7 @@ class Pico4(Teleoperator):
         Get the current target pose from the Pico4 VR controller.
 
         Control scheme:
-        - Grip: Enable control (must be held to move robot, value > grip_threshold)
+        - Grip: Enable control (must be held to move robot, with hysteresis thresholds)
         - Trigger: Directly controls gripper position (0=closed, gripper_width=open)
         - Controller pose: Controls robot TCP pose (only when grip is held)
 
@@ -470,20 +551,40 @@ class Pico4(Teleoperator):
         if not self._is_connected or self._xrt is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        # Step 1: Get raw data from Pico4 SDK
+        # Step 1: Get controller data from SDK (all data in one batch to minimize SDK calls)
         if self.config.use_right_controller:
-            controller_pose_raw = self._xrt.get_right_controller_pose()  # [x, y, z, qx, qy, qz, qw] in Pico4 frame
-            controller_grip = self._xrt.get_right_grip()  # [0, 1] grip value for enable
-            controller_trigger = self._xrt.get_right_trigger()  # [0, 1] trigger value for gripper
+            pose = self._xrt.get_right_controller_pose()
+            controller_grip = float(self._xrt.get_right_grip())
+            controller_trigger = float(self._xrt.get_right_trigger())
+            a_button = bool(self._xrt.get_A_button())
         elif self.config.use_left_controller:
-            controller_pose_raw = self._xrt.get_left_controller_pose()  # [x, y, z, qx, qy, qz, qw] in Pico4 frame
-            controller_grip = self._xrt.get_left_grip()  # [0, 1] grip value for enable
-            controller_trigger = self._xrt.get_left_trigger()  # [0, 1] trigger value for gripper
+            pose = self._xrt.get_left_controller_pose()
+            controller_grip = float(self._xrt.get_left_grip())
+            controller_trigger = float(self._xrt.get_left_trigger())
+            a_button = bool(self._xrt.get_X_button())
         else:
-            raise ValueError("At least one controller must be enabled (use_left_controller or use_right_controller)")
+            raise RuntimeError("No controller configured")
+        controller_pose_raw = np.array(pose, dtype=np.float32)  # [x, y, z, qx, qy, qz, qw] in Pico4 frame
+        self._last_grip = controller_grip  # Save for debugging
+        self._last_a_button = a_button  # Cache A button state for get_reset_button()
 
-        # Step 2: Check enable state (grip as enable button)
-        self._enabled = controller_grip > self.config.grip_threshold
+        # Step 1.5: Filter out position jumps (VR tracking glitches)
+        if self._last_raw_pose is not None and self.config.position_jump_threshold > 0:
+            pos_delta = np.linalg.norm(controller_pose_raw[:3] - self._last_raw_pose[:3])
+            if pos_delta > self.config.position_jump_threshold:
+                # Jump detected - use last frame's position, keep current orientation
+                self._jump_filter_count += 1
+                controller_pose_raw[:3] = self._last_raw_pose[:3]
+        self._last_raw_pose = controller_pose_raw.copy()
+
+        # Step 2: Check enable state with hysteresis (grip as enable button)
+        # This prevents flickering when grip value is near threshold
+        if self._enabled:
+            # Currently enabled: only disable if grip drops below low threshold
+            self._enabled = controller_grip > self.config.grip_disable_threshold
+        else:
+            # Currently disabled: only enable if grip exceeds high threshold
+            self._enabled = controller_grip > self.config.grip_enable_threshold
 
         # Step 3: Apply window filter to raw pose data (in Pico4 frame)
         filtered_pos_pico, filtered_quat_pico = self._filter_raw_pose(controller_pose_raw)
@@ -502,6 +603,9 @@ class Pico4(Teleoperator):
             # Position: record reference position for relative control
             self._ref_pos = filtered_pos_flexiv.copy()
             self._start_pos = self._target_pos.copy()
+            
+            # Save start orientation for sensitivity scaling
+            self._start_quat = self._target_quat.copy()
 
             # Orientation: calculate offset for absolute mapping
             # offset = inv(controller_quat) * robot_quat
@@ -513,9 +617,31 @@ class Pico4(Teleoperator):
 
             # Check orientation offset angle (rotation difference between controller and robot)
             # θ = 2 * arccos(|qw|), where qw is the scalar part of the offset quaternion
-            offset_angle_rad = 2.0 * np.arccos(np.clip(abs(self._quat_offset[0]), 0.0, 1.0))
+            # For shortest path: q and -q represent the same rotation, so we choose the one with smaller angle
+            # If angle > 90°, use -q to get the shorter path (180° - angle)
+            offset_w = self._quat_offset[0]
+            offset_angle_rad = 2.0 * np.arccos(np.clip(abs(offset_w), 0.0, 1.0))
             offset_angle_deg = np.degrees(offset_angle_rad)
+            
+            # If angle > 90°, use the shorter path by negating the quaternion
+            # This ensures we always use the quaternion representation with angle <= 90°
+            if offset_angle_deg > 90.0:
+                # Use the shorter path: negate quaternion and recalculate angle
+                self._quat_offset = -self._quat_offset
+                self._quat_offset = normalize_quaternion(self._quat_offset, input_format="wxyz")
+                offset_angle_rad = 2.0 * np.arccos(np.clip(self._quat_offset[0], 0.0, 1.0))
+                offset_angle_deg = np.degrees(offset_angle_rad)
+                self.logger.debug(f"Using shorter path: offset angle = {offset_angle_deg:.1f}° (was {180.0 - offset_angle_deg:.1f}°)")
 
+            # Log offset details for debugging
+            self.logger.debug(
+                f"Orientation offset calculation: "
+                f"controller_quat={filtered_quat_flexiv}, "
+                f"robot_quat={self._target_quat}, "
+                f"offset_quat={self._quat_offset}, "
+                f"offset_angle={offset_angle_deg:.1f}°"
+            )
+            
             if offset_angle_deg > self.config.orientation_offset_warning_deg:
                 self.logger.warn(
                     f"Orientation offset too large: {offset_angle_deg:.1f}° > {self.config.orientation_offset_warning_deg}°. "
@@ -544,8 +670,18 @@ class Pico4(Teleoperator):
                 # target_quat = controller_quat_flexiv * offset
                 # The offset was calculated at enable time to align the two orientations
                 # This gives intuitive control: controller orientation directly maps to robot orientation
-                self._target_quat = self._quaternion_multiply(filtered_quat_flexiv, self._quat_offset)
-                self._target_quat = normalize_quaternion(self._target_quat, input_format="wxyz")
+                full_target_quat = self._quaternion_multiply(filtered_quat_flexiv, self._quat_offset)
+                full_target_quat = normalize_quaternion(full_target_quat, input_format="wxyz")
+                
+                # Apply orientation sensitivity using SLERP
+                # ori_sensitivity=1.0: full tracking, ori_sensitivity=0.5: half speed
+                if self.config.ori_sensitivity < 1.0:
+                    # SLERP between start orientation and full target
+                    self._target_quat = self._slerp_quaternion(
+                        self._start_quat, full_target_quat, self.config.ori_sensitivity
+                    )
+                else:
+                    self._target_quat = full_target_quat
             # If orientation control is disabled, target_quat stays at the value when grip was pressed
         # When not enabled, target pose stays at last position (no update)
 
@@ -590,6 +726,27 @@ class Pico4(Teleoperator):
     def send_feedback(self, feedback: dict[str, Any]) -> None:
         """Pico4 doesn't support feedback."""
         raise NotImplementedError("Feedback is not implemented for Pico4 teleoperator.")
+
+    def get_reset_button(self) -> bool:
+        """Get the state of the reset button with edge detection.
+        
+        Only returns True on the rising edge (button just pressed), not while held.
+        This prevents multiple resets when the button is held down.
+        
+        Note: This uses the cached A button state from the last get_action() call
+        to avoid additional SDK calls. Make sure get_action() is called before this.
+        
+        Returns:
+            True if reset button was just pressed (rising edge), False otherwise.
+        """
+        # Use cached button state from get_action() to avoid extra SDK calls
+        current_pressed = self._last_a_button
+        
+        # Edge detection: only trigger on rising edge (was not pressed, now pressed)
+        just_pressed = current_pressed and not self._was_reset_button_pressed
+        self._was_reset_button_pressed = current_pressed
+        
+        return just_pressed
 
     def disconnect(self) -> None:
         """Disconnect from the Pico4 VR headset."""
