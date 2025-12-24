@@ -8,7 +8,7 @@ dependencies:
   - ros-humble-kdl-parser
   - ros-humble-ament-cmake
   - cxx-compiler
-  - libstdcxx-ng  # for xensevr_pc_service_sdk
+  - libstdcxx-ng # for xensevr_pc_service_sdk
   - cmake
   - ninja
   - orocos-kdl
@@ -23,6 +23,7 @@ dependencies:
   - pynput
   - pip
   - evdev
+  - wxpython # for pico4
   - nvidia::cuda-toolkit=12.8 # for xensesdk
   - nvidia::cudnn # for xensesdk, cuda-version=12
   - conda-forge::ffmpeg=7.1.1 # for libsvtav1 encoder

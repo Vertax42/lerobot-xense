@@ -103,8 +103,6 @@ dependencies = [
     # for vive tracker
     "pysurvive",
     "pygame>=2.5.1,<2.7.0",
-    # for xense-gripper
-    "xensegripper==1.2.1",
     # for flexiv robot
     "flexivrdk",
     "spdlog",

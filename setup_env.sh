@@ -236,6 +236,19 @@ EOF
         exit 1
     fi
 
+    # Install xensegripper without overriding xensesdk version
+    echo "[INFO] Installing xensegripper (keeping xensesdk==1.6.5)..."
+    # Use --no-deps to prevent xensegripper from pulling in xensesdk 1.7.0
+    if uv pip install xensegripper --no-deps; then
+        # Reinstall xensesdk to ensure correct version after any potential override
+        echo "[INFO] Reinstalling xensesdk==1.6.5..."
+        uv pip install xensesdk==1.6.5 --force-reinstall --no-deps
+        echo "[INFO] xensegripper installed successfully!"
+    else
+        echo "[ERROR] xensegripper installation failed. See the error output above."
+        exit 1
+    fi
+
     # Install xensevr_pc_service_sdk for pico4 teleoperator
     echo "[INFO] Installing xensevr_pc_service_sdk..."
     
