@@ -169,7 +169,7 @@ class FlexivRizon4Config(RobotConfig):
     # Start position parameters (for MoveJ primitive)
     # Joint positions in degrees (factory-defined home position)
     start_position_degree: list[float] = field(
-        default_factory=lambda: [30.0, -45.0, 0.0, 90.0, 0.0, 45.0, 0.0]
+        default_factory=lambda: [0.0, -40.0, 0.0, 90.0, 0.0, 40.0, 0.0]
     )
     # Joint velocity scale for moving to start position (1-100, default 30)
     start_vel_scale: int = 30

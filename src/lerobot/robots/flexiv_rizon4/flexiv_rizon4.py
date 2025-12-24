@@ -506,7 +506,7 @@ class FlexivRizon4(Robot):
             "MoveJ",
             {
                 "target": home_jpos,
-                "jntVelScale": 50,  # Joint velocity scale [1-100]
+                "jntVelScale": 30,  # Joint velocity scale [1-100]
             },
         )
 
