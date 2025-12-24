@@ -100,6 +100,11 @@ dependencies = [
     # for 3d spacemouse teleoperator
     "atomics",
     "spnav@https://github.com/cheng-chi/spnav/archive/c1c938ebe3cc542db4685e0d13850ff1abfdb943.tar.gz",
+    # for vive tracker
+    "pysurvive",
+    "pygame>=2.5.1,<2.7.0",
+    # for xense-gripper
+    "xensegripper==1.2.1",
     # for flexiv robot
     "flexivrdk",
     "spdlog",

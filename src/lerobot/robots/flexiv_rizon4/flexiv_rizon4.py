@@ -598,10 +598,33 @@ class FlexivRizon4(Robot):
 
         self.logger.info(f"Switching from {current_mode} to {self.config.control_mode.value}...")
 
-        self._robot.SwitchMode(flexiv_mode)
-        self._current_mode = flexiv_mode
+        # Check for fault before switching
+        if self._robot.fault():
+            self.logger.warn("Robot has fault, attempting to clear...")
+            self._robot.ClearFault()
+            time.sleep(0.5)
+            if self._robot.fault():
+                raise RuntimeError("Failed to clear robot fault before mode switch")
 
-        self.logger.info(f"✅ Now in {self.config.control_mode.value} mode.")
+        self._robot.SwitchMode(flexiv_mode)
+        
+        # Wait for mode switch to complete and verify
+        max_wait = 2.0  # seconds
+        wait_start = time.perf_counter()
+        while time.perf_counter() - wait_start < max_wait:
+            actual_mode = self._robot.mode()
+            if actual_mode == flexiv_mode:
+                self._current_mode = flexiv_mode
+                self.logger.info(f"✅ Now in {self.config.control_mode.value} mode.")
+                return
+            time.sleep(0.05)
+        
+        # Mode switch failed
+        actual_mode = self._robot.mode()
+        raise RuntimeError(
+            f"Mode switch failed: expected {flexiv_mode}, got {actual_mode}. "
+            f"Robot fault: {self._robot.fault()}"
+        )
 
     def get_observation(self) -> dict[str, Any]:
         """Get current robot observation based on control_mode and use_force.
