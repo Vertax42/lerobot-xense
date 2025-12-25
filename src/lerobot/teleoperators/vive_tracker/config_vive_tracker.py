@@ -27,7 +27,7 @@ class ViveTrackerConfig(TeleoperatorConfig):
 
     This teleoperator provides 6-DoF absolute pose tracking using HTC Vive Tracker,
     suitable for end-effector teleoperation. Uses pysurvive library for tracking.
-    
+
     Unlike relative motion teleoperators (e.g., Pico4 VR controller), this provides
     direct 1:1 absolute pose mapping - the tracker pose IS the target end-effector pose.
 
@@ -44,16 +44,15 @@ class ViveTrackerConfig(TeleoperatorConfig):
     """
 
     id: str = "vive_tracker"
-    
+
     # Device settings
     tracker_name: Optional[str] = None  # Use first detected tracker if None
     config_path: Optional[str] = None  # pysurvive config file path
     lh_config: Optional[str] = None  # Lighthouse configuration
     device_wait_timeout: float = 10.0  # Timeout for device detection
     required_trackers: int = 1  # Number of trackers required
-    
+
     # Filter settings
     filter_window_size: int = 1  # Moving average filter window size
     position_jump_threshold: float = 0.05  # Max position change per frame (meters)
     enable_position_jump_filter: bool = False  # Enable position jump filtering
-
