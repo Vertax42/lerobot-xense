@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from ..config import TeleoperatorConfig
@@ -27,6 +27,9 @@ class ViveTrackerConfig(TeleoperatorConfig):
 
     This teleoperator provides 6-DoF absolute pose tracking using HTC Vive Tracker,
     suitable for end-effector teleoperation. Uses pysurvive library for tracking.
+    
+    Unlike relative motion teleoperators (e.g., Pico4 VR controller), this provides
+    direct 1:1 absolute pose mapping - the tracker pose IS the target end-effector pose.
 
     Attributes:
         tracker_name: Name of the tracker device to use (e.g., "T20", "WM0").
@@ -35,8 +38,6 @@ class ViveTrackerConfig(TeleoperatorConfig):
         lh_config: Lighthouse configuration string.
         device_wait_timeout: Timeout in seconds for waiting for devices.
         required_trackers: Number of trackers required before starting.
-        pos_sensitivity: Sensitivity multiplier for position control.
-        ori_sensitivity: Sensitivity multiplier for orientation control.
         filter_window_size: Moving average filter window size for smoothing.
         position_jump_threshold: Max allowed position change per frame (meters).
         enable_position_jump_filter: Whether to enable position jump filtering.
@@ -51,16 +52,8 @@ class ViveTrackerConfig(TeleoperatorConfig):
     device_wait_timeout: float = 10.0  # Timeout for device detection
     required_trackers: int = 1  # Number of trackers required
     
-    # Control settings
-    pos_sensitivity: float = 1.0  # Scale factor for position (1.0 = 1:1 mapping)
-    ori_sensitivity: float = 1.0  # Scale factor for orientation (1.0 = 1:1 mapping)
+    # Filter settings
     filter_window_size: int = 1  # Moving average filter window size
     position_jump_threshold: float = 0.05  # Max position change per frame (meters)
-    enable_position_jump_filter: bool = True  # Enable position jump filtering
-    
-    # Coordinate transform settings (from tracker frame to robot frame)
-    # These offsets are applied to the raw tracker pose
-    # Format: [x, y, z] in meters and [roll, pitch, yaw] in degrees
-    position_offset: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    rotation_offset_deg: list = field(default_factory=lambda: [0.0, 0.0, 0.0])
+    enable_position_jump_filter: bool = False  # Enable position jump filtering
 

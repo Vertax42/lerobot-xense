@@ -19,14 +19,18 @@ Vive Tracker Teleoperator for LeRobot.
 
 This teleoperator provides 6-DoF absolute pose tracking using HTC Vive Tracker,
 suitable for end-effector teleoperation. Uses pysurvive library for tracking.
+
+Coordinate transformation:
+- At connect time: records vive_init_pose and ee_init_pose (from robot)
+- Computes transform_matrix = ee_init_pose * vive_init_pose.inverse()
+- At get_action: action_pose = transform_matrix * vive_current_pose
 """
 
-import math
 import queue
 import sys
 import threading
 import time
-from collections import deque
+from queue import Queue
 from typing import Any
 
 import numpy as np
@@ -34,13 +38,6 @@ import spdlog
 
 from ..teleoperator import Teleoperator
 from .config_vive_tracker import ViveTrackerConfig
-from .vive_pose_utils import (
-    euler_to_quaternion,
-    matrix_to_xyz_quaternion,
-    quaternion_to_euler,
-    xyz_quaternion_to_matrix,
-    xyz_rpy_to_matrix,
-)
 
 
 class PoseData:
@@ -51,7 +48,7 @@ class PoseData:
         self.device_name = device_name
         self.timestamp = timestamp
         self.position = position  # [x, y, z]
-        self.rotation = rotation  # [qx, qy, qz, qw] quaternion
+        self.rotation = rotation  # [qw, qx, qy, qz] quaternion (wxyz format)
 
     def __str__(self):
         """Format output pose information."""
@@ -70,6 +67,10 @@ class ViveTrackerTeleop(Teleoperator):
     Provides 6-DoF pose tracking using HTC Vive Tracker for robot teleoperation.
     Uses pysurvive library for SteamVR Lighthouse tracking.
     
+    Coordinate transformation:
+    - transform_matrix = ee_init_pose * vive_init_pose.inverse()
+    - action_pose = transform_matrix * vive_current_pose
+    
     Output format: [x, y, z, qw, qx, qy, qz] (7D pose in robot frame)
     """
 
@@ -83,11 +84,34 @@ class ViveTrackerTeleop(Teleoperator):
         # Logger
         self.logger = spdlog.ConsoleLogger("ViveTrackerTeleop")
 
-        # pysurvive context
-        self._context = None
+        # Import pysurvive
+        try:
+            import pysurvive
+            self._pysurvive = pysurvive
+        except ImportError:
+            raise ImportError(
+                "pysurvive library not found. Please install it: "
+                "pip install pysurvive or build from source"
+            )
+
+        # Build pysurvive parameters
+        survive_args = sys.argv[:1]  # Keep program name
+        if self.config.config_path:
+            survive_args.extend(["--config", self.config.config_path])
+        if self.config.lh_config:
+            survive_args.extend(["--lh", self.config.lh_config])
+
+        # Initialize pysurvive context
+        self.logger.info("Initializing pysurvive context...")
+        self._context = pysurvive.SimpleContext(survive_args)
+        if not self._context:
+            raise RuntimeError("Cannot initialize pysurvive context")
+        self.logger.info("✅ Pysurvive context initialized successfully")
+
+        # Connection state
         self._is_connected = False
 
-        # Threading
+        # Threading for pysurvive data collection
         self._running = False
         self._pose_queue = queue.Queue(maxsize=100)
         self._data_lock = threading.Lock()
@@ -97,18 +121,21 @@ class ViveTrackerTeleop(Teleoperator):
         # Threads
         self._collector_thread = None
         self._processor_thread = None
-        self._device_monitor_thread = None
 
         # Active tracker
         self._active_tracker: str | None = None
 
-        # Filter state
-        self._filter_queue: deque = deque(maxlen=max(1, config.filter_window_size))
-        self._last_raw_pose: np.ndarray | None = None
+        # Coordinate transformation matrix (4x4)
+        # transform_matrix = ee_init_pose * vive_init_pose.inverse()
+        self._transform_matrix: np.ndarray | None = None
 
-        # Coordinate transform matrices (computed from config offsets)
-        self._position_offset = np.array(config.position_offset)
-        self._rotation_offset_rad = np.radians(config.rotation_offset_deg)
+        # Window filter queues for raw pose data
+        self._raw_pos_queue: Queue = Queue(self.config.filter_window_size)
+        self._raw_quat_queue: Queue = Queue(self.config.filter_window_size)
+
+        # Position jump filtering
+        self._last_raw_pose: np.ndarray | None = None
+        self._jump_filter_count: int = 0
 
     @property
     def action_features(self) -> dict:
@@ -130,48 +157,253 @@ class ViveTrackerTeleop(Teleoperator):
 
     @property
     def is_connected(self) -> bool:
-        return self._is_connected and self._context is not None
+        return self._is_connected
 
     @property
     def is_calibrated(self) -> bool:
         """Vive Tracker uses lighthouse calibration, always True if connected."""
         return self.is_connected
 
-    def connect(self, calibrate: bool = True) -> None:
-        """Connect to Vive Tracker via pysurvive."""
+    # ==================== Matrix/Pose Conversion Utilities ====================
+
+    def _pose7d_to_matrix(self, pose: np.ndarray) -> np.ndarray:
+        """Convert 7D pose [x, y, z, qw, qx, qy, qz] to 4x4 transformation matrix.
+        
+        Args:
+            pose: 7D pose array [x, y, z, qw, qx, qy, qz]
+            
+        Returns:
+            4x4 transformation matrix
+        """
+        x, y, z = pose[0], pose[1], pose[2]
+        qw, qx, qy, qz = pose[3], pose[4], pose[5], pose[6]
+        
+        # Normalize quaternion
+        norm = np.sqrt(qw*qw + qx*qx + qy*qy + qz*qz)
+        if norm < 1e-10:
+            qw, qx, qy, qz = 1.0, 0.0, 0.0, 0.0
+        else:
+            qw, qx, qy, qz = qw/norm, qx/norm, qy/norm, qz/norm
+        
+        # Build rotation matrix from quaternion
+        # R = [[1-2(qy²+qz²), 2(qxqy-qwqz), 2(qxqz+qwqy)],
+        #      [2(qxqy+qwqz), 1-2(qx²+qz²), 2(qyqz-qwqx)],
+        #      [2(qxqz-qwqy), 2(qyqz+qwqx), 1-2(qx²+qy²)]]
+        r00 = 1 - 2*(qy*qy + qz*qz)
+        r01 = 2*(qx*qy - qw*qz)
+        r02 = 2*(qx*qz + qw*qy)
+        r10 = 2*(qx*qy + qw*qz)
+        r11 = 1 - 2*(qx*qx + qz*qz)
+        r12 = 2*(qy*qz - qw*qx)
+        r20 = 2*(qx*qz - qw*qy)
+        r21 = 2*(qy*qz + qw*qx)
+        r22 = 1 - 2*(qx*qx + qy*qy)
+        
+        matrix = np.array([
+            [r00, r01, r02, x],
+            [r10, r11, r12, y],
+            [r20, r21, r22, z],
+            [0.0, 0.0, 0.0, 1.0]
+        ], dtype=np.float64)
+        
+        return matrix
+
+    def _matrix_to_pose7d(self, matrix: np.ndarray) -> np.ndarray:
+        """Convert 4x4 transformation matrix to 7D pose [x, y, z, qw, qx, qy, qz].
+        
+        Args:
+            matrix: 4x4 transformation matrix
+            
+        Returns:
+            7D pose array [x, y, z, qw, qx, qy, qz]
+        """
+        # Extract translation
+        x, y, z = matrix[0, 3], matrix[1, 3], matrix[2, 3]
+        
+        # Extract rotation matrix
+        r00, r01, r02 = matrix[0, 0], matrix[0, 1], matrix[0, 2]
+        r10, r11, r12 = matrix[1, 0], matrix[1, 1], matrix[1, 2]
+        r20, r21, r22 = matrix[2, 0], matrix[2, 1], matrix[2, 2]
+        
+        # Convert rotation matrix to quaternion
+        # Using Shepperd's method for numerical stability
+        trace = r00 + r11 + r22
+        
+        if trace > 0:
+            s = 0.5 / np.sqrt(trace + 1.0)
+            qw = 0.25 / s
+            qx = (r21 - r12) * s
+            qy = (r02 - r20) * s
+            qz = (r10 - r01) * s
+        elif r00 > r11 and r00 > r22:
+            s = 2.0 * np.sqrt(1.0 + r00 - r11 - r22)
+            qw = (r21 - r12) / s
+            qx = 0.25 * s
+            qy = (r01 + r10) / s
+            qz = (r02 + r20) / s
+        elif r11 > r22:
+            s = 2.0 * np.sqrt(1.0 + r11 - r00 - r22)
+            qw = (r02 - r20) / s
+            qx = (r01 + r10) / s
+            qy = 0.25 * s
+            qz = (r12 + r21) / s
+        else:
+            s = 2.0 * np.sqrt(1.0 + r22 - r00 - r11)
+            qw = (r10 - r01) / s
+            qx = (r02 + r20) / s
+            qy = (r12 + r21) / s
+            qz = 0.25 * s
+        
+        # Normalize quaternion
+        norm = np.sqrt(qw*qw + qx*qx + qy*qy + qz*qz)
+        if norm > 1e-10:
+            qw, qx, qy, qz = qw/norm, qx/norm, qy/norm, qz/norm
+        
+        return np.array([x, y, z, qw, qx, qy, qz], dtype=np.float32)
+
+    def _matrix_inverse(self, matrix: np.ndarray) -> np.ndarray:
+        """Compute inverse of a 4x4 transformation matrix.
+        
+        For a transformation matrix [R|t], the inverse is [R^T|-R^T*t].
+        
+        Args:
+            matrix: 4x4 transformation matrix
+            
+        Returns:
+            4x4 inverse transformation matrix
+        """
+        R = matrix[:3, :3]
+        t = matrix[:3, 3]
+        
+        R_inv = R.T
+        t_inv = -R_inv @ t
+        
+        inv_matrix = np.eye(4, dtype=np.float64)
+        inv_matrix[:3, :3] = R_inv
+        inv_matrix[:3, 3] = t_inv
+        
+        return inv_matrix
+
+    # ==================== Quaternion Utilities ====================
+
+    def _normalize_quaternion(self, q: np.ndarray) -> np.ndarray:
+        """Normalize quaternion to unit length. Input/output in [qw, qx, qy, qz] format."""
+        norm = np.linalg.norm(q)
+        if norm < 1e-10:
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        return (q / norm).astype(np.float32)
+
+    def _slerp_quaternion(self, q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
+        """Spherical Linear Interpolation (SLERP) between two quaternions.
+
+        Args:
+            q1: First quaternion [qw, qx, qy, qz]
+            q2: Second quaternion [qw, qx, qy, qz]
+            t: Interpolation factor [0, 1]
+
+        Returns:
+            Interpolated quaternion [qw, qx, qy, qz]
+        """
+        q1 = self._normalize_quaternion(q1)
+        q2 = self._normalize_quaternion(q2)
+
+        dot = np.dot(q1, q2)
+
+        if dot < 0.0:
+            q2 = -q2
+            dot = -dot
+
+        dot = np.clip(dot, -1.0, 1.0)
+
+        if abs(dot) > 0.9995:
+            result = q1 + t * (q2 - q1)
+            return self._normalize_quaternion(result)
+
+        theta = np.arccos(abs(dot))
+        sin_theta = np.sin(theta)
+
+        w1 = np.sin((1 - t) * theta) / sin_theta
+        w2 = np.sin(t * theta) / sin_theta
+
+        result = w1 * q1 + w2 * q2
+
+        return self._normalize_quaternion(result)
+
+    # ==================== Filter ====================
+
+    def _filter_raw_pose(self, pos: np.ndarray, quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Apply window filter to raw pose data.
+
+        Args:
+            pos: Position [x, y, z]
+            quat: Quaternion [qw, qx, qy, qz]
+
+        Returns:
+            Tuple of (filtered_pos, filtered_quat)
+        """
+        if self.config.filter_window_size <= 1:
+            return pos, quat
+
+        # Moving average filter for position
+        if self._raw_pos_queue.full():
+            self._raw_pos_queue.get()
+        self._raw_pos_queue.put(pos.copy())
+        filtered_pos = np.mean(np.array(list(self._raw_pos_queue.queue)), axis=0)
+
+        # SLERP-based filter for quaternion
+        if self._raw_quat_queue.full():
+            self._raw_quat_queue.get()
+        self._raw_quat_queue.put(quat.copy())
+
+        quat_list = list(self._raw_quat_queue.queue)
+        n = len(quat_list)
+
+        if n == 1:
+            filtered_quat = quat_list[0]
+        elif n == 2:
+            filtered_quat = self._slerp_quaternion(quat_list[0], quat_list[1], 0.5)
+        else:
+            mid = n // 2
+            left_half = quat_list[:mid+1]
+            right_half = quat_list[mid:]
+
+            if len(left_half) == 1:
+                left_mid = left_half[0]
+            else:
+                left_mid = self._slerp_quaternion(left_half[0], left_half[-1], 0.5)
+
+            if len(right_half) == 1:
+                right_mid = right_half[0]
+            else:
+                right_mid = self._slerp_quaternion(right_half[0], right_half[-1], 0.5)
+
+            filtered_quat = self._slerp_quaternion(left_mid, right_mid, 0.5)
+
+        filtered_quat = self._normalize_quaternion(filtered_quat)
+
+        return filtered_pos.astype(np.float32), filtered_quat
+
+    # ==================== Main Methods ====================
+
+    def connect(self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None) -> None:
+        """Start Vive Tracker pose tracking and compute coordinate transformation.
+        
+        Args:
+            calibrate: Unused, kept for API compatibility
+            current_tcp_pose_quat: Current robot TCP pose [x, y, z, qw, qx, qy, qz].
+                                   Required for computing the vive-to-robot transformation.
+        """
         if self._is_connected:
             self.logger.warn("Vive Tracker is already connected")
             return
 
+        if current_tcp_pose_quat is None:
+            raise ValueError(
+                "current_tcp_pose_quat is required for Vive Tracker. "
+                "Please provide the current robot TCP pose [x, y, z, qw, qx, qy, qz]."
+            )
+
         try:
-            # Import pysurvive
-            try:
-                import pysurvive
-                self._pysurvive = pysurvive
-            except ImportError:
-                raise ImportError(
-                    "pysurvive library not found. Please install it: "
-                    "pip install pysurvive or build from source"
-                )
-
-            self.logger.info("Initializing pysurvive...")
-
-            # Build pysurvive parameters
-            survive_args = sys.argv[:1]  # Keep program name
-
-            if self.config.config_path:
-                survive_args.extend(["--config", self.config.config_path])
-
-            if self.config.lh_config:
-                survive_args.extend(["--lh", self.config.lh_config])
-
-            # Initialize pysurvive context
-            self._context = pysurvive.SimpleContext(survive_args)
-            if not self._context:
-                raise RuntimeError("Cannot initialize pysurvive context")
-
-            self.logger.info("✅ Pysurvive context initialized successfully")
-
             # Mark as running
             self._running = True
             self._is_connected = True
@@ -186,11 +418,6 @@ class ViveTrackerTeleop(Teleoperator):
                 target=self._pose_processor, daemon=True
             )
             self._processor_thread.start()
-
-            self._device_monitor_thread = threading.Thread(
-                target=self._device_monitor, daemon=True
-            )
-            self._device_monitor_thread.start()
 
             self.logger.info("Vive Tracker pose tracking started")
 
@@ -217,6 +444,30 @@ class ViveTrackerTeleop(Teleoperator):
                     )
 
             self.logger.info(f"✅ Using tracker: {self._active_tracker}")
+
+            # Wait for initial vive pose
+            self.logger.info("Waiting for initial Vive pose...")
+            vive_init_pose = self._wait_for_initial_pose(timeout=5.0)
+            if vive_init_pose is None:
+                raise RuntimeError("Failed to get initial Vive pose")
+
+            # Compute transformation matrix
+            # transform_matrix = ee_init_pose * vive_init_pose.inverse()
+            ee_init_pose = np.array(current_tcp_pose_quat, dtype=np.float64)
+            ee_init_matrix = self._pose7d_to_matrix(ee_init_pose)
+            vive_init_matrix = self._pose7d_to_matrix(vive_init_pose)
+            vive_init_matrix_inv = self._matrix_inverse(vive_init_matrix)
+            
+            self._transform_matrix = ee_init_matrix @ vive_init_matrix_inv
+
+            self.logger.info("=" * 50)
+            self.logger.info("Coordinate Transformation Computed")
+            self.logger.info("=" * 50)
+            self.logger.info(f"  EE init pose: {ee_init_pose}")
+            self.logger.info(f"  Vive init pose: {vive_init_pose}")
+            self.logger.info("  Formula: action_pose = ee_init * vive_init^-1 * vive_current")
+            self.logger.info("=" * 50)
+
             self._log_reference_frame_info()
 
         except Exception as e:
@@ -225,29 +476,62 @@ class ViveTrackerTeleop(Teleoperator):
             self._is_connected = False
             raise
 
+    def _wait_for_initial_pose(self, timeout: float = 5.0) -> np.ndarray | None:
+        """Wait for initial pose from the active tracker.
+        
+        Args:
+            timeout: Maximum time to wait in seconds
+            
+        Returns:
+            Initial pose as [x, y, z, qw, qx, qy, qz] or None if timeout
+        """
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            with self._data_lock:
+                pose = self._latest_poses.get(self._active_tracker)
+            
+            if pose is not None:
+                # Convert PoseData to 7D array [x, y, z, qw, qx, qy, qz]
+                return np.array([
+                    pose.position[0], pose.position[1], pose.position[2],
+                    pose.rotation[0], pose.rotation[1], pose.rotation[2], pose.rotation[3]
+                ], dtype=np.float64)
+            
+            time.sleep(0.05)
+        
+        return None
+
     def calibrate(self) -> None:
         """Calibration is handled by pysurvive/lighthouse system."""
         self.logger.info("Vive Tracker uses lighthouse calibration, no runtime calibration needed")
 
     def configure(self) -> None:
-        """Apply configuration settings."""
-        self._position_offset = np.array(self.config.position_offset)
-        self._rotation_offset_rad = np.radians(self.config.rotation_offset_deg)
-        self._filter_queue.clear()
-        self._last_raw_pose = None
-        self.logger.info("Configuration applied")
+        """No additional configuration needed."""
+        pass
 
     def get_action(self) -> dict[str, Any]:
-        """Get current tracker pose as action."""
+        """Get current tracker pose as action (transformed to robot frame).
+        
+        Data processing pipeline:
+        1. Get latest pose from pysurvive
+        2. Apply position jump filter (if enabled)
+        3. Apply window filter
+        4. Apply coordinate transformation: action = transform_matrix * vive_pose
+        5. Return pose in robot frame
+        """
         if not self.is_connected:
             raise RuntimeError("Vive Tracker is not connected")
+
+        if self._transform_matrix is None:
+            raise RuntimeError("Transformation matrix not computed. Call connect() first.")
 
         # Get pose for active tracker
         with self._data_lock:
             pose = self._latest_poses.get(self._active_tracker)
 
         if pose is None:
-            # Return zeros if no pose available
+            # Return identity pose if no data available
             return {
                 "tcp.x": 0.0,
                 "tcp.y": 0.0,
@@ -258,47 +542,46 @@ class ViveTrackerTeleop(Teleoperator):
                 "tcp.qz": 0.0,
             }
 
-        # Extract position and quaternion
-        x, y, z = pose.position
-        qx, qy, qz, qw = pose.rotation
-
-        # Apply coordinate transform if configured
-        if np.any(self._position_offset != 0) or np.any(self._rotation_offset_rad != 0):
-            x, y, z, qw, qx, qy, qz = self._apply_transform(
-                x, y, z, qw, qx, qy, qz
-            )
-
-        # Apply sensitivity scaling
-        x *= self.config.pos_sensitivity
-        y *= self.config.pos_sensitivity
-        z *= self.config.pos_sensitivity
-
-        # Create raw pose array for filtering
-        raw_pose = np.array([x, y, z, qw, qx, qy, qz])
+        # Extract position and quaternion from PoseData
+        pos = np.array(pose.position, dtype=np.float32)
+        quat = np.array(pose.rotation, dtype=np.float32)  # [qw, qx, qy, qz]
 
         # Apply position jump filter
         if self.config.enable_position_jump_filter and self._last_raw_pose is not None:
-            pos_delta = np.linalg.norm(raw_pose[:3] - self._last_raw_pose[:3])
+            pos_delta = np.linalg.norm(pos - self._last_raw_pose[:3])
             if pos_delta > self.config.position_jump_threshold:
+                self._jump_filter_count += 1
                 self.logger.warn(
                     f"Position jump detected: {pos_delta:.4f}m > "
-                    f"{self.config.position_jump_threshold:.4f}m, filtering"
+                    f"{self.config.position_jump_threshold:.4f}m, filtering (count: {self._jump_filter_count})"
                 )
-                raw_pose = self._last_raw_pose.copy()
+                pos = self._last_raw_pose[:3].copy()
 
-        self._last_raw_pose = raw_pose.copy()
+        self._last_raw_pose = np.concatenate([pos, quat])
 
-        # Apply smoothing filter
-        filtered_pose = self._filter_pose(raw_pose)
+        # Apply window filter
+        filtered_pos, filtered_quat = self._filter_raw_pose(pos, quat)
+
+        # Build current vive pose as 7D
+        vive_current_pose = np.array([
+            filtered_pos[0], filtered_pos[1], filtered_pos[2],
+            filtered_quat[0], filtered_quat[1], filtered_quat[2], filtered_quat[3]
+        ], dtype=np.float64)
+
+        # Apply coordinate transformation
+        # action_pose = transform_matrix * vive_current_pose
+        vive_current_matrix = self._pose7d_to_matrix(vive_current_pose)
+        action_matrix = self._transform_matrix @ vive_current_matrix
+        action_pose = self._matrix_to_pose7d(action_matrix)
 
         return {
-            "tcp.x": float(filtered_pose[0]),
-            "tcp.y": float(filtered_pose[1]),
-            "tcp.z": float(filtered_pose[2]),
-            "tcp.qw": float(filtered_pose[3]),
-            "tcp.qx": float(filtered_pose[4]),
-            "tcp.qy": float(filtered_pose[5]),
-            "tcp.qz": float(filtered_pose[6]),
+            "tcp.x": float(action_pose[0]),
+            "tcp.y": float(action_pose[1]),
+            "tcp.z": float(action_pose[2]),
+            "tcp.qw": float(action_pose[3]),
+            "tcp.qx": float(action_pose[4]),
+            "tcp.qy": float(action_pose[5]),
+            "tcp.qz": float(action_pose[6]),
         }
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -306,7 +589,7 @@ class ViveTrackerTeleop(Teleoperator):
         pass
 
     def disconnect(self) -> None:
-        """Disconnect from Vive Tracker."""
+        """Disconnect and clean up all resources."""
         if not self._running:
             return
 
@@ -318,60 +601,27 @@ class ViveTrackerTeleop(Teleoperator):
             self._collector_thread.join(timeout=2.0)
         if self._processor_thread:
             self._processor_thread.join(timeout=2.0)
-        if self._device_monitor_thread:
-            self._device_monitor_thread.join(timeout=2.0)
 
-        # Clean up resources
-        self._context = None
-        self._pose_queue = queue.Queue(maxsize=100)
-        self._is_connected = False
-
-        # Print statistics
+        # Print statistics before cleanup
         self.logger.info("Statistics:")
         for device_name, info in self._devices_info.items():
             self.logger.info(f"  - {device_name}: {info['updates']} updates")
+        if self._jump_filter_count > 0:
+            self.logger.info(f"  - Position jumps filtered: {self._jump_filter_count}")
+
+        # Clean up all resources
+        self._context = None
+        self._pose_queue = queue.Queue(maxsize=100)
+        self._is_connected = False
+        self._transform_matrix = None
+        self._collector_thread = None
+        self._processor_thread = None
+        self._latest_poses.clear()
+        self._devices_info.clear()
 
         self.logger.info("✅ Vive Tracker disconnected")
 
-    def _apply_transform(self, x: float, y: float, z: float,
-                          qw: float, qx: float, qy: float, qz: float) -> tuple:
-        """Apply coordinate transformation to pose."""
-        # Convert to matrix
-        pose_mat = xyz_quaternion_to_matrix(x, y, z, qx, qy, qz, qw)
-
-        # Apply rotation offset
-        roll, pitch, yaw = self._rotation_offset_rad
-        if roll != 0 or pitch != 0 or yaw != 0:
-            rotation_mat = xyz_rpy_to_matrix(0, 0, 0, roll, pitch, yaw)
-            pose_mat = np.dot(pose_mat, rotation_mat)
-
-        # Apply position offset
-        pose_mat[0, 3] += self._position_offset[0]
-        pose_mat[1, 3] += self._position_offset[1]
-        pose_mat[2, 3] += self._position_offset[2]
-
-        # Convert back to position and quaternion
-        x, y, z, qx, qy, qz, qw = matrix_to_xyz_quaternion(pose_mat)
-        return x, y, z, qw, qx, qy, qz
-
-    def _filter_pose(self, raw_pose: np.ndarray) -> np.ndarray:
-        """Apply moving average filter to pose."""
-        if self.config.filter_window_size <= 1:
-            return raw_pose
-
-        self._filter_queue.append(raw_pose)
-
-        if len(self._filter_queue) == 1:
-            return raw_pose
-
-        # Average position
-        positions = np.array([p[:3] for p in self._filter_queue])
-        avg_pos = np.mean(positions, axis=0)
-
-        # For orientation, use the latest (SLERP would be better but more complex)
-        avg_quat = raw_pose[3:7]
-
-        return np.concatenate([avg_pos, avg_quat])
+    # ==================== Helper Methods ====================
 
     def _wait_for_devices(self, timeout: float, required_trackers: int) -> dict:
         """Wait for devices to be detected."""
@@ -422,34 +672,8 @@ class ViveTrackerTeleop(Teleoperator):
         )
         return result
 
-    def _device_monitor(self) -> None:
-        """Device monitoring thread."""
-        self.logger.info("Device monitoring thread started")
-
-        self._update_device_list()
-
-        while self._running and self._context.Running():
-            self._update_device_list()
-            time.sleep(1.0)
-
-    def _update_device_list(self) -> None:
-        """Update device list from pysurvive."""
-        try:
-            devices = list(self._context.Objects())
-            with self._data_lock:
-                for device in devices:
-                    device_name = str(device.Name(), "utf-8")
-                    if device_name not in self._devices_info:
-                        self.logger.info(f"New device detected: {device_name}")
-                        self._devices_info[device_name] = {
-                            "updates": 0,
-                            "last_update": 0,
-                        }
-        except Exception as e:
-            self.logger.error(f"Cannot update device list: {e}")
-
     def _pose_collector(self) -> None:
-        """Pose collection thread."""
+        """Pose collection thread - continuously reads pose data from pysurvive."""
         self.logger.info("Pose collection thread started")
 
         # Get initial devices
@@ -481,41 +705,19 @@ class ViveTrackerTeleop(Teleoperator):
                 pose_data = pose_obj[0]
                 timestamp = pose_obj[1]
 
-                # Convert pose (pysurvive quaternion is [w,x,y,z], we use [x,y,z,w])
-                origin_mat = xyz_quaternion_to_matrix(
+                # Extract raw pose from pysurvive (in lighthouse coordinate frame)
+                # pysurvive quaternion is [w, x, y, z], we store as [qw, qx, qy, qz]
+                position = [
                     pose_data.Pos[0],
                     pose_data.Pos[1],
                     pose_data.Pos[2],
+                ]
+                rotation = [
+                    pose_data.Rot[0],  # qw
                     pose_data.Rot[1],  # qx
                     pose_data.Rot[2],  # qy
                     pose_data.Rot[3],  # qz
-                    pose_data.Rot[0],  # qw
-                )
-
-                # Apply gripper-specific transform (from XGripper project)
-                # Initial rotation: -20 degrees around X axis
-                initial_rotation = xyz_rpy_to_matrix(
-                    0, 0, 0, -(20.0 / 180.0 * math.pi), 0, 0
-                )
-                # Alignment rotation: -90 deg X, -90 deg Y
-                alignment_rotation = xyz_rpy_to_matrix(
-                    0, 0, 0, -90 / 180 * math.pi, -90 / 180 * math.pi, 0
-                )
-                rotate_matrix = np.dot(initial_rotation, alignment_rotation)
-
-                # Transform to gripper center
-                transform_matrix = xyz_rpy_to_matrix(0.172, 0, -0.076, 0, 0, 0)
-
-                # Calculate final transformation
-                result_mat = np.matmul(
-                    np.matmul(origin_mat, rotate_matrix), transform_matrix
-                )
-
-                # Extract position and quaternion
-                x, y, z, qx, qy, qz, qw = matrix_to_xyz_quaternion(result_mat)
-
-                position = [x, y, z]
-                rotation = [qx, qy, qz, qw]
+                ]
 
                 pose = PoseData(device_name, timestamp, position, rotation)
 
@@ -536,7 +738,7 @@ class ViveTrackerTeleop(Teleoperator):
                         pass
 
     def _pose_processor(self) -> None:
-        """Pose processing thread."""
+        """Pose processing thread - updates latest poses from queue."""
         self.logger.info("Pose processing thread started")
 
         while self._running:
@@ -570,18 +772,15 @@ class ViveTrackerTeleop(Teleoperator):
         self.logger.info(f"  All Lighthouses: {lighthouses}")
         self.logger.info(f"  All Trackers: {trackers}")
         self.logger.info(f"  Active Tracker: {self._active_tracker}")
-        self.logger.info("  Coordinate System: Right-handed")
+        self.logger.info("  Coordinate System: Transformed to robot frame")
+        self.logger.info("  Quaternion format: [qw, qx, qy, qz]")
         self.logger.info("=" * 50)
 
     def get_pose(self, device_name: str | None = None) -> PoseData | dict | None:
-        """
-        Get latest pose data for specified device.
+        """Get latest raw pose data (in lighthouse frame) for specified device.
         
-        Args:
-            device_name: Device name, if None returns all poses
-            
-        Returns:
-            PoseData for specific device, or dict of all poses
+        Note: This returns the raw pose without coordinate transformation.
+        Use get_action() to get the transformed pose in robot frame.
         """
         if not self._running:
             return None if device_name else {}
@@ -604,4 +803,3 @@ class ViveTrackerTeleop(Teleoperator):
                 name for name in self._devices_info.keys()
                 if name.startswith("WM") or name.startswith("T2") or name.startswith("HMD")
             ]
-

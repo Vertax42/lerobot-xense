@@ -880,6 +880,7 @@ def teleoperate(cfg: TeleoperateConfig):
             try:
                 robot.connect(go_to_start=True)
                 logger.info(f"Start EEF pose: {robot.get_current_tcp_pose_euler()}")
+                logger.info(f"Start TCP pose: {robot.get_current_tcp_pose_quat()}")
             except Exception as e:
                 logger.error(f"Failed to connect to robot: {e}\n{traceback.format_exc()}")
                 raise
