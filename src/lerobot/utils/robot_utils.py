@@ -32,7 +32,160 @@ def busy_wait(seconds):
             time.sleep(seconds)
 
 
-def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+def xyz_rpy_to_matrix(pose: np.ndarray) -> np.ndarray:
+    """
+    Convert position and RPY angles to 4x4 transformation matrix.
+
+    Args:
+        pose: 6D array [x, y, z, roll, pitch, yaw]
+              - x, y, z: Position coordinates
+              - roll, pitch, yaw: Euler angles in radians
+
+    Returns:
+        4x4 transformation matrix
+    """
+    if pose.shape != (6,):
+        raise ValueError(f"Expected pose array of shape (6,), got {pose.shape}")
+
+    x, y, z = pose[0], pose[1], pose[2]
+    roll, pitch, yaw = pose[3], pose[4], pose[5]
+
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+
+    rot_matrix = np.array(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr, x],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr, y],
+            [-sp, cp * sr, cp * cr, z],
+            [0, 0, 0, 1],
+        ]
+    )
+    return rot_matrix
+
+
+def quaternion_to_matrix(
+    pose: np.ndarray,
+    input_format: str = "wxyz",
+) -> np.ndarray:
+    """
+    Convert position and quaternion to 4x4 transformation matrix.
+
+    Args:
+        pose: 7D array containing position and quaternion.
+              Format depends on input_format parameter:
+              - "xyzw": [x, y, z, qx, qy, qz, qw] (scalar-last)
+              - "wxyz": [x, y, z, qw, qx, qy, qz] (scalar-first)
+        input_format: Quaternion format, either "xyzw" (scalar-last) or "wxyz" (scalar-first).
+                      Default is "xyzw".
+
+    Returns:
+        4x4 transformation matrix
+    """
+    if pose.shape != (7,):
+        raise ValueError(f"Expected pose array of shape (7,), got {pose.shape}")
+
+    x, y, z = pose[0], pose[1], pose[2]
+
+    if input_format == "xyzw":
+        qx, qy, qz, qw = pose[3], pose[4], pose[5], pose[6]
+    elif input_format == "wxyz":
+        qw, qx, qy, qz = pose[3], pose[4], pose[5], pose[6]
+    else:
+        raise ValueError(
+            f"Unknown input_format: {input_format}. Expected 'xyzw' or 'wxyz'."
+        )
+
+    rot_matrix = np.array(
+        [
+            [
+                1 - 2 * qy * qy - 2 * qz * qz,
+                2 * qx * qy - 2 * qz * qw,
+                2 * qx * qz + 2 * qy * qw,
+                x,
+            ],
+            [
+                2 * qx * qy + 2 * qz * qw,
+                1 - 2 * qx * qx - 2 * qz * qz,
+                2 * qy * qz - 2 * qx * qw,
+                y,
+            ],
+            [
+                2 * qx * qz - 2 * qy * qw,
+                2 * qy * qz + 2 * qx * qw,
+                1 - 2 * qx * qx - 2 * qy * qy,
+                z,
+            ],
+            [0, 0, 0, 1],
+        ]
+    )
+    return rot_matrix
+
+
+def matrix_to_pose7d(matrix: np.ndarray, output_format: str = "wxyz") -> np.ndarray:
+    """
+    Convert 4x4 transformation matrix to 7D pose [x, y, z, qw, qx, qy, qz].
+
+    Args:
+        matrix: 4x4 transformation matrix
+        output_format: Quaternion output format:
+            - "xyzw": [x, y, z, qx, qy, qz, qw] (scalar-last)
+            - "wxyz": [x, y, z, qw, qx, qy, qz] (scalar-first)
+            Default is "wxyz".
+
+    Returns:
+        7D array containing position and quaternion
+    """
+    # Extract position
+    x = matrix[0, 3]
+    y = matrix[1, 3]
+    z = matrix[2, 3]
+
+    # Extract rotation matrix
+    rot_matrix = matrix[:3, :3]
+
+    # Calculate quaternion using Shepperd's method
+    trace = rot_matrix[0, 0] + rot_matrix[1, 1] + rot_matrix[2, 2]
+
+    if trace > 0:
+        s = 0.5 / np.sqrt(trace + 1.0)
+        qw = 0.25 / s
+        qx = (rot_matrix[2, 1] - rot_matrix[1, 2]) * s
+        qy = (rot_matrix[0, 2] - rot_matrix[2, 0]) * s
+        qz = (rot_matrix[1, 0] - rot_matrix[0, 1]) * s
+    elif rot_matrix[0, 0] > rot_matrix[1, 1] and rot_matrix[0, 0] > rot_matrix[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + rot_matrix[0, 0] - rot_matrix[1, 1] - rot_matrix[2, 2])
+        qw = (rot_matrix[2, 1] - rot_matrix[1, 2]) / s
+        qx = 0.25 * s
+        qy = (rot_matrix[0, 1] + rot_matrix[1, 0]) / s
+        qz = (rot_matrix[0, 2] + rot_matrix[2, 0]) / s
+    elif rot_matrix[1, 1] > rot_matrix[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + rot_matrix[1, 1] - rot_matrix[0, 0] - rot_matrix[2, 2])
+        qw = (rot_matrix[0, 2] - rot_matrix[2, 0]) / s
+        qx = (rot_matrix[0, 1] + rot_matrix[1, 0]) / s
+        qy = 0.25 * s
+        qz = (rot_matrix[1, 2] + rot_matrix[2, 1]) / s
+    else:
+        s = 2.0 * np.sqrt(1.0 + rot_matrix[2, 2] - rot_matrix[0, 0] - rot_matrix[1, 1])
+        qw = (rot_matrix[1, 0] - rot_matrix[0, 1]) / s
+        qx = (rot_matrix[0, 2] + rot_matrix[2, 0]) / s
+        qy = (rot_matrix[1, 2] + rot_matrix[2, 1]) / s
+        qz = 0.25 * s
+
+    if output_format == "xyzw":
+        return np.array([x, y, z, qx, qy, qz, qw])
+    elif output_format == "wxyz":
+        return np.array([x, y, z, qw, qx, qy, qz])
+    else:
+        raise ValueError(
+            f"Unknown output_format: {output_format}. Use 'xyzw' or 'wxyz'."
+        )
+
+
+def euler_to_quaternion(
+    roll: float, pitch: float, yaw: float
+) -> tuple[float, float, float, float]:
     """Convert Euler angles (roll, pitch, yaw) to quaternion [qw, qx, qy, qz].
 
     Args:
@@ -55,7 +208,50 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, f
     return (qw, qx, qy, qz)
 
 
-def normalize_quaternion(q: np.ndarray, input_format: str = "auto") -> np.ndarray:
+def slerp_quaternion(
+    q1: np.ndarray, q2: np.ndarray, t: float, input_format: str = "wxyz"
+) -> np.ndarray:
+    """Spherical Linear Interpolation (SLERP) between two quaternions.
+
+    Args:
+        q1: First quaternion [qw, qx, qy, qz]
+        q2: Second quaternion [qw, qx, qy, qz]
+        t: Interpolation factor [0, 1], where 0 returns q1 and 1 returns q2
+        input_format: Input quaternion format:
+            - "wxyz": [qw, qx, qy, qz] format (Flexiv, scipy)
+            - "xyzw": [qx, qy, qz, qw] format (Pico4, ROS, OpenGL)
+            Default is "wxyz".
+
+    Returns:
+        Interpolated quaternion [qw, qx, qy, qz]
+    """
+    q1 = normalize_quaternion(q1, input_format=input_format)
+    q2 = normalize_quaternion(q2, input_format=input_format)
+
+    dot = np.dot(q1, q2)
+
+    if dot < 0.0:
+        q2 = -q2
+        dot = -dot
+
+    dot = np.clip(dot, -1.0, 1.0)
+
+    if abs(dot) > 0.9995:
+        result = q1 + t * (q2 - q1)
+        return normalize_quaternion(result, input_format=input_format)
+
+    theta = np.arccos(abs(dot))
+    sin_theta = np.sin(theta)
+
+    w1 = np.sin((1 - t) * theta) / sin_theta
+    w2 = np.sin(t * theta) / sin_theta
+
+    result = w1 * q1 + w2 * q2
+
+    return normalize_quaternion(result, input_format=input_format)
+
+
+def normalize_quaternion(q: np.ndarray, input_format: str = "wxyz") -> np.ndarray:
     """Normalize quaternion and convert to [qw, qx, qy, qz] format (Flexiv convention).
 
     Args:
@@ -63,9 +259,6 @@ def normalize_quaternion(q: np.ndarray, input_format: str = "auto") -> np.ndarra
         input_format: Input quaternion format:
             - "wxyz": [qw, qx, qy, qz] format (Flexiv, scipy)
             - "xyzw": [qx, qy, qz, qw] format (Pico4, ROS, OpenGL)
-            - "auto": Auto-detect based on heuristic (default)
-                      Heuristic: |w| = |cos(θ/2)| is typically larger for small rotations.
-                      Compares first and last elements to determine format.
 
     Returns:
         Normalized quaternion in [qw, qx, qy, qz] format (Flexiv convention)
@@ -86,21 +279,12 @@ def normalize_quaternion(q: np.ndarray, input_format: str = "auto") -> np.ndarra
     if abs(norm - 1.0) > 1e-6:
         q = q / norm
 
-    # Determine format and convert to [qw, qx, qy, qz]
+    # Convert to [qw, qx, qy, qz] format
     if input_format == "wxyz":
         # Already in [qw, qx, qy, qz] format
         return q.astype(np.float32)
     elif input_format == "xyzw":
         # Convert from [qx, qy, qz, qw] to [qw, qx, qy, qz]
         return np.array([q[3], q[0], q[1], q[2]], dtype=np.float32)
-    elif input_format == "auto":
-        # Heuristic: for most rotations, |w| = |cos(θ/2)| tends to be larger
-        # Compare first element (if wxyz) vs last element (if xyzw)
-        if abs(q[0]) >= abs(q[3]):
-            # Likely [qw, qx, qy, qz] format (first element is w)
-            return q.astype(np.float32)
-        else:
-            # Likely [qx, qy, qz, qw] format (last element is w)
-            return np.array([q[3], q[0], q[1], q[2]], dtype=np.float32)
     else:
-        raise ValueError(f"Unknown input_format: {input_format}. Use 'wxyz', 'xyzw', or 'auto'.")
+        raise ValueError(f"Unknown input_format: {input_format}. Use 'wxyz' or 'xyzw'.")
