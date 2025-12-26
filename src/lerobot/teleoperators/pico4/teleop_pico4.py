@@ -36,12 +36,11 @@ from queue import Queue
 from typing import Any
 
 import numpy as np
-import spdlog
 
 from lerobot.teleoperators.pico4.config_pico4 import Pico4Config
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import normalize_quaternion
+from lerobot.utils.robot_utils import normalize_quaternion, get_logger
 
 
 class Pico4(Teleoperator):
@@ -86,7 +85,7 @@ class Pico4(Teleoperator):
         self.config = config
         self._is_connected = False
         self._xrt = None
-        self.logger = spdlog.ConsoleLogger("Pico4Teleop")
+        self.logger = get_logger("Pico4Teleop")
 
         # Target pose tracking (in Flexiv coordinate system)
         self._target_pos: np.ndarray = np.zeros(3, dtype=np.float32)  # [x, y, z]

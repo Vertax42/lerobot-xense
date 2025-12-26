@@ -17,6 +17,25 @@ import platform
 import time
 
 import numpy as np
+import spdlog
+
+
+# Default spdlog pattern: [HH:MM:SS] [logger_name] [level] message
+SPDLOG_PATTERN = "[%H:%M:%S] [%n] [%l] %v"
+
+
+def get_logger(name: str) -> spdlog.ConsoleLogger:
+    """Create a spdlog ConsoleLogger with unified format.
+    
+    Args:
+        name: Logger name
+        
+    Returns:
+        Configured spdlog.ConsoleLogger instance
+    """
+    logger = spdlog.ConsoleLogger(name)
+    logger.set_pattern(SPDLOG_PATTERN)
+    return logger
 
 
 def busy_wait(seconds):

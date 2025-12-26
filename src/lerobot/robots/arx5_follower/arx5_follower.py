@@ -20,10 +20,10 @@ from functools import cached_property
 from typing import Any, Sequence
 
 import numpy as np
-import spdlog
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import get_logger
 
 from ..robot import Robot
 from .config_arx5_follower import ARX5FollowerConfig, ARX5ControlMode
@@ -67,7 +67,7 @@ class ARX5Follower(Robot):
         self.config = config
 
         # Logger
-        self.logger = spdlog.ConsoleLogger("ARX5Follower")
+        self.logger = get_logger("ARX5Follower")
 
         # Init arm when connect
         self.arm = None

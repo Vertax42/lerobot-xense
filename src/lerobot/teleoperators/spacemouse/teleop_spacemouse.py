@@ -34,13 +34,12 @@ from queue import Queue
 from typing import Any
 
 import numpy as np
-import spdlog
 
 from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion
+from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion, get_logger
 
 
 class SpacemouseTeleop(Teleoperator):
@@ -70,7 +69,7 @@ class SpacemouseTeleop(Teleoperator):
     def __init__(self, config: SpacemouseConfig):
         super().__init__(config)
         self.config = config
-        self.logger = spdlog.ConsoleLogger("SpacemouseTeleop")
+        self.logger = get_logger("SpacemouseTeleop")
         self._is_connected = False
         self._shm_manager: SharedMemoryManager | None = None
         self._spacemouse = None

@@ -45,11 +45,9 @@ import threading
 import io
 from pathlib import Path
 
-import spdlog
+from lerobot.utils.robot_utils import get_logger
 
-logger = spdlog.ConsoleLogger("calib_vive")
-# Simplify log format: [HH:MM:SS] [level] message
-logger.set_pattern("[%H:%M:%S] [%l] %v")
+logger = get_logger("ViveT_Calib")
 
 
 class StdoutCapture:

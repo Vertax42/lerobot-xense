@@ -20,10 +20,10 @@ from functools import cached_property
 from typing import Any, Sequence
 
 import numpy as np
-import spdlog
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import get_logger
 
 from ..robot import Robot
 from .config_bi_arx5 import BiARX5Config, BiARX5ControlMode
@@ -65,7 +65,7 @@ class BiARX5(Robot):
         self.config = config
 
         # Logger
-        self.logger = spdlog.ConsoleLogger("BiARX5")
+        self.logger = get_logger("BiARX5")
 
         # Init left and right arm when connect
         self.left_arm = None

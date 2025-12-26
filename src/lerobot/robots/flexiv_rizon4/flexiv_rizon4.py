@@ -43,7 +43,8 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
-import spdlog
+
+from lerobot.utils.robot_utils import get_logger
 
 try:
     import flexivrdk
@@ -109,7 +110,7 @@ class FlexivRizon4(Robot):
         self.config = config
 
         # Logger
-        self.logger = spdlog.ConsoleLogger("FlexivRizon4")
+        self.logger = get_logger("FlexivRizon4")
 
         # Robot interface (initialized on connect)
         # Note: Python API only supports NRT (Non-Real-Time) modes, no Scheduler needed
