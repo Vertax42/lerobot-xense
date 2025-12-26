@@ -34,11 +34,16 @@ from queue import Queue
 from typing import Any
 
 import numpy as np
-import spdlog
 
 from ..teleoperator import Teleoperator
 from .config_vive_tracker import ViveTrackerConfig
-from lerobot.utils.robot_utils import normalize_quaternion, slerp_quaternion
+from lerobot.utils.robot_utils import (
+    normalize_quaternion,
+    slerp_quaternion,
+    quaternion_to_matrix,
+    matrix_to_pose7d,
+    get_logger,
+)
 
 
 class PoseData:
@@ -95,7 +100,7 @@ class ViveTrackerTeleop(Teleoperator):
         self.config = config
 
         # Logger
-        self.logger = spdlog.ConsoleLogger("ViveTrackerTeleop")
+        self.logger = get_logger("Vt_Teleop")
 
         # Import pysurvive
         try:
@@ -139,7 +144,13 @@ class ViveTrackerTeleop(Teleoperator):
         # Active tracker
         self._active_tracker: str | None = None
 
-        # Coordinate system alignment
+        # pre-computed vive-to-ee transformation matrix
+        self._vive_to_ee_matrix = quaternion_to_matrix(
+            np.concatenate([self.config.vive_to_ee_pos, self.config.vive_to_ee_quat]),
+            input_format="wxyz"
+        )
+
+        # For coordinate system alignment
         self._vive_init_pose = None
         self._vive_init_matrix = None
         self._vive_init_inv_matrix = None
@@ -241,7 +252,7 @@ class ViveTrackerTeleop(Teleoperator):
 
         filtered_quat = normalize_quaternion(filtered_quat, input_format="wxyz")
 
-        return filtered_pos.astype(np.float32), filtered_quat
+        return filtered_pos, filtered_quat
 
     def connect(
         self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None
@@ -279,7 +290,7 @@ class ViveTrackerTeleop(Teleoperator):
             )
             self._processor_thread.start()
 
-            self.logger.info("Vive Tracker pose tracking started")
+            self.logger.info(" ✅ Vive Tracker pose collector and processor started")
 
             # Wait for devices
             time.sleep(0.5)
@@ -312,11 +323,15 @@ class ViveTrackerTeleop(Teleoperator):
                 raise RuntimeError("Failed to get initial Vive pose")
 
             # Compute transformation matrix
-            # transform_matrix = ee_init_pose * vive_init_pose.inverse()
+            # Formula: action_pose = ee_init @ inv(vive_init @ vive2ee) @ (vive_current @ vive2ee)
+            # Where vive_init and vive_current both need to be multiplied by vive2ee
             ee_init_pose = np.array(current_tcp_pose_quat, dtype=np.float64)
-            ee_init_matrix = self._pose7d_to_matrix(ee_init_pose)
-            vive_init_matrix = self._pose7d_to_matrix(vive_init_pose)
-            vive_init_matrix_inv = self._matrix_inverse(vive_init_matrix)
+            ee_init_matrix = quaternion_to_matrix(ee_init_pose, input_format="wxyz")
+            
+            # vive_init needs to include vive2ee transformation
+            vive_init_matrix_raw = quaternion_to_matrix(vive_init_pose, input_format="wxyz")
+            vive_init_matrix_with_vive2ee = vive_init_matrix_raw @ self._vive_to_ee_matrix
+            vive_init_matrix_inv = np.linalg.inv(vive_init_matrix_with_vive2ee)
 
             self._transform_matrix = ee_init_matrix @ vive_init_matrix_inv
 
@@ -324,9 +339,9 @@ class ViveTrackerTeleop(Teleoperator):
             self.logger.info("Coordinate Transformation Computed")
             self.logger.info("=" * 50)
             self.logger.info(f"  EE init pose: {ee_init_pose}")
-            self.logger.info(f"  Vive init pose: {vive_init_pose}")
+            self.logger.info(f"  Vive init pose (raw): {vive_init_pose}")
             self.logger.info(
-                "  Formula: action_pose = ee_init * vive_init^-1 * vive_current"
+                "  Formula: action = ee_init @ inv(vive_init @ vive2ee) @ (vive_current @ vive2ee)"
             )
             self.logger.info("=" * 50)
 
@@ -354,19 +369,7 @@ class ViveTrackerTeleop(Teleoperator):
                 pose = self._latest_poses.get(self._active_tracker)
 
             if pose is not None:
-                # Convert PoseData to 7D array [x, y, z, qw, qx, qy, qz]
-                return np.array(
-                    [
-                        pose.position[0],
-                        pose.position[1],
-                        pose.position[2],
-                        pose.rotation[0],
-                        pose.rotation[1],
-                        pose.rotation[2],
-                        pose.rotation[3],
-                    ],
-                    dtype=np.float64,
-                )
+                return pose.pose_7d
 
             time.sleep(0.05)
 
@@ -383,14 +386,22 @@ class ViveTrackerTeleop(Teleoperator):
         pass
 
     def get_action(self) -> dict[str, Any]:
-        """Get current tracker pose as action (transformed to robot frame).
+        """
+        Get the current target pose from the Vive Tracker.
+
+        Control scheme:
+        - Vive Tracker pose: Controls robot TCP pose
 
         Data processing pipeline:
-        1. Get latest pose from pysurvive
-        2. Apply position jump filter (if enabled)
-        3. Apply window filter
-        4. Apply coordinate transformation: action = transform_matrix * vive_pose
-        5. Return pose in robot frame
+        1. Get raw data: vive_tracker_pose from Vive Tracker
+        2. Apply window filter to raw pose data
+        3. Transform from Vive Tracker to Flexiv coordinate system
+        4. Return in Flexiv Rizon4 format
+
+        Returns a dictionary with absolute EEF pose (matching Flexiv Rizon4 format):
+        - tcp.x, tcp.y, tcp.z: absolute TCP position (meters) in Flexiv frame (mm -> m)
+        - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion) in Flexiv frame
+        - gripper.pos: absolute gripper position (meters) now set to 0.0 # TODO: add gripper position
         """
         if not self.is_connected:
             raise RuntimeError("Vive Tracker is not connected")
@@ -400,16 +411,16 @@ class ViveTrackerTeleop(Teleoperator):
                 "Transformation matrix not computed. Call connect() first."
             )
 
-        # Get pose for active tracker
+        # Get pose for active vive tracker
         with self._data_lock:
             pose = self._latest_poses.get(self._active_tracker)
 
         if pose is None:
             raise ValueError("No pose data available from Vive Tracker")
 
-        # Extract position and quaternion from PoseData
-        pos = np.array(pose.position, dtype=np.float32)
-        quat = np.array(pose.rotation, dtype=np.float32)  # [qw, qx, qy, qz]
+        # Extract position and quaternion from PoseData (already np.ndarray float64)
+        pos = pose.position.copy()
+        quat = pose.rotation.copy()  # [qw, qx, qy, qz]
 
         # Apply position jump filter
         if self.config.enable_position_jump_filter and self._last_raw_pose is not None:
@@ -427,25 +438,17 @@ class ViveTrackerTeleop(Teleoperator):
         # Apply window filter
         filtered_pos, filtered_quat = self._filter_raw_pose(pos, quat)
 
-        # Build current vive pose as 7D
-        vive_current_pose = np.array(
-            [
-                filtered_pos[0],
-                filtered_pos[1],
-                filtered_pos[2],
-                filtered_quat[0],
-                filtered_quat[1],
-                filtered_quat[2],
-                filtered_quat[3],
-            ],
-            dtype=np.float64,
-        )
+        # Build current vive pose as 7D [x, y, z, qw, qx, qy, qz]
+        vive_current_pose = np.concatenate([filtered_pos, filtered_quat])
 
         # Apply coordinate transformation
-        # action_pose = transform_matrix * vive_current_pose
-        vive_current_matrix = self._pose7d_to_matrix(vive_current_pose)
-        action_matrix = self._transform_matrix @ vive_current_matrix
-        action_pose = self._matrix_to_pose7d(action_matrix)
+        # Formula: action = ee_init @ inv(vive_init @ vive2ee) @ (vive_current @ vive2ee)
+        #        = _transform_matrix @ (vive_current @ vive2ee)
+        vive_current_matrix = quaternion_to_matrix(vive_current_pose, input_format="wxyz")
+        vive_current_with_vive2ee = vive_current_matrix @ self._vive_to_ee_matrix
+        action_matrix = self._transform_matrix @ vive_current_with_vive2ee
+
+        action_pose = matrix_to_pose7d(action_matrix, output_format="wxyz")
 
         return {
             "tcp.x": float(action_pose[0]),
@@ -455,6 +458,7 @@ class ViveTrackerTeleop(Teleoperator):
             "tcp.qx": float(action_pose[4]),
             "tcp.qy": float(action_pose[5]),
             "tcp.qz": float(action_pose[6]),
+            "gripper.pos": float(0.0),
         }
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:

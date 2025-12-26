@@ -24,12 +24,13 @@ import time
 from collections import deque
 
 import numpy as np
-import spdlog
 
 from lerobot.teleoperators.vive_tracker import ViveTrackerConfig, ViveTrackerTeleop
+from lerobot.teleoperators.vive_tracker.constants import EE_INIT_POS, EE_INIT_QUAT_WXYZ
+from lerobot.utils.robot_utils import get_logger
 
 # Get logger for this module
-logger = spdlog.ConsoleLogger("ViveTrackerTest")
+logger = get_logger("ViveTrackerTest")
 
 # Global flag for graceful shutdown
 running = True
@@ -321,7 +322,13 @@ def print_action_data(action: dict, update_count: int, fps: float = 0.0, timing:
     print(f"{'='*75}\n")
 
 
-def run_terminal_test(rate_hz: float = 100.0, config_path: str = None, lh_config: str = None, use_rerun: bool = False):
+def run_terminal_test(
+    rate_hz: float = 100.0,
+    config_path: str = None,
+    lh_config: str = None,
+    use_rerun: bool = False,
+    init_pose: list = None,
+):
     """
     Run terminal test for ViveTrackerTeleop.
 
@@ -330,6 +337,7 @@ def run_terminal_test(rate_hz: float = 100.0, config_path: str = None, lh_config
         config_path: Optional pysurvive config file path
         lh_config: Optional lighthouse configuration
         use_rerun: Enable Rerun visualization
+        init_pose: Initial TCP pose [x, y, z, qw, qx, qy, qz], defaults to [0.5, 0, 0.3, 1, 0, 0, 0]
     """
     global running
 
@@ -369,8 +377,16 @@ def run_terminal_test(rate_hz: float = 100.0, config_path: str = None, lh_config
 
     teleop = ViveTrackerTeleop(config)
 
+    # Initial TCP pose for coordinate transformation
+    # Uses constants from constants.py or user-provided values
+    if init_pose is None:
+        tcp_pose = np.concatenate([EE_INIT_POS, EE_INIT_QUAT_WXYZ])
+    else:
+        tcp_pose = np.array(init_pose)  # [x, y, z, qw, qx, qy, qz]
+    logger.info(f"Initial TCP pose: {tcp_pose}")
+
     try:
-        teleop.connect()
+        teleop.connect(current_tcp_pose_quat=tcp_pose)
     except Exception as e:
         logger.error(f"Failed to connect: {e}")
         if viz:
@@ -475,7 +491,7 @@ def run_terminal_test(rate_hz: float = 100.0, config_path: str = None, lh_config
     return True
 
 
-def run_benchmark(config_path: str = None, lh_config: str = None):
+def run_benchmark(config_path: str = None, lh_config: str = None, init_pose: list = None):
     """
     Run benchmark to test ViveTrackerTeleop throughput.
     Measures get_action() call rate without rate limiting.
@@ -501,8 +517,15 @@ def run_benchmark(config_path: str = None, lh_config: str = None):
 
     teleop = ViveTrackerTeleop(config)
 
+    # Initial TCP pose for coordinate transformation
+    if init_pose is None:
+        tcp_pose = np.concatenate([EE_INIT_POS, EE_INIT_QUAT_WXYZ])
+    else:
+        tcp_pose = np.array(init_pose)  # [x, y, z, qw, qx, qy, qz]
+    logger.info(f"Initial TCP pose: {tcp_pose}")
+
     try:
-        teleop.connect()
+        teleop.connect(current_tcp_pose_quat=tcp_pose)
     except Exception as e:
         logger.error(f"Failed to connect: {e}")
         return False
@@ -625,12 +648,26 @@ def main():
         action="store_true",
         help="Run benchmark mode to test maximum throughput (no rate limiting)",
     )
+    parser.add_argument(
+        "--init-pose",
+        type=float,
+        nargs=7,
+        default=None,
+        metavar=("X", "Y", "Z", "QW", "QX", "QY", "QZ"),
+        help="Initial TCP pose [x, y, z, qw, qx, qy, qz] for coordinate transformation (default: from constants.py)",
+    )
     args = parser.parse_args()
 
     if args.benchmark:
-        run_benchmark(config_path=args.config, lh_config=args.lh)
+        run_benchmark(config_path=args.config, lh_config=args.lh, init_pose=args.init_pose)
     else:
-        run_terminal_test(rate_hz=args.rate, config_path=args.config, lh_config=args.lh, use_rerun=args.rerun)
+        run_terminal_test(
+            rate_hz=args.rate,
+            config_path=args.config,
+            lh_config=args.lh,
+            use_rerun=args.rerun,
+            init_pose=args.init_pose,
+        )
 
 
 if __name__ == "__main__":

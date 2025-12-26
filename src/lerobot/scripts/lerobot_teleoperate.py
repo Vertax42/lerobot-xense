@@ -61,7 +61,6 @@ import math
 from typing import Any
 
 import rerun as rr
-import spdlog
 
 from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig  # noqa: F401
 from lerobot.cameras.realsense.configuration_realsense import (
@@ -101,15 +100,16 @@ from lerobot.teleoperators import (  # noqa: F401
     mock_teleop,
     spacemouse,
     pico4,
+    vive_tracker,
 )
 
 from lerobot.utils.import_utils import register_third_party_devices
-from lerobot.utils.robot_utils import busy_wait
+from lerobot.utils.robot_utils import busy_wait, get_logger
 from lerobot.utils.utils import move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
 # Create global logger for teleoperate script
-logger = spdlog.ConsoleLogger("Teleoperate")
+logger = get_logger("Teleoperate")
 
 
 @dataclass
@@ -705,6 +705,99 @@ def pico4_teleop_loop(
             return
 
 
+def vive_tracker_teleop_loop(
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],
+    display_data: bool = False,
+    duration: float | None = None,
+    dryrun: bool = False,
+):
+    """
+    Teleop loop for Vive Tracker with Flexiv Rizon4 robot.
+
+    Vive Tracker outputs actions directly in Flexiv format:
+    - tcp.x, tcp.y, tcp.z: absolute TCP position (meters)
+    - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion)
+
+    Control scheme:
+    - Vive Tracker provides absolute 6-DoF pose tracking
+    - No enable/disable control (always active after connect)
+    - Coordinate transformation: action = ee_init @ inv(vive_init @ vive2ee) @ (vive_current @ vive2ee)
+    """
+    display_len = max(len(key) for key in robot.action_features)
+    start = time.perf_counter()
+
+    while True:
+        loop_start = time.perf_counter()
+
+        # Get robot observation (for visualization)
+        obs = robot.get_observation()
+
+        # Get teleop action from Vive Tracker
+        try:
+            raw_action = teleop.get_action()
+        except Exception as e:
+            logger.error(f"Error getting Vive Tracker action: {e}")
+            # On error, skip this iteration
+            dt_s = time.perf_counter() - loop_start
+            busy_wait(1 / fps - dt_s)
+            continue
+
+        # Process teleop action through pipeline (usually identity)
+        teleop_action = teleop_action_processor((raw_action, obs))
+
+        # For Vive Tracker + Flexiv, action is already in correct format
+        # No conversion needed (same as Pico4)
+        robot_action_to_send = teleop_action
+
+        # Send action to robot
+        if not dryrun:
+            try:
+                _ = robot.send_action(robot_action_to_send)
+            except Exception as e:
+                logger.error(f"Error sending action to robot: {e}")
+
+        if display_data:
+            # Process robot observation through pipeline
+            obs_transition = robot_observation_processor(obs)
+
+            log_rerun_data(
+                observation=obs_transition,
+                action=teleop_action,
+            )
+
+            print("\n" + "-" * (display_len + 10))
+            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+            # Display the final robot action that was sent
+            for motor, value in robot_action_to_send.items():
+                print(f"{motor:<{display_len}} | {value:>7.4f}")
+            move_cursor_up(len(robot_action_to_send) + 5)
+
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+        loop_s = time.perf_counter() - loop_start
+
+        # Print status line
+        action_str = ", ".join([f"{k}={v:.4f}" for k, v in robot_action_to_send.items()])
+        if dryrun:
+            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] | {action_str}", end="", flush=True)
+        else:
+            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {action_str}", end="", flush=True)
+
+        if duration is not None and time.perf_counter() - start >= duration:
+            return
+
+
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     logger.info(pformat(asdict(cfg)))
@@ -936,6 +1029,100 @@ def teleoperate(cfg: TeleoperateConfig):
                 except Exception as e:
                     logger.error(f"Error disconnecting Spacemouse: {e}\n{traceback.format_exc()}")
             
+            if robot is not None:
+                try:
+                    if robot.is_connected:
+                        robot.disconnect()
+                        logger.info("Robot safely disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting robot: {e}\n{traceback.format_exc()}")
+                    # Force cleanup even if disconnect fails
+                    try:
+                        if hasattr(robot, '_robot') and robot._robot is not None:
+                            robot._robot.Stop()
+                    except Exception:
+                        pass
+    # Check if this is Flexiv Rizon4 robot with vive_tracker
+    elif cfg.robot.type == "flexiv_rizon4" and cfg.teleop.type == "vive_tracker":
+        logger.info("Detected Flexiv Rizon4 robot with Vive Tracker, using specialized teleop loop")
+
+        robot = None
+        teleop = None
+
+        try:
+            # Create robot instance
+            robot = make_robot_from_config(cfg.robot)
+
+            # Ensure robot is in CARTESIAN_MOTION_FORCE mode for vive_tracker teleop
+            from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
+            if robot.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
+                raise ValueError(
+                    f"Vive Tracker teleoperation requires CARTESIAN_MOTION_FORCE mode, "
+                    f"but robot is configured with {robot.config.control_mode}"
+                )
+
+            # Connect to robot with error handling
+            try:
+                robot.connect(go_to_start=False)
+                logger.info(f"Start TCP pose (quat): {robot.get_current_tcp_pose_quat()}")
+            except Exception as e:
+                logger.error(f"Failed to connect to robot: {e}\n{traceback.format_exc()}")
+                raise
+
+            teleop_action_processor, robot_action_processor, robot_observation_processor = (
+                make_default_processors()
+            )
+
+            # Connect to teleoperator with error handling
+            try:
+                teleop = make_teleoperator_from_config(cfg.teleop)
+                # Vive Tracker requires current TCP pose for coordinate transformation
+                # get_current_tcp_pose_quat() returns 8D [x,y,z,qw,qx,qy,qz,gripper], take first 7
+                current_tcp_pose = robot.get_current_tcp_pose_quat()[:7]
+                teleop.connect(current_tcp_pose_quat=current_tcp_pose)
+                logger.info("Connected to Vive Tracker")
+            except Exception as e:
+                logger.error(f"Failed to connect to Vive Tracker: {e}\n{traceback.format_exc()}")
+                raise
+
+            # Run teleoperation loop
+            try:
+                vive_tracker_teleop_loop(
+                    teleop=teleop,
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                    dryrun=cfg.dryrun,
+                )
+            except KeyboardInterrupt:
+                logger.info("Teleoperation interrupted by user")
+            except Exception as e:
+                logger.error(f"Error during teleoperation loop: {e}\n{traceback.format_exc()}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Error in teleoperation setup or execution: {e}\n{traceback.format_exc()}")
+            logger.error(f"Teleoperation failed\n{traceback.format_exc()}")
+        finally:
+            # Safe disconnect - ensure both robot and teleop are disconnected
+            if cfg.display_data:
+                try:
+                    rr.rerun_shutdown()
+                except Exception as e:
+                    logger.warn(f"Error shutting down rerun: {e}")
+
+            if teleop is not None:
+                try:
+                    if teleop.is_connected:
+                        teleop.disconnect()
+                        logger.info("Vive Tracker disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting Vive Tracker: {e}\n{traceback.format_exc()}")
+
             if robot is not None:
                 try:
                     if robot.is_connected:

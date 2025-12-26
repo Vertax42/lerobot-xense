@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from ..config import TeleoperatorConfig
@@ -53,6 +53,14 @@ class ViveTrackerConfig(TeleoperatorConfig):
     required_trackers: int = 1  # Number of trackers required
 
     # Filter settings
-    filter_window_size: int = 1  # Moving average filter window size
-    position_jump_threshold: float = 0.05  # Max position change per frame (meters)
+    filter_window_size: int = 3  # Moving average filter window size
+    position_jump_threshold: float = 0.1  # Max position change per frame (meters)
     enable_position_jump_filter: bool = False  # Enable position jump filtering
+
+    # Coordinate system alignment
+    vive_to_ee_pos: list = field(
+        default_factory=lambda: [0.0, 0.0, 0.16] # [x, y, z] in meters
+    )
+    vive_to_ee_quat: list = field(
+        default_factory=lambda: [0.676, -0.207, -0.207, -0.676]
+    ) # [qw, qx, qy, qz]
