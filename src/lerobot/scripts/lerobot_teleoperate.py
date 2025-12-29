@@ -86,6 +86,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xense_flare,  # noqa: F401
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -491,12 +492,14 @@ def spacemouse_teleop_loop(
     display_data: bool = False,
     duration: float | None = None,
     dryrun: bool = False,
+    debug_timing: bool = False,
 ):
     """
     Teleop loop for Spacemouse.
     """
     display_len = max(len(key) for key in robot.action_features)
     start = time.perf_counter()
+    timing_stats = {"obs_times": [], "loop_times": []}
     
     # Check if this is Flexiv Rizon4 robot in CARTESIAN_MOTION_FORCE mode (needs special conversion)
     from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
@@ -510,11 +513,11 @@ def spacemouse_teleop_loop(
     while True:
         loop_start = time.perf_counter()
 
-        # Get robot observation
-        # Not really needed for now other than for visualization
-        # teleop_action_processor can take None as an observation
-        # given that it is the identity processor as default
+        # Get robot observation with timing
+        obs_start = time.perf_counter()
         obs = robot.get_observation()
+        obs_time = time.perf_counter() - obs_start
+        timing_stats["obs_times"].append(obs_time * 1000)
 
         # Check for reset event (both buttons pressed simultaneously - immediate reset like original code)
         if teleop.name == "spacemouse":
@@ -570,29 +573,37 @@ def spacemouse_teleop_loop(
         if display_data:
             # Process robot observation through pipeline
             obs_transition = robot_observation_processor(obs)
-
+            
+            # Log raw observation directly (including images from XenseFlare)
             log_rerun_data(
-                observation=obs_transition,
+                observation=obs,  # Use raw obs to ensure images are included
                 action=teleop_action,
             )
 
-            print("\n" + "-" * (display_len + 10))
-            print(f"{'NAME':<{display_len}} | {'NORM':>7}")
-            # Display the final robot action that was sent
-            for motor, value in robot_action_to_send.items():
-                print(f"{motor:<{display_len}} | {value:>7.3f}")
-            move_cursor_up(len(robot_action_to_send) + 5)
+            # Only show terminal display if not in debug_timing mode
+            if not debug_timing:
+                print("\n" + "-" * (display_len + 10))
+                print(f"{'NAME':<{display_len}} | {'NORM':>7}")
+                # Display the final robot action that was sent
+                for motor, value in robot_action_to_send.items():
+                    print(f"{motor:<{display_len}} | {value:>7.3f}")
+                move_cursor_up(len(robot_action_to_send) + 5)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
         loop_s = time.perf_counter() - loop_start
-        
-        # Print time and actions (key-value pairs)
-        action_str = ", ".join([f"{k}={v:.4f}" for k, v in robot_action_to_send.items()])
-        if dryrun:
-            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] Actions: {action_str}", end="", flush=True)
-        else:
-            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | Actions: {action_str}", end="", flush=True)
+        timing_stats["loop_times"].append(loop_s * 1000)
+
+        if debug_timing:
+            # Display detailed timing info (clean single-line output)
+            print(f"\r\033[K🔍 obs: {obs_time*1000:5.1f}ms | loop: {loop_s*1000:5.1f}ms | target: {1000/fps:.1f}ms | eff: {(1/fps)/loop_s*100:5.1f}%", end="", flush=True)
+        elif not display_data:
+            # Print time and actions (key-value pairs) only when not display_data
+            action_str = ", ".join([f"{k}={v:.4f}" for k, v in robot_action_to_send.items()])
+            if dryrun:
+                print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] Actions: {action_str}", end="", flush=True)
+            else:
+                print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | Actions: {action_str}", end="", flush=True)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return
@@ -798,6 +809,267 @@ def vive_tracker_teleop_loop(
             return
 
 
+def xense_flare_teleop_loop(
+    robot: Robot,
+    fps: int,
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],
+    display_data: bool = False,
+    duration: float | None = None,
+    debug_timing: bool = False,
+):
+    """
+    Data collection loop for Xense Flare gripper.
+
+    Xense Flare is a pure observation device (similar to teach mode).
+    This loop continuously reads multi-modal sensor data:
+    - Vive Tracker: 6DoF pose (tcp.x/y/z/qw/qx/qy/qz)
+    - Wrist Camera: RGB image
+    - Tactile Sensors: Tactile images
+    - Gripper: Position
+
+    No actions are sent to the robot - it is manually operated.
+    """
+    import numpy as np
+    import warnings
+    
+    # Suppress Rerun's numpy compatibility warnings (doesn't affect functionality)
+    warnings.filterwarnings("ignore", message=".*RotationQuatBatch.*")
+    warnings.filterwarnings("ignore", category=DeprecationWarning, module="rerun")
+    
+    start = time.perf_counter()
+    timing_stats = {
+        "vive_times": [],
+        "gripper_times": [],
+        "camera_times": [],
+        "sensor_times": [],
+        "total_obs_times": [],
+        "loop_times": [],
+    }
+    
+    # Trajectory visualization settings
+    trajectory_points: list[np.ndarray] = []
+    max_trajectory_points = 500
+    trajectory_line_radius = 0.005
+
+    while True:
+        loop_start = time.perf_counter()
+
+        # Time the complete observation acquisition
+        obs_start = time.perf_counter()
+
+        try:
+            # Get all observations from the robot
+            obs = robot.get_observation()
+        except Exception as e:
+            logger.error(f"Error getting observation: {e}")
+            dt_s = time.perf_counter() - loop_start
+            busy_wait(1 / fps - dt_s)
+            continue
+
+        total_obs_time = time.perf_counter() - obs_start
+        timing_stats["total_obs_times"].append(total_obs_time * 1000)
+
+        # Extract action from observation (for logging purposes)
+        # Xense Flare's "action" is just the gripper position
+        raw_action = {}
+        if "gripper.pos" in obs:
+            raw_action["gripper.pos"] = obs["gripper.pos"]
+
+        if display_data:
+            # Process robot observation through pipeline
+            obs_transition = robot_observation_processor(obs)
+
+            log_rerun_data(
+                observation=obs_transition,
+                action=raw_action,
+            )
+            
+            # Log tracker pose and trajectory visualization
+            if "tcp.x" in obs and "tcp.y" in obs and "tcp.z" in obs:
+                pos = np.array([obs["tcp.x"], obs["tcp.y"], obs["tcp.z"]])
+                rot_xyzw = [
+                    obs.get("tcp.qx", 0.0),
+                    obs.get("tcp.qy", 0.0),
+                    obs.get("tcp.qz", 0.0),
+                    obs.get("tcp.qw", 1.0),
+                ]
+                
+                # Log 3D transform
+                rr.log(
+                    "tracker/pose",
+                    rr.Transform3D(
+                        translation=pos.tolist(),
+                        rotation=rr.Quaternion(xyzw=rot_xyzw),
+                    ),
+                )
+                
+                # Log current position as a red point
+                rr.log("tracker/point", rr.Points3D([pos], radii=[0.015], colors=[[255, 50, 50]]))
+                
+                # Log coordinate axes (XYZ arrows)
+                qx, qy, qz, qw = rot_xyzw[0], rot_xyzw[1], rot_xyzw[2], rot_xyzw[3]
+                # Quaternion to rotation matrix
+                R = np.array([
+                    [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+                    [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
+                    [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)]
+                ])
+                axis_length = 0.08
+                x_axis = R @ np.array([axis_length, 0, 0])
+                y_axis = R @ np.array([0, axis_length, 0])
+                z_axis = R @ np.array([0, 0, axis_length])
+                
+                rr.log(
+                    "tracker/axes",
+                    rr.Arrows3D(
+                        origins=np.array([pos, pos, pos]),
+                        vectors=np.array([x_axis, y_axis, z_axis]),
+                        colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]]),  # RGB for XYZ
+                        radii=0.003,
+                    ),
+                )
+                
+                # Trajectory visualization
+                trajectory_points.append(pos.copy())
+                
+                # Keep only the last max_trajectory_points
+                if len(trajectory_points) > max_trajectory_points:
+                    trajectory_points.pop(0)
+                
+                # Log trajectory as line strip
+                if len(trajectory_points) >= 2:
+                    points_array = np.array(trajectory_points)
+                    rr.log("tracker/trajectory", rr.LineStrips3D([points_array], radii=[trajectory_line_radius]))
+            
+            # Log lighthouse poses (from vive_tracker directly)
+            vive_tracker = robot.get_vive_tracker()
+            if vive_tracker is not None:
+                try:
+                    all_poses = vive_tracker.get_pose()
+                    if all_poses:
+                        for device_name, pose_data in all_poses.items():
+                            if device_name.startswith("LH") and pose_data is not None:
+                                lh_pos = list(pose_data.position)
+                                lh_rot = pose_data.rotation  # [qw, qx, qy, qz]
+                                # Convert from [qw, qx, qy, qz] to [qx, qy, qz, qw]
+                                lh_rot_xyzw = [lh_rot[1], lh_rot[2], lh_rot[3], lh_rot[0]]
+                                
+                                # Color: LH0=green, LH1=blue, others=orange
+                                if device_name == "LH0":
+                                    color = [0, 255, 100]
+                                elif device_name == "LH1":
+                                    color = [100, 180, 255]
+                                else:
+                                    color = [255, 200, 100]
+                                
+                                base_path = f"lighthouse/{device_name}"
+                                
+                                # Log 3D transform
+                                rr.log(
+                                    f"{base_path}/pose",
+                                    rr.Transform3D(
+                                        translation=lh_pos,
+                                        rotation=rr.Quaternion(xyzw=lh_rot_xyzw),
+                                    ),
+                                )
+                                
+                                # Log as large point with label
+                                rr.log(
+                                    f"{base_path}/point",
+                                    rr.Points3D([lh_pos], radii=[0.05], colors=[color], labels=[device_name]),
+                                )
+                                
+                                # Log coordinate axes
+                                qx, qy, qz, qw = lh_rot_xyzw[0], lh_rot_xyzw[1], lh_rot_xyzw[2], lh_rot_xyzw[3]
+                                R = np.array([
+                                    [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
+                                    [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
+                                    [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)]
+                                ])
+                                lh_axis_length = 0.15
+                                lh_x_axis = R @ np.array([lh_axis_length, 0, 0])
+                                lh_y_axis = R @ np.array([0, lh_axis_length, 0])
+                                lh_z_axis = R @ np.array([0, 0, lh_axis_length])
+                                
+                                rr.log(
+                                    f"{base_path}/axes",
+                                    rr.Arrows3D(
+                                        origins=np.array([lh_pos, lh_pos, lh_pos]),
+                                        vectors=np.array([lh_x_axis, lh_y_axis, lh_z_axis]),
+                                        colors=np.array([[255, 0, 0], [0, 255, 0], [0, 0, 255]]),
+                                        radii=0.005,
+                                    ),
+                                )
+                except Exception:
+                    pass  # Lighthouse visualization is optional
+
+            if not debug_timing:
+                # Display observation data
+                col_width = 25
+
+                # Print header
+                print("\n" + "-" * (col_width + 15))
+                print(f"{'OBSERVATION':<{col_width}} | {'VALUE':>12}")
+                print("-" * (col_width + 15))
+
+                # Display pose data
+                pose_keys = ["tcp.x", "tcp.y", "tcp.z", "tcp.qw", "tcp.qx", "tcp.qy", "tcp.qz"]
+                for key in pose_keys:
+                    if key in obs:
+                        print(f"{key:<{col_width}} | {obs[key]:>12.4f}")
+
+                # Display gripper
+                if "gripper.pos" in obs:
+                    print(f"{'gripper.pos':<{col_width}} | {obs['gripper.pos']:>12.4f}")
+
+                # Count images
+                image_count = sum(1 for k, v in obs.items() if hasattr(v, 'shape') and len(v.shape) >= 2)
+                print(f"{'[Images]':<{col_width}} | {image_count:>12}", flush=True)
+
+                # Move cursor up
+                move_cursor_up(len(pose_keys) + 4)
+
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+        loop_s = time.perf_counter() - loop_start
+        timing_stats["loop_times"].append(loop_s * 1000)
+
+        if debug_timing:
+            # Display timing info
+            print()
+            print("🔍 XENSE FLARE TIMING DEBUG")
+            print("=" * 50)
+            print(f"📊 Total observation: {total_obs_time * 1000:.1f}ms")
+            print(f"⏱️  Loop time:        {loop_s * 1000:.1f}ms")
+            print(f"🎯 Target period:     {1000/fps:.1f}ms")
+            print(f"📈 Loop efficiency:   {(1000/fps)/(loop_s * 1000)*100:.1f}%")
+            print("=" * 50, flush=True)
+
+            # Move cursor up to refresh in place
+            move_cursor_up(8)
+        else:
+            # Simple status line
+            pose_str = ""
+            if "tcp.x" in obs and "tcp.y" in obs and "tcp.z" in obs:
+                pose_str = f"pos=[{obs['tcp.x']:.3f}, {obs['tcp.y']:.3f}, {obs['tcp.z']:.3f}]"
+            gripper_str = f"grip={obs.get('gripper.pos', 0.0):.2f}"
+            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {pose_str} | {gripper_str}", end="", flush=True)
+
+        if duration is not None and time.perf_counter() - start >= duration:
+            # Print final statistics before exiting
+            if len(timing_stats["total_obs_times"]) > 10:
+                print("\n=== FINAL TIMING REPORT ===")
+                all_total = timing_stats["total_obs_times"]
+                all_loops = timing_stats["loop_times"]
+
+                print(f"Total samples: {len(all_total)}")
+                print(f"Total obs - avg: {sum(all_total)/len(all_total):.2f}ms")
+                print(f"Loop time - avg: {sum(all_loops)/len(all_loops):.2f}ms")
+            return
+
+
 @parser.wrap()
 def teleoperate(cfg: TeleoperateConfig):
     logger.info(pformat(asdict(cfg)))
@@ -806,8 +1078,67 @@ def teleoperate(cfg: TeleoperateConfig):
     if cfg.display_data:
         init_rerun(session_name="teleoperation")
 
+    # Check if this is Xense Flare (data collection gripper - no teleoperator needed)
+    if cfg.robot.type == "xense_flare":
+        logger.info("Detected Xense Flare data collection gripper")
+
+        robot = None
+
+        try:
+            # Create robot instance
+            robot = make_robot_from_config(cfg.robot)
+
+            # Connect to robot
+            try:
+                robot.connect()
+                logger.info("✅ Xense Flare connected")
+                logger.info(f"   MAC: {robot.config.mac_addr}")
+                logger.info(f"   Sensors: {list(robot._sensors.keys())}")
+                logger.info(f"   Camera: {'Yes' if robot._camera else 'No'}")
+                logger.info(f"   Gripper: {'Yes' if robot._gripper else 'No'}")
+                logger.info(f"   Vive Tracker: {'Yes' if robot._vive_tracker else 'No'}")
+            except Exception as e:
+                logger.error(f"Failed to connect to Xense Flare: {e}\n{traceback.format_exc()}")
+                raise
+
+            _, _, robot_observation_processor = make_default_processors()
+
+            # Run data collection loop
+            try:
+                xense_flare_teleop_loop(
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    robot_observation_processor=robot_observation_processor,
+                    debug_timing=cfg.debug_timing,
+                )
+            except KeyboardInterrupt:
+                logger.info("Data collection interrupted by user")
+            except Exception as e:
+                logger.error(f"Error during data collection: {e}\n{traceback.format_exc()}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Error in Xense Flare setup: {e}\n{traceback.format_exc()}")
+        finally:
+            # Safe disconnect
+            if cfg.display_data:
+                try:
+                    rr.rerun_shutdown()
+                except Exception as e:
+                    logger.warn(f"Error shutting down rerun: {e}")
+
+            if robot is not None:
+                try:
+                    if robot.is_connected:
+                        robot.disconnect()
+                        logger.info("✅ Xense Flare disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting Xense Flare: {e}\n{traceback.format_exc()}")
+
     # Check if this is ARX5 robot (single arm or bimanual)
-    if cfg.robot.type in ("bi_arx5", "arx5_follower"):
+    elif cfg.robot.type in ("bi_arx5", "arx5_follower"):
         mode = "bimanual" if cfg.robot.type == "bi_arx5" else "single-arm"
         logger.info(f"Detected ARX5 robot ({mode}), using specialized teleop loop")
 
@@ -833,6 +1164,7 @@ def teleoperate(cfg: TeleoperateConfig):
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
                     dryrun=cfg.dryrun,
+                    debug_timing=cfg.debug_timing,
                 )
             except KeyboardInterrupt:
                 pass
@@ -1003,6 +1335,7 @@ def teleoperate(cfg: TeleoperateConfig):
                     robot_action_processor=robot_action_processor,
                     robot_observation_processor=robot_observation_processor,
                     dryrun=cfg.dryrun,
+                    debug_timing=cfg.debug_timing,
                 )
             except KeyboardInterrupt:
                 logger.info("Teleoperation interrupted by user")

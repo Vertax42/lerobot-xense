@@ -27,9 +27,12 @@ lerobot-teleoperate \
 ```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
+    --robot.xense_flare_mac_addr="e2b26adbb104" \
     --robot.control_mode=cartesian_motion_force_control \
     --teleop.type=spacemouse \
-    --fps=100
+    --fps=30 \
+    --display_data=true \
+    --debug_timing=true
 ```
 
 ```bash
@@ -38,6 +41,16 @@ lerobot-teleoperate \
     --robot.control_mode=cartesian_motion_force_control \
     --teleop.type=pico4 \
     --fps=100
+```
+
+```bash
+lerobot-teleoperate \
+    --robot.type=xense_flare \
+    --robot.mac_addr="6ebbc5f53240" \
+    --teleop.type=mock_teleop \
+    --fps=30 \
+    --display_data=true \
+    --debug_timing=true
 ```
 
 ## BiARX5 Robot lerobot-record command
