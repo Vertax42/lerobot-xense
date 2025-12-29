@@ -64,6 +64,14 @@ def make_robot_from_config(config: RobotConfig) -> Robot:
         from .arx5_follower import ARX5Follower
 
         return ARX5Follower(config)
+    elif config.type == "flexiv_rizon4":
+        from .flexiv_rizon4 import FlexivRizon4
+
+        return FlexivRizon4(config)
+    elif config.type == "xense_flare":
+        from .xense_flare import XenseFlare
+
+        return XenseFlare(config)
     else:
         try:
             return cast(Robot, make_device_from_device_class(config))

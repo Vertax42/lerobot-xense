@@ -24,7 +24,7 @@ import flexivrdk
 from lerobot.cameras.configs import CameraConfig
 from lerobot.robots.config import RobotConfig
 
-from .gripper import GripperConfig, GripperType
+from lerobot.robots.flexiv_rizon4.config_flare_gripper import FlareGripperConfig, SensorOutputType
 
 
 class ControlMode(str, Enum):
@@ -100,7 +100,8 @@ class FlexivRizon4Config(RobotConfig):
     # Connection behavior
     go_to_start: bool = True  # If True, move robot to start position after connecting. If False, stay at current position.
 
-    # Camera configurations
+    # Camera configurations (external cameras, e.g., scene cameras)
+    # Note: When using xense_flare, wrist camera comes from XenseFlareConfig
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     # Joint motion constraints (from examples: MAX_VEL = [2.0] * DoF, MAX_ACC = [3.0] * DoF)
@@ -179,12 +180,39 @@ class FlexivRizon4Config(RobotConfig):
     zero_ft_sensor_on_connect: bool = True
 
     # Log level for the robot SDK
-    log_level: str = "WARNING"  # TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
+    log_level: str = "INFO"  # TRACE, DEBUG, INFO, WARNING, ERROR, CRITICAL
 
-    # Gripper configuration
-    # Set gripper_type to GripperType.NONE to disable gripper
-    # Available types: NONE, FLEXIV_GRAV
-    gripper: GripperConfig = field(default_factory=GripperConfig)
+    # ========== Flare Gripper (end-effector) settings ==========
+    # Whether to use the Flare Gripper end-effector
+    # If False, flare_gripper will be None and no gripper functionality is available
+    use_gripper: bool = True
+    
+    # Gripper identification (MAC address / serial number)
+    flare_gripper_mac_addr: str = "e2b26adbb104"
+    
+    # Camera settings (wrist camera resolution)
+    flare_gripper_cam_size: tuple[int, int] = (640, 480)
+    
+    # Tactile sensor settings
+    flare_gripper_rectify_size: tuple[int, int] = (400, 700)
+    flare_gripper_sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
+    flare_gripper_sensor_keys: dict[str, str] = field(default_factory=lambda: {
+        "OG000454": "right_tactile",
+        "OG000447": "left_tactile",
+    })
+    
+    # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
+    flare_gripper_max_pos: float = 85.0
+    
+    # Gripper control parameters for set_position()
+    flare_gripper_v_max: float = 80.0  # Maximum velocity mm/s
+    flare_gripper_f_max: float = 20.0  # Maximum force N
+    
+    # Initialize gripper to fully open on connect
+    flare_gripper_init_open: bool = True
+
+    # Auto-created in __post_init__ from flare_gripper_* parameters (do not set directly)
+    flare_gripper: FlareGripperConfig | None = field(default=None, init=False)
 
     def __post_init__(self):
         super().__post_init__()
@@ -228,3 +256,19 @@ class FlexivRizon4Config(RobotConfig):
             raise ValueError(
                 f"start_vel_scale must be between 1 and 100, got {self.start_vel_scale}"
             )
+
+        # Create FlareGripperConfig from exposed parameters (only if use_gripper=True)
+        if self.use_gripper:
+            self.flare_gripper = FlareGripperConfig(
+                mac_addr=self.flare_gripper_mac_addr,
+                cam_size=self.flare_gripper_cam_size,
+                rectify_size=self.flare_gripper_rectify_size,
+                sensor_output_type=self.flare_gripper_sensor_output_type,
+                sensor_keys=self.flare_gripper_sensor_keys,
+                gripper_max_pos=self.flare_gripper_max_pos,
+                gripper_v_max=self.flare_gripper_v_max,
+                gripper_f_max=self.flare_gripper_f_max,
+                init_open=self.flare_gripper_init_open,
+            )
+        else:
+            self.flare_gripper = None

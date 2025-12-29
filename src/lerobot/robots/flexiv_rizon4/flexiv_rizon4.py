@@ -58,8 +58,8 @@ from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 
 from ..robot import Robot
+from .flare_gripper import FlareGripper
 from .config_flexiv_rizon4 import ControlMode, FlexivRizon4Config
-from .gripper import Gripper, GripperType, make_gripper
 
 # Alias for flexivrdk.Mode for convenience
 Mode = flexivrdk.Mode
@@ -117,10 +117,9 @@ class FlexivRizon4(Robot):
         self._robot: flexivrdk.Robot | None = None
         self._is_connected = False
 
-        # Gripper interface (using abstraction layer)
-        self._gripper: Gripper = make_gripper(config.gripper)
-        self._has_gripper = config.gripper.gripper_type != GripperType.NONE
-
+        if config.use_gripper:
+            self._flare_gripper = FlareGripper(config.flare_gripper)
+            
         # Control state - stores the current flexivrdk.Mode
         self._current_mode: flexivrdk.Mode | None = None
 
@@ -138,9 +137,6 @@ class FlexivRizon4(Robot):
             self._init_cartesian_mode()
         else:
             raise ValueError(f"Unsupported control_mode: {config.control_mode}")
-
-        # Cameras
-        self.cameras = make_cameras_from_configs(config.cameras)
 
         np.set_printoptions(precision=6, suppress=True)
 
@@ -288,10 +284,19 @@ class FlexivRizon4(Robot):
 
     @property
     def _cameras_ft(self) -> dict[str, tuple]:
-        return {
-            cam: (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-            for cam in self.cameras
-        }
+        """Return camera/image features from Flare GriNonepper and external cameras."""
+        features = {}
+        
+        if self._flare_gripper and self.config.use_gripper:
+            features["wrist_cam"] = (self._flare_gripper.config.cam_size[1], self._flare_gripper.config.cam_size[0], 3)
+            features["left_tactile"] = (self._flare_gripper.config.rectify_size[1], self._flare_gripper.config.rectify_size[0], 3)
+            features["right_tactile"] = (self._flare_gripper.config.rectify_size[1], self._flare_gripper.config.rectify_size[0], 3)
+        
+        # External cameras (e.g., scene cameras)
+        for cam in self.cameras:
+            features[cam] = (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
+        
+        return features
 
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
@@ -448,16 +453,16 @@ class FlexivRizon4(Robot):
 
             self.logger.info("Robot is now operational.")
 
-            # Connect gripper (using abstraction layer)
-            if self._has_gripper:
-                self._gripper.connect(self._robot)
+            # Connect Flare Gripper end-effector (provides gripper + wrist_cam + tactile)
+            if self._flare_gripper and self.config.use_gripper:
+                self.logger.info("Connecting Flare Gripper...")
+                self._flare_gripper.connect()
 
-            # Connect cameras
+            # Connect external cameras (e.g., scene cameras)
             for cam in self.cameras.values():
                 cam.connect()
 
             # Set _is_connected to True before calling methods that check is_connected
-            # Note: is_connected property also checks camera connections, so cameras must be connected first
             self._is_connected = True
 
             # Move to start position if requested (use parameter if provided, otherwise use config)
@@ -474,7 +479,9 @@ class FlexivRizon4(Robot):
             mode_desc = self.config.control_mode.value
             if self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
                 mode_desc += " (force enabled)" if self.config.use_force else " (motion only)"
-            gripper_status = f"with {self.config.gripper.gripper_type.value} gripper" if self._has_gripper else "without gripper"
+            
+            if self._flare_gripper and self.config.use_gripper:
+                gripper_status = "with Flare Gripper (gripper + wrist_cam + tactile)"
             self.logger.info(f"✅ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
 
         except Exception as e:
@@ -510,13 +517,17 @@ class FlexivRizon4(Robot):
                 "jntVelScale": 30,  # Joint velocity scale [1-100]
             },
         )
-
+        if self.config.flare_gripper_init_open:
+            self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
+        else:
+            self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
         self._home_tcp_pose = np.array(self._robot.states().tcp_pose)
         self.logger.info(f"Home TCP pose: {self._home_tcp_pose}")
         self.logger.info("✅ Robot at home position.")
+        self.logger.info(f"Gripper position: {self._flare_gripper.get_gripper_position()}")
 
     def _go_to_start(self) -> None:
         """Move robot to start position using MoveJ primitive.
@@ -544,12 +555,16 @@ class FlexivRizon4(Robot):
                 "jntVelScale": self.config.start_vel_scale,
             },
         )
-
+        if self.config.flare_gripper_init_open:
+            self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
+        else:
+            self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
 
         self.logger.info("✅ Robot at start position.")
+        self.logger.info(f"Gripper position: {self._flare_gripper.get_gripper_position()}")
 
     def reset_to_initial_position(self) -> None:
         """Reset robot to initial position based on config.go_to_start.
@@ -672,11 +687,22 @@ class FlexivRizon4(Robot):
         else:
             raise ValueError(f"Unsupported control_mode: {self.config.control_mode}")
 
-        # Gripper observation (1D) - using abstraction layer
-        if self._has_gripper:
-            obs_dict[self._gripper_key] = float(self._gripper.get_state())
+        # Get data from Flare Gripper (gripper + wrist_cam + tactile sensors)
+        if self._flare_gripper is not None and self.config.use_gripper:
+            # Read sensors (keys are mapped from SN to sensor_keys names)
+            sensor_data = self._flare_gripper.get_sensor_data()
+            for key, data in sensor_data.items():
+                obs_dict[key] = data
 
-        # Camera observations
+            # Read wrist camera
+            camera_frame = self._flare_gripper.get_camera_frame()
+            if camera_frame is not None:
+                obs_dict["wrist_cam"] = camera_frame
+
+            # Read gripper position
+            obs_dict[self._gripper_key] = self._flare_gripper.get_gripper_position()
+
+        # External camera observations (scene cameras, etc.)
         for cam_key, cam in self.cameras.items():
             obs_dict[cam_key] = cam.async_read()
 
@@ -708,8 +734,10 @@ class FlexivRizon4(Robot):
         pitch = math.copysign(math.pi / 2, sinp) if abs(sinp) >= 1 else math.asin(sinp)
         yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
         
-        # Get gripper position
-        gripper_pos = float(self._gripper.get_state()) if self._has_gripper else 0.0
+        # Get gripper position directly from XenseFlare gripper
+        gripper_pos = 0.0
+        if self._flare_gripper and self.config.use_gripper:
+            gripper_pos = self._flare_gripper.get_gripper_position()
         
         # Return [x, y, z, roll, pitch, yaw, gripper_pos]
         return np.array([
@@ -741,8 +769,10 @@ class FlexivRizon4(Robot):
         states = self._robot.states()
         tcp_pose = states.tcp_pose  # [x, y, z, qw, qx, qy, qz]
         
-        # Get gripper position
-        gripper_pos = float(self._gripper.get_state()) if self._has_gripper else 0.0
+        # Get gripper position directly from XenseFlare gripper
+        gripper_pos = 0.0
+        if self._flare_gripper and self.config.use_gripper:
+            gripper_pos = self._flare_gripper.get_gripper_position()
         
         # Return [x, y, z, qw, qx, qy, qz, gripper_pos]
         return np.array([
@@ -857,16 +887,18 @@ class FlexivRizon4(Robot):
         return action
 
     def _send_gripper_action(self, action: dict[str, Any]) -> None:
-        """Send gripper command using abstraction layer.
+        """Send gripper command using Flare Gripper.
 
-        Action key: gripper.pos (width in meters)
+        Action key: gripper.pos (normalized 0-1)
         """
-        if not self._has_gripper:
+        if not self._flare_gripper or not self.config.use_gripper:
             return
 
-        if self._gripper_key in action:
-            target_width = float(action[self._gripper_key])
-            self._gripper.move(target_width)
+        if self._gripper_key not in action:
+            return
+
+        # Set gripper position
+        self._flare_gripper.set_gripper_position(float(action[self._gripper_key])) # normalized [0, 1]
 
     def clear_fault(self) -> bool:
         """Attempt to clear robot fault.
@@ -918,11 +950,11 @@ class FlexivRizon4(Robot):
             if self._robot is not None:
                 self._robot.Stop()
 
-            # Disconnect gripper
-            if self._has_gripper:
-                self._gripper.disconnect()
+            # Disconnect XenseFlare (provides gripper + camera + sensors)
+            if self._flare_gripper and self.config.use_gripper:
+                self._flare_gripper.disconnect()
 
-            # Disconnect cameras
+            # Disconnect external cameras
             for cam in self.cameras.values():
                 cam.disconnect()
 
@@ -930,7 +962,7 @@ class FlexivRizon4(Robot):
             self.logger.error(f"Error during disconnect: {e}")
         finally:
             self._robot = None
-            self._gripper = None
+            self._flare_gripper = None
             self._is_connected = False
             self._current_mode = None
             self.logger.info("✅ Flexiv Rizon4 disconnected.")
