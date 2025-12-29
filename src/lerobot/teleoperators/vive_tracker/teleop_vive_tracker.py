@@ -119,6 +119,8 @@ class ViveTrackerTeleop(Teleoperator):
             survive_args.extend(["--config", self.config.config_path])
         if self.config.lh_config:
             survive_args.extend(["--lh", self.config.lh_config])
+        # Suppress libsurvive calibration/optimization output (acc err messages)
+        survive_args.extend(["--log-level", "0"])
 
         # Initialize pysurvive context
         self.logger.info("Initializing pysurvive context...")

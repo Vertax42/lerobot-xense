@@ -41,12 +41,12 @@ class SpacemouseConfig(TeleoperatorConfig):
             This ensures consistent velocity scaling regardless of actual call timing.
         invert_axes: Tuple of 6 bools to invert each axis (tx, ty, tz, rx, ry, rz).
         swap_gripper_buttons: If True, swap left/right button for gripper open/close.
-        gripper_width: Maximum gripper position in radians (for clamping).
+        gripper_width: Maximum gripper position in ratio of gripper_max_pos (for clamping).
     """
 
     pos_sensitivity: float = 0.4  # default 0.8 m/s at max deflection
     ori_sensitivity: float = 1.0  # default 1.5 rad/s at max deflection
-    gripper_speed: float = 0.4  # rad/s for gripper open/close
+    gripper_speed: float = 0.4  # ratio of gripper_max_pos / s for gripper open/close
     deadzone: float = 0.1  # [0-1] threshold
     max_value: int = 500  # 300 for wired, 500 for wireless
     frequency: int = 200  # Hz for spacemouse states polling
@@ -61,4 +61,4 @@ class SpacemouseConfig(TeleoperatorConfig):
         False,
     )
     swap_gripper_buttons: bool = False  # default left button to close, right button to open
-    gripper_width: float = 1.57  # Maximum gripper position (radians)
+    gripper_width: float = 1.0  # Maximum gripper position (ratio of gripper_max_pos)

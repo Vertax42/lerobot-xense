@@ -161,13 +161,13 @@ class SpacemouseTeleop(Teleoperator):
             self._start_pose_6d = current_tcp_pose_euler[:6].copy()
             self._start_gripper_pos = current_tcp_pose_euler[6]
 
-            self.logger.info(f"{self} connected successfully.")
+            self.logger.info("✅ 3D Spacemouse connected successfully.")
 
         except Exception as e:
             if self._shm_manager is not None:
                 self._shm_manager.shutdown()
                 self._shm_manager = None
-            raise RuntimeError(f"Failed to connect to Spacemouse: {e}") from e
+            raise RuntimeError(f"❌ Failed to connect to 3D Spacemouse: {e}") from e
 
     def calibrate(self) -> None:
         """No calibration needed for spacemouse."""
@@ -187,7 +187,7 @@ class SpacemouseTeleop(Teleoperator):
         """
         self._target_pose_6d = np.array(pose_6d, dtype=np.float32).copy()
         self._target_gripper_pos = float(gripper_pos)
-        self.logger.info(f"Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
+        self.logger.info(f"✅ Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
 
     def _get_filtered_state(self) -> np.ndarray:
         """Get filtered spacemouse state with moving average."""
