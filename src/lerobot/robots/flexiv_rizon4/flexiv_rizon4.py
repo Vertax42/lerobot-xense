@@ -138,6 +138,7 @@ class FlexivRizon4(Robot):
         else:
             raise ValueError(f"Unsupported control_mode: {config.control_mode}")
 
+        self.cameras = make_cameras_from_configs(config.cameras)
         np.set_printoptions(precision=6, suppress=True)
 
     def _init_joint_mode(self) -> None:
@@ -288,9 +289,9 @@ class FlexivRizon4(Robot):
         features = {}
         
         if self._flare_gripper and self.config.use_gripper:
-            features["wrist_cam"] = (self._flare_gripper.config.cam_size[1], self._flare_gripper.config.cam_size[0], 3)
-            features["left_tactile"] = (self._flare_gripper.config.rectify_size[1], self._flare_gripper.config.rectify_size[0], 3)
-            features["right_tactile"] = (self._flare_gripper.config.rectify_size[1], self._flare_gripper.config.rectify_size[0], 3)
+            features["wrist_cam"] = (self._flare_gripper._config.cam_size[1], self._flare_gripper._config.cam_size[0], 3)
+            features["left_tactile"] = (self._flare_gripper._config.rectify_size[1], self._flare_gripper._config.rectify_size[0], 3)
+            features["right_tactile"] = (self._flare_gripper._config.rectify_size[1], self._flare_gripper._config.rectify_size[0], 3)
         
         # External cameras (e.g., scene cameras)
         for cam in self.cameras:

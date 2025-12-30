@@ -27,7 +27,7 @@ lerobot-teleoperate \
 ```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
-    --robot.xense_flare_mac_addr="e2b26adbb104" \
+    --robot.flare_gripper_mac_addr="e2b26adbb104" \
     --robot.control_mode=cartesian_motion_force_control \
     --teleop.type=spacemouse \
     --fps=30 \

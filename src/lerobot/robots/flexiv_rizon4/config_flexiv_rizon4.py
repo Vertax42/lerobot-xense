@@ -197,8 +197,8 @@ class FlexivRizon4Config(RobotConfig):
     flare_gripper_rectify_size: tuple[int, int] = (400, 700)
     flare_gripper_sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
     flare_gripper_sensor_keys: dict[str, str] = field(default_factory=lambda: {
-        "OG000454": "right_tactile",
-        "OG000447": "left_tactile",
+        "OG000657": "right_tactile",
+        "OG000450": "left_tactile",
     })
     
     # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]

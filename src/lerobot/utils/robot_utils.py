@@ -36,7 +36,7 @@ def get_logger(name: str) -> spdlog.ConsoleLogger:
     """
     logger = spdlog.ConsoleLogger(name, colored=True, multithreaded=True)
     logger.set_pattern(SPDLOG_PATTERN)
-    logger.set_level(spdlog.Level.INFO)
+    logger.set_level(spdlog.LogLevel.INFO)
     return logger
 
 

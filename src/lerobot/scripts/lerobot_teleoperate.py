@@ -1076,7 +1076,10 @@ def teleoperate(cfg: TeleoperateConfig):
     if cfg.dryrun:
         logger.warn("⚠️  DRYRUN MODE ENABLED - Actions will be printed but NOT sent to robot")
     if cfg.display_data:
-        init_rerun(session_name="teleoperation")
+        # Use robot and teleop names in session name
+        teleop_name = cfg.teleop.type if cfg.teleop else "none"
+        session_name = f"teleop_{cfg.robot.type}_{teleop_name}"
+        init_rerun(session_name=session_name)
 
     # Check if this is Xense Flare (data collection gripper - no teleoperator needed)
     if cfg.robot.type == "xense_flare":
