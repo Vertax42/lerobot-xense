@@ -687,7 +687,7 @@ class Pico4(Teleoperator):
         # Step 6: Update gripper position from trigger value
         # Trigger value [0, 1] maps directly to gripper position [0, gripper_width]
         # trigger=0 -> gripper closed (0), trigger=1 -> gripper open (gripper_width)
-        self._target_gripper_pos = float(controller_trigger) * self.config.gripper_width
+        self._target_gripper_pos = 1.0 - float(controller_trigger) * self.config.gripper_width
 
         # Step 7: Return in Flexiv Rizon4 action format
         # Format: {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}

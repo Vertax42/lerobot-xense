@@ -49,8 +49,8 @@ class Pico4Config(TeleoperatorConfig):
     pos_sensitivity: float = 1.0  # Scale factor for position delta (1.0 = 1:1 mapping, 0.5 = half speed)
     ori_sensitivity: float = 1.0  # Scale factor for orientation delta (1.0 = 1:1 mapping)
     filter_window_size: int = 1  # Moving average filter window size
-    gripper_width: float = 0.1  # Maximum gripper position in meters
+    gripper_width: float = 1.0  # Maximum gripper position in control space [0, 1]
     grip_enable_threshold: float = 0.5  # Threshold for grip to enable control (must exceed to enable)
     grip_disable_threshold: float = 0.3  # Threshold for grip to disable control (must drop below to disable)
     orientation_offset_warning_deg: float = 180.0  # Warning threshold for orientation offset (degrees). Set to 180 to disable check.
-    position_jump_threshold: float = 0.06  # Max allowed position change per frame (meters). Larger jumps are filtered out.
+    position_jump_threshold: float = 0.1  # Max allowed position change per frame (meters). Larger jumps are filtered out.
