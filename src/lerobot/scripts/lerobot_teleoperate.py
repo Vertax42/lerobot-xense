@@ -683,11 +683,9 @@ def pico4_teleop_loop(
             _ = robot.send_action(robot_action_to_send)
 
         if display_data:
-            # Process robot observation through pipeline
-            obs_transition = robot_observation_processor(obs)
-
+            # Log raw observation directly (including images from FlareGripper)
             log_rerun_data(
-                observation=obs_transition,
+                observation=obs,  # Use raw obs to ensure images are included
                 action=teleop_action,
             )
 
@@ -703,14 +701,16 @@ def pico4_teleop_loop(
         loop_s = time.perf_counter() - loop_start
 
         # Print status line with enable state and grip value for debugging
-        enable_str = "ENABLED" if teleop._enabled else "DISABLED"
-        ori_str = "ORI:ON" if teleop._orientation_control_active else "ORI:OFF"
-        grip_str = f"grip={teleop._last_grip:.2f}"
-        action_str = ", ".join([f"{k}={v:.4f}" for k, v in robot_action_to_send.items()])
-        if dryrun:
-            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] | {enable_str} | {grip_str} | {ori_str} | {action_str}", end="", flush=True)
-        else:
-            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {enable_str} | {grip_str} | {ori_str} | {action_str}", end="", flush=True)
+        # Only print if not using display_data (to avoid conflicting with Rerun terminal output)
+        if not display_data:
+            enable_str = "ENABLED" if teleop._enabled else "DISABLED"
+            ori_str = "ORI:ON" if teleop._orientation_control_active else "ORI:OFF"
+            grip_str = f"grip={teleop._last_grip:.2f}"
+            gripper_pos_str = f"gripper={robot_action_to_send.get('gripper.pos', 0.0):.2f}"
+            if dryrun:
+                print(f"\r\033[Ktime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] | {enable_str} | {grip_str} | {gripper_pos_str} | {ori_str}", end="", flush=True)
+            else:
+                print(f"\r\033[Ktime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {enable_str} | {grip_str} | {gripper_pos_str} | {ori_str}", end="", flush=True)
 
         if duration is not None and time.perf_counter() - start >= duration:
             return

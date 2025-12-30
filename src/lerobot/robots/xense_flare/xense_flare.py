@@ -412,12 +412,60 @@ class XenseFlare(Robot):
 
         return obs
 
-    def send_action(self) -> None:
+    def send_action(self, action: dict = None) -> None:
         """
         No need to send action to Xense Flare, it is a pure observation device.
+        The gripper has no motor, only an encoder for position reading.
         """
         # No need to send action to Xense Flare, it is a pure observation device.
         return None
+
+    def get_action(self) -> dict:
+        """
+        Get action data from Xense Flare (pose from Vive Tracker + gripper position).
+        
+        This method is used when XenseFlare acts as a teleoperation device.
+        It combines:
+        - TCP pose from Vive Tracker (if enabled)
+        - Gripper position from encoder
+        
+        Returns:
+            dict containing:
+            - tcp.x, tcp.y, tcp.z: TCP position (meters)
+            - tcp.qw, tcp.qx, tcp.qy, tcp.qz: TCP orientation (quaternion)
+            - gripper.pos: Gripper position (0=closed, 1=fully open)
+        """
+        if not self.is_connected:
+            raise RuntimeError("XenseFlare is not connected")
+        
+        action = {}
+        
+        # Get pose from Vive Tracker if enabled
+        if self.config.enable_vive and self._vive_tracker is not None:
+            try:
+                vive_action = self._vive_tracker.get_action()
+                # Copy pose data from vive tracker
+                action["tcp.x"] = vive_action.get("tcp.x", 0.0)
+                action["tcp.y"] = vive_action.get("tcp.y", 0.0)
+                action["tcp.z"] = vive_action.get("tcp.z", 0.0)
+                action["tcp.qw"] = vive_action.get("tcp.qw", 1.0)
+                action["tcp.qx"] = vive_action.get("tcp.qx", 0.0)
+                action["tcp.qy"] = vive_action.get("tcp.qy", 0.0)
+                action["tcp.qz"] = vive_action.get("tcp.qz", 0.0)
+            except Exception as e:
+                self.logger.warn(f"Failed to get Vive Tracker action: {e}")
+        
+        # Get gripper position from encoder (default 1.0 = fully open)
+        if self.config.enable_gripper and self._gripper is not None:
+            try:
+                action["gripper.pos"] = self.get_gripper_position()
+            except Exception as e:
+                self.logger.warn(f"Failed to get gripper position: {e}")
+                action["gripper.pos"] = 1.0
+        else:
+            action["gripper.pos"] = 1.0
+        
+        return action
 
     def _scan_sensors(self) -> dict:
         """Scan for available sensors on the device."""
