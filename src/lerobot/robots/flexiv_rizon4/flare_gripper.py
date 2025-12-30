@@ -26,6 +26,7 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 
 class FlareGripper:
     config_class = FlareGripperConfig
+    
     def __init__(
         self,
         config: FlareGripperConfig,
@@ -41,7 +42,7 @@ class FlareGripper:
         self._gripper_f_max = config.gripper_f_max
         self._init_open = config.init_open
         self._logger = get_logger(f"FlareGripper-{self._mac_addr[:6]}")
-
+    
         self._is_connected = False
         self._gripper: XenseGripper = None
         self._camera: XenseCamera = None
@@ -142,7 +143,8 @@ class FlareGripper:
                 raw_pos = float(status.get("position", 0.0))
                 # Normalize to [0, 1] range
                 if raw_pos < 0.0 or raw_pos > self._gripper_max_pos:
-                    raise ValueError(f"Gripper position must be between 0 and {self._gripper_max_pos}, got {raw_pos}")
+                    self._logger.warn(f"Gripper position must be between 0 and {self._gripper_max_pos}, got {raw_pos}, clamping!")
+                    return 0.0
                 normalized_pos = raw_pos / self._gripper_max_pos
                 return max(0.0, min(1.0, normalized_pos))
             else:

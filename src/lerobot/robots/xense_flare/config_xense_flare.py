@@ -21,7 +21,7 @@ Xense Flare is a data collection gripper with multiple sensor modalities:
 - Vive Tracker: Provides 6DoF trajectory data (optional, for standalone use)
 - Wrist Camera: Provides visual information
 - Tactile Sensors: Provides tactile perception
-- Gripper Motor: Provides gripper motor state
+- Gripper Encoder: Provides gripper position readout (passive, no motor control)
 
 When mounted on a robot arm (e.g., Flexiv Rizon4), Vive Tracker can be disabled
 since the robot arm provides pose information.
@@ -49,15 +49,15 @@ class XenseFlareConfig(RobotConfig):
         mac_addr: MAC address of the FlareGrip device (required)
         cam_size: Camera frame size (width, height)
         rectify_size: Sensor rectify output size (width, height)
-        enable_gripper: Whether to enable gripper motor
+        enable_gripper: Whether to enable gripper encoder readout
         enable_sensor: Whether to enable tactile sensors
         enable_camera: Whether to enable wrist camera
+        gripper_max_pos: Maximum gripper position for normalization
         sensor_keys: Mapping from sensor SN to feature key name
         vive_config_path: Vive Tracker config file path
         vive_lh_config: Vive Tracker lighthouse config
         vive_to_ee_pos: Position offset from Vive Tracker to end-effector [x, y, z] in meters
         vive_to_ee_quat: Rotation offset from Vive Tracker to end-effector [qw, qx, qy, qz]
-        init_open: bool, whether to open the gripper on connect
 
     Example:
         config = XenseFlareConfig(
@@ -89,15 +89,8 @@ class XenseFlareConfig(RobotConfig):
     enable_vive: bool = True  # Set to False when mounted on robot arm (pose from arm)
 
     # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
-    # Set to the maximum readout value from your gripper
+    # Set to the maximum readout value from your gripper encoder
     gripper_max_pos: float = 85.0
-    
-    # Gripper control parameters for set_position()
-    gripper_v_max: float = 80.0  # Maximum velocity mm/s
-    gripper_f_max: float = 20.0  # Maximum force N
-    
-    # Initialize gripper to fully open on connect
-    init_open: bool = True
 
     # Sensor SN to feature key mapping
     # If a sensor SN is not in this dict, it will use "sensor_{sn}" as key

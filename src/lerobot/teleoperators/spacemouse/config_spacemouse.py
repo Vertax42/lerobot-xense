@@ -44,9 +44,9 @@ class SpacemouseConfig(TeleoperatorConfig):
         gripper_width: Maximum gripper position in ratio of gripper_max_pos (for clamping).
     """
 
-    pos_sensitivity: float = 0.4  # default 0.8 m/s at max deflection
-    ori_sensitivity: float = 1.0  # default 1.5 rad/s at max deflection
-    gripper_speed: float = 0.4  # ratio of gripper_max_pos / s for gripper open/close
+    pos_sensitivity: float = 0.8  # default 0.8 m/s at max deflection
+    ori_sensitivity: float = 1.5  # default 1.5 rad/s at max deflection
+    gripper_speed: float = 0.6  # ratio of gripper_max_pos / s for gripper open/close
     deadzone: float = 0.1  # [0-1] threshold
     max_value: int = 500  # 300 for wired, 500 for wireless
     frequency: int = 200  # Hz for spacemouse states polling

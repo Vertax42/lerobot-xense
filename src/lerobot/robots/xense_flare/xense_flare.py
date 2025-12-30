@@ -260,15 +260,7 @@ class XenseFlare(Robot):
             self.logger.info("Initializing gripper...")
             try:
                 self._gripper = XenseGripper.create(self.config.mac_addr)
-                if self._gripper is not None:
-                    if self.config.init_open:
-                        self._gripper.set_position_sync(self.config.gripper_max_pos, vmax=self.config.gripper_v_max, fmax=self.config.gripper_f_max)
-                        self.logger.info("  ✅ Gripper initialized (fully open)")
-                    else:
-                        self._gripper.set_position_sync(0.0, vmax=self.config.gripper_v_max, fmax=self.config.gripper_f_max)
-                        self.logger.info("  ✅ Gripper initialized (fully closed)")
-                else:
-                    self.logger.warn("  ⚠️ Gripper creation returned None")
+                self.logger.info("  ✅ Gripper initialized")
             except Exception as e:
                 self.logger.error(f"  ❌ Failed to initialize gripper: {e}")
 
@@ -420,36 +412,12 @@ class XenseFlare(Robot):
 
         return obs
 
-    def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
+    def send_action(self) -> None:
         """
-        Send action to the robot.
-
-        Supports gripper position control via gripper.pos key.
-        Position is normalized [0, 1] and will be converted to raw position.
-
-        Args:
-            action: Dictionary with action keys. Supported:
-                - "gripper.pos": Normalized gripper position [0, 1]
-                  0 = fully closed, 1 = fully open
-
-        Returns:
-            The action that was sent.
+        No need to send action to Xense Flare, it is a pure observation device.
         """
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected")
-
-        # Gripper control
-        if "gripper.pos" in action and self.config.enable_gripper and self._gripper is not None:
-            normalized_pos = float(action["gripper.pos"])
-            # Clamp to [0, 1]
-            if normalized_pos < 0.0 or normalized_pos > 1.0:
-                raise ValueError(f"Gripper position must be between 0 and 1, got {normalized_pos}")
-            # Convert to raw position
-            target_pos = normalized_pos * self.config.gripper_max_pos
-            # Send to gripper with velocity and force limits from config    
-            self._gripper.set_position(target_pos, vmax=self.config.gripper_v_max, fmax=self.config.gripper_f_max)
-
-        return action
+        # No need to send action to Xense Flare, it is a pure observation device.
+        return None
 
     def _scan_sensors(self) -> dict:
         """Scan for available sensors on the device."""
@@ -521,7 +489,8 @@ class XenseFlare(Robot):
             self._gripper.register_button_callback(event_type, callback)
         else:
             self.logger.warn("No gripper initialized, cannot register callback")
-
+    
+    
     def get_gripper_position(self) -> float:
         """
         Get current gripper position.
@@ -529,14 +498,36 @@ class XenseFlare(Robot):
         Returns:
             Gripper position (0=closed, 1=fully open), or 0.0 if not available
         """
-        if not self.is_connected or self._gripper is None:
+        if not self._is_connected or self._gripper is None:
             return 0.0
         try:
             status = self._gripper.get_gripper_status()
             if status is not None:
-                return float(status.get("position", 0.0)) / self.config.gripper_max_pos
+                raw_pos = float(status.get("position", 0.0))
+                # Normalize to [0, 1] range
+                if raw_pos < 0.0 or raw_pos > self._gripper_max_pos:
+                    self.logger.warn(f"Gripper position must be between 0 and {self.config.gripper_max_pos}, got {raw_pos}, clamping!")
+                    return 0.0
+                normalized_pos = raw_pos / self._gripper_max_pos
+                return max(0.0, min(1.0, normalized_pos))
+            else:
+                raise ValueError("Failed to get gripper position")
         except Exception:
             raise ValueError("Failed to get gripper position")
+
+    def calibrate_gripper(self) -> None:
+        """
+        Calibrate the gripper encoder.
+        
+        This should be called when the gripper position reading is incorrect.
+        The calibration process will reset the encoder to match the physical position.
+        """
+        if self._gripper is not None:
+            self.logger.info("Starting gripper calibration...")
+            self._gripper.calibrate()
+            self.logger.info("✅ Gripper calibration complete")
+        else:
+            self.logger.warn("No gripper initialized, cannot calibrate")
 
     def get_system_info(self) -> dict:
         """

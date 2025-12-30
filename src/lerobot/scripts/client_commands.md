@@ -22,7 +22,7 @@ lerobot-teleoperate \
     --display_data=true
 ```
 
-## Flexiv Rizon4 Robot lerobot-teleoperate command
+## Flexiv Rizon4 Robot with Flare Gripper teleoperate by Spacemouse command
 
 ```bash
 lerobot-teleoperate \
@@ -35,6 +35,7 @@ lerobot-teleoperate \
     --debug_timing=true
 ```
 
+## Flexiv Rizon4 Robot with Flare Gripper teleoperate by Pico4 command
 ```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
@@ -43,6 +44,7 @@ lerobot-teleoperate \
     --fps=100
 ```
 
+## xense_flare Robot teleoperate by Mock Teleop command
 ```bash
 lerobot-teleoperate \
     --robot.type=xense_flare \
