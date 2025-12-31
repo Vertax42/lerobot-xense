@@ -49,8 +49,8 @@ Arx5ControllerBase::~Arx5ControllerBase()
         logger_->info("Set to damping before exit");
         Gain damping_gain{robot_config_.joint_dof};
         damping_gain.kd = controller_config_.default_kd;
-        damping_gain.gripper_kp = 0.0f;  // 夹爪位置增益设为0
-        damping_gain.gripper_kd = controller_config_.default_gripper_kd;  // 夹爪阻尼增益
+        damping_gain.gripper_kp = 0.0f;  // gripper position gain set to 0
+        damping_gain.gripper_kd = controller_config_.default_gripper_kd;  // gripper damping gain set to default
 
         // Increase damping if needed
         damping_gain.kd[0] *= 3;
@@ -63,8 +63,8 @@ Arx5ControllerBase::~Arx5ControllerBase()
             std::lock_guard<std::mutex> guard(cmd_mutex_);
             output_joint_cmd_.vel = VecDoF::Zero(robot_config_.joint_dof);
             output_joint_cmd_.torque = VecDoF::Zero(robot_config_.joint_dof);
-            output_joint_cmd_.gripper_vel = 0.0f;  // 夹爪速度设为0
-            output_joint_cmd_.gripper_torque = 0.0f;  // 夹爪力矩设为0
+            output_joint_cmd_.gripper_vel = 0.0f;  // gripper velocity set to 0
+            output_joint_cmd_.gripper_torque = 0.0f;  // gripper torque set to 0
             interpolator_.init_fixed(output_joint_cmd_);
         }
         background_send_recv_running_ = true;
