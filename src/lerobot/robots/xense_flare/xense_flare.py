@@ -150,12 +150,11 @@ class XenseFlare(Robot):
             h, w = self.config.cam_size[1], self.config.cam_size[0]
             features["wrist_cam"] = (h, w, 3)
 
-        # Tactile sensors (dynamic based on discovered sensors)
-        # Use config.get_sensor_key() to get custom key name or default "sensor_{sn}"
-        if self.config.enable_sensor and self._available_sensors:
+        # Tactile sensors (use config.sensor_keys for feature definition before connect)
+        # This ensures features are defined before connect() is called
+        if self.config.enable_sensor and self.config.sensor_keys:
             h, w = self.config.rectify_size[1], self.config.rectify_size[0]
-            for sn in self._available_sensors.keys():
-                key = self.config.get_sensor_key(sn)
+            for key in self.config.sensor_keys.values():
                 features[key] = (h, w, 3)
 
         # Vive Tracker pose (always included - required component)
@@ -188,6 +187,24 @@ class XenseFlare(Robot):
     def is_calibrated(self) -> bool:
         """Xense Flare uses factory calibration, always True if connected."""
         return self.is_connected
+
+    @property
+    def cameras(self) -> dict:
+        """Return dict of image sources for thread allocation in recording.
+        
+        XenseFlare manages cameras internally but needs to report count for image_writer_threads.
+        Returns dict with keys matching image features: wrist_cam + tactile sensors.
+        
+        Note: Uses config.sensor_keys for sensor count (available before connect()).
+        """
+        cameras = {}
+        if self.config.enable_camera:
+            cameras["wrist_cam"] = None  # Placeholder - actual camera managed internally
+        if self.config.enable_sensor:
+            # Use sensor_keys from config (available before connect)
+            for key in self.config.sensor_keys.values():
+                cameras[key] = None  # Placeholder - actual sensor managed internally
+        return cameras
 
     def connect(self) -> None:
         """Connect to the Xense Flare device."""
@@ -360,17 +377,10 @@ class XenseFlare(Robot):
         # Get gripper state (normalized to [0, 1])
         if self.config.enable_gripper and self._gripper is not None:
             try:
-                gripper_status = self._gripper.get_gripper_status()
-                if gripper_status is not None:
-                    raw_pos = float(gripper_status.get("position", 0.0))
-                    # Normalize to [0, 1] range
-                    normalized_pos = raw_pos / self.config.gripper_max_pos
-                    # Clamp to [0, 1] in case of out-of-range values
-                    obs["gripper.pos"] = max(0.0, min(1.0, normalized_pos))
-                else:
-                    raise ValueError("Failed to get gripper status")
+                obs["gripper.pos"] = self.get_gripper_position()
             except Exception as e:
-                raise ValueError(f"Failed to get gripper status: {e}")
+                self.logger.warn(f"Failed to get gripper position: {e}")
+                obs["gripper.pos"] = 1.0
 
         # Get wrist camera image (convert BGR to RGB)
         if self.config.enable_camera and self._camera is not None:
@@ -552,11 +562,14 @@ class XenseFlare(Robot):
             status = self._gripper.get_gripper_status()
             if status is not None:
                 raw_pos = float(status.get("position", 0.0))
+                # HACK: the gripper position is reversed, so we need to invert it
+                raw_pos -= self.config.gripper_max_pos
                 # Normalize to [0, 1] range
-                if raw_pos < 0.0 or raw_pos > self._gripper_max_pos:
-                    self.logger.warn(f"Gripper position must be between 0 and {self.config.gripper_max_pos}, got {raw_pos}, clamping!")
-                    return 0.0
-                normalized_pos = raw_pos / self._gripper_max_pos
+                if raw_pos < -0.02 or raw_pos > self.config.gripper_max_readout:
+                    self.logger.warn(f"Gripper position must be between 0 and gripper_max_readout={self.config.gripper_max_readout}, got {raw_pos}, clamping!")
+                    raw_pos = np.clip(raw_pos, 0, self.config.gripper_max_readout)
+
+                normalized_pos = raw_pos / self.config.gripper_max_readout
                 return max(0.0, min(1.0, normalized_pos))
             else:
                 raise ValueError("Failed to get gripper position")

@@ -78,8 +78,8 @@ class XenseFlareConfig(RobotConfig):
     # Camera settings
     cam_size: tuple[int, int] = (640, 480)
 
-    # Sensor settings
-    rectify_size: tuple[int, int] = (400, 700)
+    # Sensor settings (actual tactile image resolution: 96x160x3, format: width, height)
+    rectify_size: tuple[int, int] = (96, 160)
     sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
 
     # Component enable flags
@@ -88,10 +88,11 @@ class XenseFlareConfig(RobotConfig):
     enable_camera: bool = True
     enable_vive: bool = True  # Set to False when mounted on robot arm (pose from arm)
 
-    # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
-    # Set to the maximum readout value from your gripper encoder
+    # Gripper SDK max position (used for motor control, not for normalization)
     gripper_max_pos: float = 85.0
 
+    # HACK: Need to set the maximum readout after calibration, so we can normalize the gripper position
+    gripper_max_readout: float = 80.0
     # Sensor SN to feature key mapping
     # If a sensor SN is not in this dict, it will use "sensor_{sn}" as key
     # Example: {"OG000344": "tactile_thumb", "OG000337": "tactile_finger"}
@@ -121,10 +122,11 @@ class XenseFlareConfig(RobotConfig):
             raise ValueError("mac_addr is required for XenseFlare")
 
         # Set default sensor_keys if not provided
+        # NOTE: Update these SNs to match your device's sensors
         if not self.sensor_keys:
             self.sensor_keys = {
-                "OG000454": "right_tactile",
-                "OG000447": "left_tactile",
+                "OG000447": "right_tactile",
+                "OG000454": "left_tactile",
             }
         
     def get_sensor_key(self, sensor_sn: str) -> str:

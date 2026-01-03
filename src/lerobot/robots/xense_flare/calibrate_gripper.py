@@ -21,10 +21,10 @@ This script calibrates the gripper encoder to ensure accurate position readings.
 Run this when the gripper position reading seems incorrect or after hardware changes.
 
 Usage:
-    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=e2b26adbb104
+    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=6ebbc5f53240
     
 Or with custom max position:
-    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=e2b26adbb104 --gripper_max_pos=90.0
+    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=6ebbc5f53240 --gripper_max_pos=90.0
 """
 
 import argparse
@@ -44,20 +44,21 @@ def main():
         epilog="""
 Examples:
     # Basic calibration
-    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=e2b26adbb104
+    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=6ebbc5f53240
     
     # With custom max position
-    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=e2b26adbb104 --gripper_max_pos=90.0
+    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=6ebbc5f53240 --gripper_max_pos=90.0
     
     # Interactive mode (shows real-time position after calibration)
-    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=e2b26adbb104 --interactive
+    python -m lerobot.robots.xense_flare.calibrate_gripper --mac_addr=6ebbc5f53240 --interactive
         """
     )
     parser.add_argument(
         "--mac_addr",
         type=str,
-        required=True,
-        help="MAC address of the Xense Flare device (e.g., e2b26adbb104)"
+        # required=True,
+        default="6ebbc5f53240",
+        help="MAC address of the Xense Flare device (e.g., 6ebbc5f53240)"
     )
     parser.add_argument(
         "--gripper_max_pos",
@@ -122,6 +123,32 @@ Examples:
         
         logger.info("")
         logger.info("✅ Calibration complete!")
+        
+        # Interactive step: measure max position
+        logger.info("")
+        logger.info("=" * 60)
+        logger.info("Now let's measure the maximum gripper position.")
+        logger.info("Please FULLY OPEN the gripper to its maximum position.")
+        logger.info("=" * 60)
+        input("Press Enter when the gripper is fully open...")
+        
+        # Read raw position at max open
+        try:
+            gripper_status = xense_flare._gripper.get_gripper_status()
+            if gripper_status is not None:
+                raw_max_pos = float(gripper_status.get("position", 0.0)) - xense_flare.config.gripper_max_readout
+                logger.info("")
+                logger.info("=" * 60)
+                logger.info(f"📏 Maximum gripper readout (raw): {raw_max_pos:.2f}")
+                logger.info("=" * 60)
+                logger.info("")
+                logger.info("Use this value as 'gripper_max_readout' in your config:")
+                logger.info(f"  gripper_max_readout={raw_max_pos:.1f}")
+                logger.info("")
+            else:
+                logger.warn("Could not read gripper status")
+        except Exception as e:
+            logger.warn(f"Could not read max position: {e}")
         
         # Interactive mode
         if args.interactive:
