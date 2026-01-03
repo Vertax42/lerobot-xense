@@ -62,6 +62,18 @@ lerobot-teleoperate \
 
 ```python
 lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_example \
+    --dataset.num_episodes=1 \
+    --dataset.single_task="xense_flare_test" \
+    --dataset.fps=30 \
+    --display_data=false \
+    --dataset.push_to_hub=true
+```
+
+```python
+lerobot-record \
     --robot.type=bi_arx5 \
     --teleop.type=mock_teleop \
     --dataset.repo_id=Vertax/xense_bi_arx5_tie_shoelaces \

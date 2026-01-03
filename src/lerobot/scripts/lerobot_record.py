@@ -106,6 +106,7 @@ from lerobot.robots import (  # noqa: F401
     make_robot_from_config,
     so100_follower,
     so101_follower,
+    xense_flare,  # noqa: F401
 )
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
@@ -212,10 +213,13 @@ class RecordConfig:
             )
             self.policy.pretrained_path = policy_path
 
+        # XenseFlare acts as both robot and teleoperator (provides actions via get_action())
+        # so it doesn't need a separate teleoperator or policy
         if self.teleop is None and self.policy is None:
-            raise ValueError(
-                "Choose a policy, a teleoperator or both to control the robot"
-            )
+            if self.robot.type != "xense_flare":
+                raise ValueError(
+                    "Choose a policy, a teleoperator or both to control the robot"
+                )
 
     @classmethod
     def __get_path_fields__(cls) -> list[str]:
@@ -532,6 +536,82 @@ def bi_arx5_record_loop(
 
 
 @safe_stop_image_writer
+def xense_flare_record_loop(
+    robot: Robot,
+    events: dict,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],
+    dataset: LeRobotDataset | None = None,
+    control_time_s: int | None = None,
+    single_task: str | None = None,
+    display_data: bool = False,
+):
+    """
+    Record loop for XenseFlare data collection gripper.
+    
+    XenseFlare is special because it acts as both:
+    - A robot (provides observation: camera, tactile, gripper position)
+    - A teleoperator (provides action: Vive Tracker pose + gripper position)
+    
+    The action comes from robot.get_action() instead of a separate teleoperator.
+    """
+    if dataset is not None and dataset.fps != fps:
+        raise ValueError(
+            f"The dataset fps should be equal to requested fps ({dataset.fps} != {fps})."
+        )
+
+    timestamp = 0
+    start_episode_t = time.perf_counter()
+    
+    while timestamp < control_time_s:
+        start_loop_t = time.perf_counter()
+
+        if events["exit_early"]:
+            events["exit_early"] = False
+            break
+
+        if events["rerecord_episode"]:
+            logging.info("Re-record episode requested, exiting record loop early")
+            break
+
+        # Get robot observation (camera, tactile, gripper position)
+        obs = robot.get_observation()
+        obs_processed = robot_observation_processor(obs)
+
+        # Get action from XenseFlare (Vive Tracker pose + gripper position)
+        # XenseFlare provides get_action() which returns tcp pose and gripper.pos
+        act = robot.get_action()
+        act_processed = teleop_action_processor((act, obs))
+
+        # Build dataset frames
+        if dataset is not None:
+            observation_frame = build_dataset_frame(
+                dataset.features, obs_processed, prefix=OBS_STR
+            )
+            action_frame = build_dataset_frame(
+                dataset.features, act_processed, prefix=ACTION
+            )
+            frame = {**observation_frame, **action_frame, "task": single_task}
+            dataset.add_frame(frame)
+
+        if display_data:
+            log_rerun_data(observation=obs_processed, action=act_processed)
+
+        dt_s = time.perf_counter() - start_loop_t
+        busy_wait(1 / fps - dt_s)
+
+        timestamp = time.perf_counter() - start_episode_t
+
+
+@safe_stop_image_writer
 def record_loop(
     robot: Robot,
     events: dict,
@@ -786,8 +866,22 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             ):
                 log_say(f"Recording episode {dataset.num_episodes}", cfg.play_sounds)
 
+                # Use specialized record loop for XenseFlare (data collection gripper)
+                if cfg.robot.type == "xense_flare":
+                    xense_flare_record_loop(
+                        robot=robot,
+                        events=events,
+                        fps=cfg.dataset.fps,
+                        teleop_action_processor=teleop_action_processor,
+                        robot_action_processor=robot_action_processor,
+                        robot_observation_processor=robot_observation_processor,
+                        dataset=dataset,
+                        control_time_s=cfg.dataset.episode_time_s,
+                        single_task=cfg.dataset.single_task,
+                        display_data=cfg.display_data,
+                    )
                 # Use specialized record loop for BiARX5 robot
-                if cfg.robot.type == "bi_arx5":
+                elif cfg.robot.type == "bi_arx5":
                     bi_arx5_record_loop(
                         robot=robot,
                         events=events,
@@ -828,7 +922,19 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                     or events["rerecord_episode"]
                 ):
                     log_say("Reset the environment", cfg.play_sounds)
-                    if cfg.robot.type == "bi_arx5":
+                    if cfg.robot.type == "xense_flare":
+                        xense_flare_record_loop(
+                            robot=robot,
+                            events=events,
+                            fps=cfg.dataset.fps,
+                            teleop_action_processor=teleop_action_processor,
+                            robot_action_processor=robot_action_processor,
+                            robot_observation_processor=robot_observation_processor,
+                            control_time_s=cfg.dataset.reset_time_s,
+                            single_task=cfg.dataset.single_task,
+                            display_data=cfg.display_data,
+                        )
+                    elif cfg.robot.type == "bi_arx5":
                         bi_arx5_record_loop(
                             robot=robot,
                             events=events,
