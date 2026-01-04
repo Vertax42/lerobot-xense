@@ -16,7 +16,6 @@
 Provides the OpenCVCamera class for capturing frames from cameras using OpenCV.
 """
 
-import logging
 import math
 import os
 import platform
@@ -28,11 +27,15 @@ from typing import Any
 from numpy.typing import NDArray  # type: ignore  # TODO: add type stubs for numpy.typing
 
 # Fix MSMF hardware transform compatibility for Windows before importing cv2
-if platform.system() == "Windows" and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ:
+if (
+    platform.system() == "Windows"
+    and "OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS" not in os.environ
+):
     os.environ["OPENCV_VIDEOIO_MSMF_ENABLE_HW_TRANSFORMS"] = "0"
 import cv2  # type: ignore  # TODO: add type stubs for OpenCV
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import get_logger
 
 from ..camera import Camera
 from ..utils import get_cv2_backend, get_cv2_rotation
@@ -45,7 +48,7 @@ from .configuration_opencv import ColorMode, OpenCVCameraConfig
 # treat the same cameras as new devices. Thus we select a higher bound to search indices.
 MAX_OPENCV_INDEX = 60
 
-logger = logging.getLogger(__name__)
+logger = get_logger("CVCam")
 
 
 class OpenCVCamera(Camera):
@@ -130,7 +133,10 @@ class OpenCVCamera(Camera):
 
         if self.height and self.width:
             self.capture_width, self.capture_height = self.width, self.height
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            if self.rotation in [
+                cv2.ROTATE_90_CLOCKWISE,
+                cv2.ROTATE_90_COUNTERCLOCKWISE,
+            ]:
                 self.capture_width, self.capture_height = self.height, self.width
 
     def __str__(self) -> str:
@@ -139,7 +145,10 @@ class OpenCVCamera(Camera):
     @property
     def is_connected(self) -> bool:
         """Checks if the camera is currently connected and opened."""
-        return isinstance(self.videocapture, cv2.VideoCapture) and self.videocapture.isOpened()
+        return (
+            isinstance(self.videocapture, cv2.VideoCapture)
+            and self.videocapture.isOpened()
+        )
 
     def connect(self, warmup: bool = True) -> None:
         """
@@ -200,7 +209,9 @@ class OpenCVCamera(Camera):
                                      to configure settings.
         """
         if not self.is_connected:
-            raise DeviceNotConnectedError(f"Cannot configure settings for {self} as it is not connected.")
+            raise DeviceNotConnectedError(
+                f"Cannot configure settings for {self} as it is not connected."
+            )
 
         # Set FOURCC first (if specified) as it can affect available FPS/resolution options
         if self.config.fourcc is not None:
@@ -214,7 +225,10 @@ class OpenCVCamera(Camera):
         if self.width is None or self.height is None:
             self.width, self.height = default_width, default_height
             self.capture_width, self.capture_height = default_width, default_height
-            if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE]:
+            if self.rotation in [
+                cv2.ROTATE_90_CLOCKWISE,
+                cv2.ROTATE_90_COUNTERCLOCKWISE,
+            ]:
                 self.width, self.height = default_height, default_width
                 self.capture_width, self.capture_height = default_width, default_height
         else:
@@ -253,7 +267,9 @@ class OpenCVCamera(Camera):
 
         # Convert actual FOURCC code back to string for comparison
         actual_fourcc_code_int = int(actual_fourcc_code)
-        actual_fourcc = "".join([chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+        actual_fourcc = "".join(
+            [chr((actual_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)]
+        )
 
         if not success or actual_fourcc != self.config.fourcc:
             logger.warning(
@@ -270,8 +286,12 @@ class OpenCVCamera(Camera):
         if self.capture_width is None or self.capture_height is None:
             raise ValueError(f"{self} capture_width or capture_height is not set")
 
-        width_success = self.videocapture.set(cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width))
-        height_success = self.videocapture.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height))
+        width_success = self.videocapture.set(
+            cv2.CAP_PROP_FRAME_WIDTH, float(self.capture_width)
+        )
+        height_success = self.videocapture.set(
+            cv2.CAP_PROP_FRAME_HEIGHT, float(self.capture_height)
+        )
 
         actual_width = int(round(self.videocapture.get(cv2.CAP_PROP_FRAME_WIDTH)))
         if not width_success or self.capture_width != actual_width:
@@ -318,7 +338,9 @@ class OpenCVCamera(Camera):
                 # Get FOURCC code and convert to string
                 default_fourcc_code = camera.get(cv2.CAP_PROP_FOURCC)
                 default_fourcc_code_int = int(default_fourcc_code)
-                default_fourcc = "".join([chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)])
+                default_fourcc = "".join(
+                    [chr((default_fourcc_code_int >> 8 * i) & 0xFF) for i in range(4)]
+                )
 
                 camera_info = {
                     "name": f"OpenCV Camera @ {target}",
@@ -382,7 +404,9 @@ class OpenCVCamera(Camera):
 
         return processed_frame
 
-    def _postprocess_image(self, image: NDArray[Any], color_mode: ColorMode | None = None) -> NDArray[Any]:
+    def _postprocess_image(
+        self, image: NDArray[Any], color_mode: ColorMode | None = None
+    ) -> NDArray[Any]:
         """
         Applies color conversion, dimension validation, and rotation to a raw frame.
 
@@ -414,13 +438,19 @@ class OpenCVCamera(Camera):
             )
 
         if c != 3:
-            raise RuntimeError(f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR).")
+            raise RuntimeError(
+                f"{self} frame channels={c} do not match expected 3 channels (RGB/BGR)."
+            )
 
         processed_image = image
         if requested_color_mode == ColorMode.RGB:
             processed_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        if self.rotation in [cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE, cv2.ROTATE_180]:
+        if self.rotation in [
+            cv2.ROTATE_90_CLOCKWISE,
+            cv2.ROTATE_90_COUNTERCLOCKWISE,
+            cv2.ROTATE_180,
+        ]:
             processed_image = cv2.rotate(processed_image, self.rotation)
 
         return processed_image
@@ -437,7 +467,9 @@ class OpenCVCamera(Camera):
         Stops on DeviceNotConnectedError, logs other errors and continues.
         """
         if self.stop_event is None:
-            raise RuntimeError(f"{self}: stop_event is not initialized before starting read loop.")
+            raise RuntimeError(
+                f"{self}: stop_event is not initialized before starting read loop."
+            )
 
         while not self.stop_event.is_set():
             try:
@@ -450,7 +482,9 @@ class OpenCVCamera(Camera):
             except DeviceNotConnectedError:
                 break
             except Exception as e:
-                logger.warning(f"Error reading frame in background thread for {self}: {e}")
+                logger.warning(
+                    f"Error reading frame in background thread for {self}: {e}"
+                )
 
     def _start_read_thread(self) -> None:
         """Starts or restarts the background read thread if it's not running."""
@@ -514,7 +548,9 @@ class OpenCVCamera(Camera):
             self.new_frame_event.clear()
 
         if frame is None:
-            raise RuntimeError(f"Internal error: Event set but no frame available for {self}.")
+            raise RuntimeError(
+                f"Internal error: Event set but no frame available for {self}."
+            )
 
         return frame
 

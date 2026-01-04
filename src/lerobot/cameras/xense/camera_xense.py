@@ -16,7 +16,6 @@
 Provides the XenseTactileCamera class for capturing tactile data from Xense sensors.
 """
 
-import logging
 import time
 from threading import Event, Lock, Thread
 from typing import Any
@@ -24,12 +23,13 @@ from typing import Any
 import numpy as np
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
+from lerobot.utils.robot_utils import get_logger
 from xensesdk import CameraSource
 
 from ..camera import Camera
 from .configuration_xense import XenseCameraConfig, XenseOutputType
 
-logger = logging.getLogger(__name__)
+logger = get_logger("XenseCam")
 
 _CTYPES_FIND_LIBRARY_UDEV_PATCHED = False
 
@@ -280,7 +280,10 @@ class XenseTactileCamera(Camera):
         try:
             # Build sensor output types list (cached for performance)
             cache_key = tuple(self.output_types)
-            if self._sensor_output_types_cache is None or self._sensor_output_types_cache_key != cache_key:
+            if (
+                self._sensor_output_types_cache is None
+                or self._sensor_output_types_cache_key != cache_key
+            ):
                 # Map XenseOutputType to Sensor.OutputType
                 # Note: SDK uses CamelCase for OutputType attributes (e.g., Force, ForceResultant)
                 output_type_mapping = {
@@ -308,7 +311,6 @@ class XenseTactileCamera(Camera):
             results = self.sensor.selectSensorInfo(*self._sensor_output_types_cache)
             # for names, result in zip(self._sensor_output_types_cache, results):
 
-
             # image_outputs definition
             image_outputs = {
                 XenseOutputType.RECTIFY,
@@ -330,18 +332,28 @@ class XenseTactileCamera(Camera):
                         # - HW  -> WH
                         data = np.transpose(data, (1, 0) + tuple(range(2, data.ndim)))
                     if output_type == XenseOutputType.DEPTH:
-                        data = np.asarray(data) + np.float32(0.01)  # add 10mm to avoid log zero
+                        data = np.asarray(data) + np.float32(
+                            0.01
+                        )  # add 10mm to avoid log zero
                     processed_results.append(data)
                 return tuple(processed_results)
             else:
                 # single output type
-                if self.output_types[0] in image_outputs and getattr(results, "ndim", 0) >= 2:
+                if (
+                    self.output_types[0] in image_outputs
+                    and getattr(results, "ndim", 0) >= 2
+                ):
                     # print(f"DEBUG: Transposing shape {results.shape}")
                     results = np.transpose(
                         results, (1, 0) + tuple(range(2, results.ndim))
                     )
-                if self.output_types[0] == XenseOutputType.DEPTH and results is not None:
-                    results = np.asarray(results) + np.float32(0.01)  # add 10mm to avoid log zero
+                if (
+                    self.output_types[0] == XenseOutputType.DEPTH
+                    and results is not None
+                ):
+                    results = np.asarray(results) + np.float32(
+                        0.01
+                    )  # add 10mm to avoid log zero
                 return results
 
         except Exception as e:
@@ -364,7 +376,9 @@ class XenseTactileCamera(Camera):
             XenseOutputType.DIFFERENCE,
         }
 
-        def _bgr_to_rgb_if_needed(output_type: XenseOutputType, arr: np.ndarray) -> np.ndarray:
+        def _bgr_to_rgb_if_needed(
+            output_type: XenseOutputType, arr: np.ndarray
+        ) -> np.ndarray:
             if output_type not in image_bgr_outputs:
                 return arr
             if not isinstance(arr, np.ndarray):
@@ -385,7 +399,11 @@ class XenseTactileCamera(Camera):
         # Multiple outputs -> dict in the same order as requested
         if not isinstance(data, tuple):
             # Defensive: SDK should return tuple when multiple outputs requested
-            return {self.output_types[0].value: _bgr_to_rgb_if_needed(self.output_types[0], data)}
+            return {
+                self.output_types[0].value: _bgr_to_rgb_if_needed(
+                    self.output_types[0], data
+                )
+            }
 
         if len(data) != len(self.output_types):
             raise RuntimeError(
@@ -541,7 +559,9 @@ class XenseTactileCamera(Camera):
                 )
 
         if data is None:
-            raise RuntimeError(f"Internal error: Event set but no data available for {self}.")
+            raise RuntimeError(
+                f"Internal error: Event set but no data available for {self}."
+            )
 
         return self._format_read_result(data)
 
