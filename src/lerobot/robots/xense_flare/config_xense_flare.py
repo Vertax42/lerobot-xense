@@ -80,7 +80,7 @@ class XenseFlareConfig(RobotConfig):
 
     # Sensor settings (actual tactile image resolution: 96x160x3, format: width, height)
     rectify_size: tuple[int, int] = (96, 160)
-    sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
+    sensor_output_type: SensorOutputType = SensorOutputType.DIFFERENCE
 
     # Component enable flags
     enable_gripper: bool = True
@@ -92,7 +92,7 @@ class XenseFlareConfig(RobotConfig):
     gripper_max_pos: float = 85.0
 
     # HACK: Need to set the maximum readout after calibration, so we can normalize the gripper position
-    gripper_max_readout: float = 80.0
+    gripper_max_readout: float = 81.5
     # Sensor SN to feature key mapping
     # If a sensor SN is not in this dict, it will use "sensor_{sn}" as key
     # Example: {"OG000344": "tactile_thumb", "OG000337": "tactile_finger"}
@@ -106,6 +106,7 @@ class XenseFlareConfig(RobotConfig):
     vive_to_ee_pos: list = field(
         default_factory=lambda: [0.0, 0.0, 0.16]  # [x, y, z] in meters
     )
+
     vive_to_ee_quat: list = field(
         default_factory=lambda: [0.676, -0.207, -0.207, -0.676]  # [qw, qx, qy, qz]
     )
