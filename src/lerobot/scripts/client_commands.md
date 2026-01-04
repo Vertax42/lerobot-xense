@@ -67,11 +67,24 @@ lerobot-record \
     --robot.type=xense_flare \
     --robot.mac_addr=6ebbc5f53240 \
     --dataset.repo_id=Vertax/xense_flare_pick_and_place_cube \
-    --dataset.num_episodes=1 \
-    --dataset.single_task="pick rgb cubes from the table and place them in the blue box" \
+    --dataset.num_episodes=3 \
+    --dataset.single_task="pick up rgb cubes from the table and place them in the blue box" \
     --dataset.fps=20 \
     --display_data=false \
-    --resume=true \
+    --resume=false \
+    --dataset.push_to_hub=true
+```
+
+```python
+lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_pick_and_place_cubes_20260104 \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="pick up cubes in rgb order from the table and place them in the blue box" \
+    --dataset.fps=20 \
+    --display_data=false \
+    --resume=false \
     --dataset.push_to_hub=true
 ```
 
@@ -80,11 +93,11 @@ lerobot-record \
     --robot.type=xense_flare \
     --robot.mac_addr=6ebbc5f53240 \
     --dataset.repo_id=Vertax/xense_flare_cucumber_peeling \
-    --dataset.num_episodes=1 \
+    --dataset.num_episodes=3 \
     --dataset.single_task="peel a cucumber with a vegetable peeler" \
     --dataset.fps=20 \
     --display_data=false \
-    --resume=true \
+    --resume=false \
     --dataset.push_to_hub=true
 ```
 
