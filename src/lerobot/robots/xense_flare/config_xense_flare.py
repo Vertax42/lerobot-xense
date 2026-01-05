@@ -79,8 +79,8 @@ class XenseFlareConfig(RobotConfig):
     cam_size: tuple[int, int] = (640, 480)
 
     # Sensor settings (actual tactile image resolution: 96x160x3, format: width, height)
-    rectify_size: tuple[int, int] = (96, 160)
-    sensor_output_type: SensorOutputType = SensorOutputType.DIFFERENCE
+    rectify_size: tuple[int, int] = (200, 350)
+    sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
 
     # Component enable flags
     enable_gripper: bool = True
