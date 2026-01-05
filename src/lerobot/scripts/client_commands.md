@@ -62,6 +62,20 @@ lerobot-teleoperate \
 
 ## Xense-Flare Robot lerobot-record command
 
+
+```python
+lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_open_lock_20260105 \
+    --dataset.num_episodes=50 \
+    --dataset.single_task="open the lock with the key" \
+    --dataset.fps=20 \
+    --display_data=false \
+    --resume=false \
+    --dataset.push_to_hub=true
+```
+
 ```python
 lerobot-record \
     --robot.type=xense_flare \

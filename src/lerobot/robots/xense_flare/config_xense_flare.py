@@ -92,7 +92,7 @@ class XenseFlareConfig(RobotConfig):
     gripper_max_pos: float = 85.0
 
     # HACK: Need to set the maximum readout after calibration, so we can normalize the gripper position
-    gripper_max_readout: float = 80.2
+    gripper_max_readout: float = 82.0
     # Sensor SN to feature key mapping
     # If a sensor SN is not in this dict, it will use "sensor_{sn}" as key
     # Example: {"OG000344": "tactile_thumb", "OG000337": "tactile_finger"}
