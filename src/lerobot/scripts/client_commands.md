@@ -48,14 +48,44 @@ lerobot-teleoperate \
 ```
 
 ## xense_flare Robot teleoperate by Mock Teleop command
+
+### 1e892b82baa5 -another mac addr
 ```bash
 lerobot-teleoperate \
     --robot.type=xense_flare \
     --robot.mac_addr="6ebbc5f53240" \
     --teleop.type=mock_teleop \
-    --fps=30 \
+    --fps=20 \
     --display_data=true \
     --debug_timing=true
+```
+
+## Xense-Flare Robot lerobot-record command
+
+```python
+lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_pick_and_place_cube \
+    --dataset.num_episodes=1 \
+    --dataset.single_task="pick rgb cubes from the table and place them in the blue box" \
+    --dataset.fps=20 \
+    --display_data=false \
+    --resume=true \
+    --dataset.push_to_hub=true
+```
+
+```python
+lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_cucumber_peeling \
+    --dataset.num_episodes=1 \
+    --dataset.single_task="peel a cucumber with a vegetable peeler" \
+    --dataset.fps=20 \
+    --display_data=false \
+    --resume=true \
+    --dataset.push_to_hub=true
 ```
 
 ## BiARX5 Robot lerobot-record command
