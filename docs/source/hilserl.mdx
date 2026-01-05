@@ -308,12 +308,12 @@ Bounding the action space will reduce the redundant exploration of the agent and
 
 ```bash
 lerobot-find-joint-limits \
-  --robot.type=so100_follower \
-  --robot.port=/dev/tty.usbmodem58760431541 \
-  --robot.id=black \
-  --teleop.type=so100_leader \
-  --teleop.port=/dev/tty.usbmodem58760431551 \
-  --teleop.id=blue
+  --robot.type=<your_robot_type> \
+  --robot.port=<your_robot_port> \
+  --robot.id=<your_robot_id> \
+  --teleop.type=<your_teleop_type> \
+  --teleop.port=<your_teleop_port> \
+  --teleop.id=<your_teleop_id>
 ```
 
 **Workflow**
@@ -404,32 +404,10 @@ We support using a gamepad or a keyboard or the leader arm of the robot.
 
 HIL-Serl learns actions in the end-effector space of the robot. Therefore, the teleoperation will control the end-effector's x,y,z displacements.
 
-For that we need to define a version of the robot that takes actions in the end-effector space. Check the robot class `SO100FollowerEndEffector` and its configuration `SO100FollowerEndEffectorConfig` for the default parameters related to the end-effector space.
-
-<!-- prettier-ignore-start -->
-```python
-class SO100FollowerEndEffectorConfig(SO100FollowerConfig):
-    """Configuration for the SO100FollowerEndEffector robot."""
-
-    # Default bounds for the end-effector position (in meters)
-    end_effector_bounds: dict[str, list[float]] = field( # bounds for the end-effector in x,y,z direction
-        default_factory=lambda: {
-            "min": [-1.0, -1.0, -1.0],  # min x, y, z
-            "max": [1.0, 1.0, 1.0],  # max x, y, z
-        }
-    )
-
-    max_gripper_pos: float = 50 # maximum gripper position that the gripper will be open at
-
-    end_effector_step_sizes: dict[str, float] = field( # maximum step size for the end-effector in x,y,z direction
-        default_factory=lambda: {
-            "x": 0.02,
-            "y": 0.02,
-            "z": 0.02,
-        }
-    )
-```
-<!-- prettier-ignore-end -->
+For that we need to define a version of the robot that takes actions in the end-effector space. The configuration typically includes:
+- End-effector bounds (min/max x, y, z positions in meters)
+- Maximum gripper position
+- End-effector step sizes for each direction
 
 The `Teleoperator` defines the teleoperation device. You can check the list of available teleoperators in `lerobot/teleoperators`.
 

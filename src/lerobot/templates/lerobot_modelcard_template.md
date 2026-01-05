@@ -74,14 +74,6 @@ _Writes checkpoints to `outputs/train/<desired_policy_repo_id>/checkpoints/`._
 
 ### Evaluate the policy/run inference
 
-```bash
-lerobot-record \
-  --robot.type=so100_follower \
-  --dataset.repo_id=<hf_user>/eval_<dataset> \
-  --policy.path=<hf_user>/<desired_policy_repo_id> \
-  --episodes=10
-```
-
 Prefix the dataset repo with **eval\_** and supply `--policy.path` pointing to a local or hub checkpoint.
 
 ---

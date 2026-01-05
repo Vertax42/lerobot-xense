@@ -82,26 +82,9 @@ Checkout [src/lerobot/processor/converters.py](https://github.com/huggingface/le
 
 Dataset features are determined by the keys saved in the dataset. Each step can declare what features it modifies in a contract called `transform_features(...)`. Once you build a processor, the processor can then aggregate all of these features with `aggregate_pipeline_dataset_features()` and merge multiple feature dicts with `combine_feature_dicts(...)`.
 
-Below is and example of how we declare features with the `transform_features` method in the phone to SO-100 follower examples:
+Each processor step can declare what PolicyFeatures it modifies in the `transform_features` method, so we know what features we can expect when we run the processor. These features can then be aggregated and used to create the dataset features.
 
-```src/lerobot/robots/so100_follower/robot_kinematic_processor.py
-    def transform_features(
-        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
-    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
-        # We only use the ee pose in the dataset, so we don't need the joint positions
-        for n in self.motor_names:
-            features[PipelineFeatureType.ACTION].pop(f"{n}.pos", None)
-        # We specify the dataset features of this step that we want to be stored in the dataset
-        for k in ["x", "y", "z", "wx", "wy", "wz", "gripper_pos"]:
-            features[PipelineFeatureType.ACTION][f"ee.{k}"] = PolicyFeature(
-                type=FeatureType.STATE, shape=(1,)
-            )
-        return features
-```
-
-Here we declare what PolicyFeatures we modify in this step, so we know what features we can expect when we run the processor. These features can then be aggregated and used to create the dataset features.
-
-Below is an example of how we aggregate and merge features in the phone to SO-100 record example:
+Below is an example of how we aggregate and merge features:
 
 ```121:145:examples/phone_so100_record.py
 features=combine_feature_dicts(

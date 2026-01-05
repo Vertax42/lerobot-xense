@@ -13,23 +13,7 @@
 # limitations under the License.
 
 """
-Example command:
-```shell
-python src/lerobot/async_inference/robot_client.py \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-    --robot.id=black \
-    --task="dummy" \
-    --server_address=127.0.0.1:8080 \
-    --policy_type=act \
-    --pretrained_name_or_path=user/model \
-    --policy_device=mps \
-    --actions_per_chunk=50 \
-    --chunk_size_threshold=0.5 \
-    --aggregate_fn_name=weighted_average \
-    --debug_visualize_queue_size=True
-```
+Robot client for async inference.
 """
 
 import logging
@@ -51,11 +35,8 @@ from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraCon
 from lerobot.robots import (  # noqa: F401
     Robot,
     RobotConfig,
-    bi_so100_follower,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
 )
 from lerobot.transport import (
     services_pb2,  # type: ignore

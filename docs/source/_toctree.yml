@@ -59,10 +59,6 @@
     title: Processors for Robots and Teleoperators
   title: "Robot Processors"
 - sections:
-  - local: so101
-    title: SO-101
-  - local: so100
-    title: SO-100
   - local: koch
     title: Koch v1.1
   - local: lekiwi

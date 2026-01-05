@@ -80,8 +80,8 @@ Once training is complete, you can evaluate your ACT policy using the `lerobot-r
 
 ```bash
 lerobot-record \
-  --robot.type=so100_follower \
-  --robot.port=/dev/ttyACM0 \
+  --robot.type=<your_robot_type> \
+  --robot.port=<your_robot_port> \
   --robot.id=my_robot \
   --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}" \
   --display_data=true \

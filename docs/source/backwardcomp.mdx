@@ -117,9 +117,9 @@ To use degrees normalization we then set the `--robot.use_degrees` option to `tr
 
 ```diff
 python examples/backward_compatibility/replay.py \
-    --robot.type=so101_follower \
-    --robot.port=/dev/tty.usbmodem5A460814411 \
-    --robot.id=blue \
+    --robot.type=<your_robot_type> \
+    --robot.port=<your_robot_port> \
+    --robot.id=<your_robot_id> \
 +   --robot.use_degrees=true \
     --dataset.repo_id=my_dataset_id \
     --dataset.episode=0

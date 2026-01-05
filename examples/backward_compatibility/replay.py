@@ -14,17 +14,6 @@
 
 """
 Replays the actions of an episode from a dataset on a robot.
-
-Example:
-
-```shell
-lerobot-replay \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
-    --dataset.episode=2
-```
 """
 
 import logging
@@ -41,8 +30,6 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import busy_wait

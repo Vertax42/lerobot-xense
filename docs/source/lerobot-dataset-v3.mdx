@@ -27,21 +27,7 @@ Until that stable release, you can use the main branch by following the [build f
 
 ## Record a dataset
 
-Run the command below to record a dataset with the SO-101 and push to the Hub:
-
-```bash
-lerobot-record \
-  --robot.type=so101_follower \
-  --robot.port=/dev/tty.usbmodem585A0076841 \
-  --robot.id=my_awesome_follower_arm \
-  --robot.cameras="{ front: {type: opencv, index_or_path: 0, width: 1920, height: 1080, fps: 30}}" \
-  --teleop.type=so101_leader \
-  --teleop.port=/dev/tty.usbmodem58760431551 \
-  --teleop.id=my_awesome_leader_arm \
-  --display_data=true \
-  --dataset.repo_id=${HF_USER}/record-test \
-  --dataset.num_episodes=5 \
-  --dataset.single_task="Grab the black cube"
+Use the `lerobot-record` command to record a dataset and push to the Hub.
 ```
 
 See the [recording guide](./il_robots#record-a-dataset) for more details.

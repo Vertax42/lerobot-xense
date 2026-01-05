@@ -171,12 +171,32 @@ class XenseFlare(Robot):
     @cached_property
     def action_features(self) -> dict[str, type]:
         """
-        Action features accepted by this robot.
+        Action features for data collection.
 
-        Xense Flare is a pure observation device for data collection,
-        it has no action features (manually operated).
+        Returns the features that get_action() provides:
+        - Vive Tracker pose (tcp.x/y/z, tcp.qw/qx/qy/qz)
+        - Gripper position (gripper.pos)
+
+        These are used for recording demonstrations where XenseFlare
+        acts as both robot (observation) and teleoperator (action).
         """
-        return {}
+        features = {}
+
+        # Gripper position (always included if gripper enabled)
+        if self.config.enable_gripper:
+            features["gripper.pos"] = float
+
+        # TCP pose from Vive Tracker
+        if self.config.enable_vive:
+            features["tcp.x"] = float
+            features["tcp.y"] = float
+            features["tcp.z"] = float
+            features["tcp.qw"] = float
+            features["tcp.qx"] = float
+            features["tcp.qy"] = float
+            features["tcp.qz"] = float
+
+        return features
 
     @property
     def is_connected(self) -> bool:

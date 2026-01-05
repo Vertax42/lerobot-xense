@@ -219,7 +219,7 @@ def _test_camera(
     }
     total_history: deque[float] = deque(maxlen=max(1, int(camera_timing_window)))
     last_timing_log_t = time.perf_counter()
-    
+
     def get_observation() -> dict[str, Any]:
         nonlocal last_timing_log_t
         t0 = time.perf_counter()
@@ -367,9 +367,6 @@ def _register_builtin_devices(device_types: list[str] | None = None) -> dict[str
         ],
         "robots": [
             "lerobot.robots.koch_follower.config_koch_follower",
-            "lerobot.robots.so100_follower.config_so100_follower",
-            "lerobot.robots.so101_follower.config_so101_follower",
-            "lerobot.robots.bi_so100_follower.config_bi_so100_follower",
             "lerobot.robots.bi_arx5.config_bi_arx5",
             "lerobot.robots.arx5_follower.config_arx5_follower",
             "lerobot.robots.flexiv_rizon4.config_flexiv_rizon4",
@@ -531,14 +528,6 @@ def _build_sample_configs() -> dict[str, Any]:
         samples["keyboard_teleop_cfg_error"] = f"{type(e).__name__}: {e}"
 
     # Robots (configs only; do NOT connect/instantiate hardware)
-    try:
-        from lerobot.robots.so101_follower.config_so101_follower import SO101FollowerConfig
-
-        # Note: ports/IDs are placeholders for dev testing
-        samples["so101_robot_cfg"] = SO101FollowerConfig(port="/dev/ttyUSB0")
-    except Exception as e:
-        samples["so101_robot_cfg_error"] = f"{type(e).__name__}: {e}"
-
     try:
         from lerobot.robots.arx5_follower.config_arx5_follower import ARX5FollowerConfig
 

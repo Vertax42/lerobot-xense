@@ -14,29 +14,6 @@
 
 """
 Replays the actions of an episode from a dataset on a robot.
-
-Examples:
-
-```shell
-lerobot-replay \
-    --robot.type=so100_follower \
-    --robot.port=/dev/tty.usbmodem58760431541 \
-    --robot.id=black \
-    --dataset.repo_id=aliberts/record-test \
-    --dataset.episode=0
-```
-
-Example replay with bimanual so100:
-```shell
-lerobot-replay \
-  --robot.type=bi_so100_follower \
-  --robot.left_arm_port=/dev/tty.usbmodem5A460851411 \
-  --robot.right_arm_port=/dev/tty.usbmodem5A460812391 \
-  --robot.id=bimanual_follower \
-  --dataset.repo_id=${HF_USER}/bimanual-so100-handover-cube \
-  --dataset.episode=0
-```
-
 """
 
 import logging
@@ -55,13 +32,10 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     arx5_follower,
     bi_arx5,
-    bi_so100_follower,
     flexiv_rizon4,  # noqa: F401
     hope_jr,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
 )
 from lerobot.utils.constants import ACTION
 from lerobot.utils.import_utils import register_third_party_devices

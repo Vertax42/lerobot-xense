@@ -99,26 +99,7 @@ These results demonstrate GR00T's strong generalization capabilities across dive
 
 ### Evaluate in your hardware setup
 
-Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Imitation Learning for Robots](./il_robots). For example:
-
-```bash
-lerobot-record \
-  --robot.type=bi_so100_follower \
-  --robot.left_arm_port=/dev/ttyACM1 \
-  --robot.right_arm_port=/dev/ttyACM0 \
-  --robot.id=bimanual_follower \
-  --robot.cameras='{ right: {"type": "opencv", "index_or_path": 0, "width": 640, "height": 480, "fps": 30},
-    left: {"type": "opencv", "index_or_path": 2, "width": 640, "height": 480, "fps": 30},
-    top: {"type": "opencv", "index_or_path": 4, "width": 640, "height": 480, "fps": 30},
-  }' \
-  --display_data=true \
-  --dataset.repo_id=<user>/eval_groot-bimanual  \
-  --dataset.num_episodes=10 \
-  --dataset.single_task="Grab and handover the red cube to the other arm"
-  --policy.path=<user>/groot-bimanual # your trained model
-  --dataset.episode_time_s=30
-  --dataset.reset_time_s=10
-```
+Once you have trained your model using your parameters you can run inference in your downstream task. Follow the instructions in [Imitation Learning for Robots](./il_robots).
 
 ## License
 

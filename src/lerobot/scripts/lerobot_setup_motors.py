@@ -33,8 +33,6 @@ from lerobot.robots import (  # noqa: F401
     koch_follower,
     lekiwi,
     make_robot_from_config,
-    so100_follower,
-    so101_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
@@ -54,10 +52,6 @@ except ImportError:
 COMPATIBLE_DEVICES = [
     "koch_follower",
     "koch_leader",
-    "so100_follower",
-    "so100_leader",
-    "so101_follower",
-    "so101_leader",
     "lekiwi",
 ]
 

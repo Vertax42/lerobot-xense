@@ -16,18 +16,6 @@
 
 """
 Simple script to control a robot from teleoperation.
-
-Example:
-
-```shell
-lerobot-find-joint-limits \
-  --robot.type=so100_follower \
-  --robot.port=/dev/tty.usbmodem58760431541 \
-  --robot.id=black \
-  --teleop.type=so100_leader \
-  --teleop.port=/dev/tty.usbmodem58760431551 \
-  --teleop.id=blue
-```
 """
 
 import time
@@ -41,7 +29,6 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     koch_follower,
     make_robot_from_config,
-    so100_follower,
 )
 from lerobot.teleoperators import (  # noqa: F401
     TeleoperatorConfig,
