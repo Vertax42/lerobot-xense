@@ -119,7 +119,7 @@ class FlexivRizon4Config(RobotConfig):
     stiffness_ratio: float = 1.0
 
     # Cartesian motion parameters (from example: SEARCH_VELOCITY = 0.02 m/s)
-    cartesian_max_linear_vel: float = 0.1  # m/s, conservative defaultcd /home/vertax/lerobot-xense && mamba activate lerobot-xense && python3 -m lerobot.scripts.lerobot_test --teleop.type=spacemouse --help 2>&1 | head -40
+    cartesian_max_linear_vel: float = 0.2  # m/s, conservative defaultcd /home/vertax/lerobot-xense && mamba activate lerobot-xense && python3 -m lerobot.scripts.lerobot_test --teleop.type=spacemouse --help 2>&1 | head -40
 
     # Force control settings (for CARTESIAN_MOTION_FORCE mode when use_force=True)
     # Reference frame for force control (flexivrdk.CoordType.WORLD or flexivrdk.CoordType.TCP)
@@ -142,11 +142,11 @@ class FlexivRizon4Config(RobotConfig):
     # Maximum contact wrench [fx, fy, fz, mx, my, mz] in N and Nm
     # Safety limit for contact forces during motion control (not force control mode).
     # When exceeded, robot will stop or reduce speed to prevent damage.
-    # 
+    #
     # Default values are conservative for general manipulation tasks:
     # - Forces: 30 N (suitable for grasping, pushing, insertion)
     # - Torques: 5 Nm (suitable for manipulation with moderate torques)
-    # 
+    #
     # For fine manipulation: use [10.0, 10.0, 10.0, 2.0, 2.0, 2.0]
     # For heavy manipulation: use [50.0, 50.0, 50.0, 10.0, 10.0, 10.0] or higher
     # For force control mode: set to [inf, inf, inf, inf, inf, inf] to disable (handled automatically)
@@ -186,13 +186,13 @@ class FlexivRizon4Config(RobotConfig):
     # Whether to use the Flare Gripper end-effector
     # If False, flare_gripper will be None and no gripper functionality is available
     use_gripper: bool = True
-    
+
     # Gripper identification (MAC address / serial number)
     flare_gripper_mac_addr: str = "e2b26adbb104"
-    
+
     # Camera settings (wrist camera resolution)
     flare_gripper_cam_size: tuple[int, int] = (640, 480)
-    
+
     # Tactile sensor settings
     flare_gripper_rectify_size: tuple[int, int] = (400, 700)
     flare_gripper_sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
@@ -200,14 +200,14 @@ class FlexivRizon4Config(RobotConfig):
         "OG000657": "right_tactile",
         "OG000450": "left_tactile",
     })
-    
+
     # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
     flare_gripper_max_pos: float = 85.0
-    
+
     # Gripper control parameters for set_position()
     flare_gripper_v_max: float = 80.0  # Maximum velocity mm/s
     flare_gripper_f_max: float = 20.0  # Maximum force N
-    
+
     # Initialize gripper to fully open on connect
     flare_gripper_init_open: bool = True
 
