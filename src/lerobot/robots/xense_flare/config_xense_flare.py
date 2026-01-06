@@ -129,7 +129,7 @@ class XenseFlareConfig(RobotConfig):
                 "OG000447": "right_tactile",
                 "OG000454": "left_tactile",
             }
-        
+
     def get_sensor_key(self, sensor_sn: str) -> str:
         """Get the feature key for a sensor SN.
 

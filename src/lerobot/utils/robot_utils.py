@@ -209,6 +209,13 @@ def euler_to_quaternion(
 ) -> tuple[float, float, float, float]:
     """Convert Euler angles (roll, pitch, yaw) to quaternion [qw, qx, qy, qz].
 
+    Uses ZYX intrinsic rotation order (yaw → pitch → roll), which is:
+    - First rotate around Z-axis by yaw
+    - Then rotate around Y-axis by pitch
+    - Finally rotate around X-axis by roll
+
+    This is consistent with Flexiv SDK convention and aerospace/aviation standard.
+
     Args:
         roll: Rotation around x-axis in radians
         pitch: Rotation around y-axis in radians
@@ -227,6 +234,49 @@ def euler_to_quaternion(
     qz = cr * cp * sy - sr * sp * cy
 
     return (qw, qx, qy, qz)
+
+
+def quaternion_to_euler(
+    qw: float, qx: float, qy: float, qz: float
+) -> tuple[float, float, float]:
+    """Convert quaternion [qw, qx, qy, qz] to Euler angles (roll, pitch, yaw).
+
+    Uses ZYX intrinsic rotation order, consistent with Flexiv SDK and aerospace standard.
+    This is the inverse of euler_to_quaternion().
+
+    Note: Gimbal lock occurs when pitch ≈ ±90°, causing roll and yaw to become coupled.
+
+    Args:
+        qw: Quaternion scalar component
+        qx: Quaternion x component
+        qy: Quaternion y component
+        qz: Quaternion z component
+
+    Returns:
+        Tuple of (roll, pitch, yaw) in radians:
+        - roll: Rotation around x-axis, range [-π, π]
+        - pitch: Rotation around y-axis, range [-π/2, π/2]
+        - yaw: Rotation around z-axis, range [-π, π]
+    """
+    # Roll (x-axis rotation)
+    sinr_cosp = 2 * (qw * qx + qy * qz)
+    cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    # Pitch (y-axis rotation)
+    sinp = 2 * (qw * qy - qz * qx)
+    # Handle gimbal lock
+    if abs(sinp) >= 1:
+        pitch = math.copysign(math.pi / 2, sinp)
+    else:
+        pitch = math.asin(sinp)
+
+    # Yaw (z-axis rotation)
+    siny_cosp = 2 * (qw * qz + qx * qy)
+    cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+
+    return (roll, pitch, yaw)
 
 
 def slerp_quaternion(

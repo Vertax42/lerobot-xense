@@ -127,7 +127,7 @@ class XenseFlare(Robot):
                 vive_to_ee_pos=self.config.vive_to_ee_pos,
                 vive_to_ee_quat=self.config.vive_to_ee_quat,
             )
-        
+
     @cached_property
     def observation_features(self) -> dict[str, type | tuple]:
         """
@@ -182,10 +182,6 @@ class XenseFlare(Robot):
         """
         features = {}
 
-        # Gripper position (always included if gripper enabled)
-        if self.config.enable_gripper:
-            features["gripper.pos"] = float
-
         # TCP pose from Vive Tracker
         if self.config.enable_vive:
             features["tcp.x"] = float
@@ -196,6 +192,9 @@ class XenseFlare(Robot):
             features["tcp.qy"] = float
             features["tcp.qz"] = float
 
+        # Gripper position (always included if gripper enabled)
+        if self.config.enable_gripper:
+            features["gripper.pos"] = float
         return features
 
     @property
@@ -467,9 +466,9 @@ class XenseFlare(Robot):
         """
         if not self.is_connected:
             raise RuntimeError("XenseFlare is not connected")
-        
+
         action = {}
-        
+
         # Get pose from Vive Tracker if enabled
         if self.config.enable_vive and self._vive_tracker is not None:
             try:
@@ -484,7 +483,7 @@ class XenseFlare(Robot):
                 action["tcp.qz"] = vive_action.get("tcp.qz", 0.0)
             except Exception as e:
                 self.logger.warn(f"Failed to get Vive Tracker action: {e}")
-        
+
         # Get gripper position from encoder (default 1.0 = fully open)
         if self.config.enable_gripper and self._gripper is not None:
             try:
@@ -494,7 +493,7 @@ class XenseFlare(Robot):
                 action["gripper.pos"] = 1.0
         else:
             action["gripper.pos"] = 1.0
-        
+
         return action
 
     def _scan_sensors(self) -> dict:
@@ -567,8 +566,7 @@ class XenseFlare(Robot):
             self._gripper.register_button_callback(event_type, callback)
         else:
             self.logger.warn("No gripper initialized, cannot register callback")
-    
-    
+
     def get_gripper_position(self) -> float:
         """
         Get current gripper position.
