@@ -141,10 +141,6 @@ class XenseFlare(Robot):
         """
         features = {}
 
-        # Gripper state
-        if self.config.enable_gripper:
-            features["gripper.pos"] = float
-
         # Wrist camera
         if self.config.enable_camera:
             h, w = self.config.cam_size[1], self.config.cam_size[0]
@@ -165,6 +161,10 @@ class XenseFlare(Robot):
         features["tcp.qx"] = float
         features["tcp.qy"] = float
         features["tcp.qz"] = float
+
+        # Gripper state
+        if self.config.enable_gripper:
+            features["gripper.pos"] = float
 
         return features
 
@@ -584,7 +584,7 @@ class XenseFlare(Robot):
                 raw_pos -= self.config.gripper_max_pos
                 # Normalize to [0, 1] range
                 if raw_pos < -0.02 or raw_pos > self.config.gripper_max_readout:
-                    self.logger.warn(f"Gripper position must be between 0 and gripper_max_readout={self.config.gripper_max_readout}, got {raw_pos}, clamping!")
+                    self.logger.warn(f"Gripper pos {raw_pos:.2f} out of range [0, {self.config.gripper_max_readout}], clamping")
                     raw_pos = np.clip(raw_pos, 0, self.config.gripper_max_readout)
 
                 normalized_pos = raw_pos / self.config.gripper_max_readout

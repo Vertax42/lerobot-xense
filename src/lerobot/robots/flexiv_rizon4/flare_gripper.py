@@ -17,6 +17,7 @@
 """Xense FlareGripper implementation for LeRobot."""
 
 from typing import Union
+
 from .config_flare_gripper import FlareGripperConfig
 from xensesdk import call_service, Sensor
 from xensegripper import XenseGripper, XenseCamera
@@ -137,20 +138,20 @@ class FlareGripper:
         """
         if not self._is_connected or self._gripper is None:
             return 0.0
+        
         try:
             status = self._gripper.get_gripper_status()
             if status is not None:
                 raw_pos = float(status.get("position", 0.0))
                 # Normalize to [0, 1] range
                 if raw_pos < 0.0 or raw_pos > self._gripper_max_pos:
-                    self._logger.warn(f"Gripper position must be between 0 and {self._gripper_max_pos}, got {raw_pos}, clamping!")
-                    return 0.0
+                    raw_pos = max(0.0, min(raw_pos, self._gripper_max_pos))
                 normalized_pos = raw_pos / self._gripper_max_pos
                 return max(0.0, min(1.0, normalized_pos))
             else:
-                raise ValueError("Failed to get gripper position")
+                return 0.0
         except Exception:
-            raise ValueError("Failed to get gripper position")
+            return 0.0
 
     def get_sensor_data(self) -> dict[str, any]:
         """

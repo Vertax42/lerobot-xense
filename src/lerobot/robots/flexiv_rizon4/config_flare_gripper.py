@@ -51,7 +51,7 @@ class FlareGripperConfig():
     # Camera settings
     cam_size: tuple[int, int] = (640, 480)
     # Sensor settings
-    rectify_size: tuple[int, int] = (400, 700)
+    rectify_size: tuple[int, int] = (96, 160)
     sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
     sensor_keys: dict[str, str] = field(default_factory=dict)
 

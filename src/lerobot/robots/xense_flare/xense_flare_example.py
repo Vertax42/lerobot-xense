@@ -22,9 +22,9 @@ All sensor data (Vive tracker, gripper, camera, tactile sensors) is
 visualized in the Rerun viewer.
 
 Usage:
-    python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240
-    python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240 --no-rerun
-    python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240 --fps 60
+    python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240
+    python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --no-rerun
+    python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --fps 60
 """
 
 import os
@@ -704,13 +704,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240
-  python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240 --no-sensor
-  python -m lerobot.robots.xense_flare.xense_flare_example --mac 6ebbc5f53240 --fps 30
+  python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240
+  python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --no-sensor
+  python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --fps 30
         """
     )
     parser.add_argument(
-        "--mac",
+        "--mac_addr",
         type=str,
         default="6ebbc5f53240",
         help="MAC address of the Xense Flare device",
@@ -774,7 +774,7 @@ Examples:
     else:
         logger.info("Xense Flare Example - Data Collection Mode")
     logger.info("=" * 70)
-    logger.info(f"MAC Address: {args.mac}")
+    logger.info(f"MAC Address: {args.mac_addr}")
     logger.info(f"Components: gripper={'OFF' if args.no_gripper else 'ON'}, "
                 f"sensor={'OFF' if args.no_sensor else 'ON'}, "
                 f"cam={'OFF' if args.no_cam else 'ON'}")
@@ -799,7 +799,7 @@ Examples:
     sensor_output = SensorOutputType.RECTIFY if args.sensor_output == "rectify" else SensorOutputType.DIFFERENCE
     
     config = XenseFlareConfig(
-        mac_addr=args.mac,
+        mac_addr=args.mac_addr,
         enable_gripper=not args.no_gripper,
         enable_sensor=not args.no_sensor,
         enable_camera=not args.no_cam,
