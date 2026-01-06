@@ -89,6 +89,10 @@ def make_teleoperator_from_config(config: TeleoperatorConfig) -> Teleoperator:
         from .vive_tracker import ViveTrackerTeleop
 
         return ViveTrackerTeleop(config)
+    elif config.type == "xense_flare":
+        from .xense_flare import XenseFlareTeleop
+
+        return XenseFlareTeleop(config)
     else:
         try:
             return cast(Teleoperator, make_device_from_device_class(config))

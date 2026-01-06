@@ -46,18 +46,30 @@ lerobot-teleoperate \
     --display_data=true \
     --dryrun=true
 ```
+## Flexiv Rizon4 Robot with Xense Flare teleoperate by Xense Flare command
+```bash
+lerobot-teleoperate \
+    --robot.type=flexiv_rizon4 \
+    --robot.flare_gripper_mac_addr="e2b26adbb104" \
+    --robot.control_mode=cartesian_motion_force_control \
+    --teleop.type=xense_flare \
+    --teleop.mac_addr="6ebbc5f53240" \
+    --fps=20 \
+    --display_data=true \
+    --dryrun=true
+```
 
 ## xense_flare Robot teleoperate by Mock Teleop command
-
 ### 1e892b82baa5 -another mac addr
-```bash
+
+```python
 lerobot-teleoperate \
     --robot.type=xense_flare \
     --robot.mac_addr="6ebbc5f53240" \
     --teleop.type=mock_teleop \
     --fps=20 \
     --display_data=true \
-    --debug_timing=true
+    --dryrun=false
 ```
 
 ## Xense-Flare Robot lerobot-record command
@@ -108,6 +120,19 @@ lerobot-record \
     --dataset.repo_id=Vertax/xense_flare_cucumber_peeling \
     --dataset.num_episodes=3 \
     --dataset.single_task="peel a cucumber with a vegetable peeler" \
+    --dataset.fps=20 \
+    --display_data=false \
+    --resume=false \
+    --dataset.push_to_hub=true
+```
+
+```python
+lerobot-record \
+    --robot.type=xense_flare \
+    --robot.mac_addr=6ebbc5f53240 \
+    --dataset.repo_id=Vertax/xense_flare_replay_test \
+    --dataset.num_episodes=2 \
+    --dataset.single_task="xense flare traj replay test" \
     --dataset.fps=20 \
     --display_data=false \
     --resume=false \

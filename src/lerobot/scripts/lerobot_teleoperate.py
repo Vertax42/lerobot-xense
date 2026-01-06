@@ -64,6 +64,7 @@ from lerobot.teleoperators import (  # noqa: F401
     spacemouse,
     pico4,
     vive_tracker,
+    xense_flare,
 )
 
 from lerobot.utils.import_utils import register_third_party_devices
@@ -771,6 +772,110 @@ def vive_tracker_teleop_loop(
             return
 
 
+def xense_flare_flexiv_teleop_loop(
+    teleop: Teleoperator,
+    robot: Robot,
+    fps: int,
+    teleop_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_action_processor: RobotProcessorPipeline[
+        tuple[RobotAction, RobotObservation], RobotAction
+    ],
+    robot_observation_processor: RobotProcessorPipeline[
+        RobotObservation, RobotObservation
+    ],
+    display_data: bool = False,
+    duration: float | None = None,
+    dryrun: bool = False,
+    debug_timing: bool = False,
+):
+    """
+    Teleop loop for Xense Flare teleoperator with Flexiv Rizon4 robot.
+
+    Xense Flare outputs actions directly in Flexiv format:
+    - tcp.x, tcp.y, tcp.z: absolute TCP position (meters)
+    - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion)
+    - gripper.pos: gripper position from encoder (0=closed, 1=open)
+
+    Control scheme:
+    - Vive Tracker provides absolute 6-DoF pose tracking
+    - Gripper encoder provides gripper position
+    - Can register button callbacks for episode control
+    """
+    start = time.perf_counter()
+
+    while True:
+        loop_start = time.perf_counter()
+
+        # Get robot observation
+        obs_start = time.perf_counter()
+        # obs = robot.get_observation()
+        obs_time = time.perf_counter() - obs_start
+
+        # Get teleop action from Xense Flare (TCP pose + gripper)
+        teleop_start = time.perf_counter()
+        try:
+            raw_action = teleop.get_action()
+        except Exception as e:
+            logger.error(f"Error getting Xense Flare action: {e}")
+            # On error, skip this iteration
+            dt_s = time.perf_counter() - loop_start
+            busy_wait(1 / fps - dt_s)
+            continue
+        teleop_time = time.perf_counter() - teleop_start
+
+        # Process teleop action through pipeline (usually identity)
+        teleop_action = raw_action
+
+        # For Xense Flare + Flexiv, action is already in correct format
+        # TCP pose (7D) + gripper.pos (1D) matches Flexiv's action_features
+        robot_action_to_send = teleop_action
+
+        # Send action to robot
+        send_time = 0.0
+        if not dryrun:
+            send_start = time.perf_counter()
+            try:
+                _ = robot.send_action(teleop_action)
+            except Exception as e:
+                logger.error(f"Error sending action to robot: {e}")
+            send_time = time.perf_counter() - send_start
+
+        if display_data:
+            # Process robot observation through pipeline
+            # obs_transition = robot_observation_processor(obs)
+
+            log_rerun_data(
+                # observation=obs_transition,
+                action=teleop_action,
+            )
+
+        dt_s = time.perf_counter() - loop_start
+        busy_wait(1 / fps - dt_s)
+        loop_s = time.perf_counter() - loop_start
+
+        # Print status line with gripper info (single line, clear before print)
+        gripper_str = f"grip={robot_action_to_send.get('gripper.pos', 0.0):.2f}"
+        pos_str = f"pos=[{robot_action_to_send.get('tcp.x', 0):.3f}, {robot_action_to_send.get('tcp.y', 0):.3f}, {robot_action_to_send.get('tcp.z', 0):.3f}]"
+        
+        if debug_timing:
+            # Detailed timing breakdown
+            timing_str = f"obs:{obs_time*1e3:.1f} teleop:{teleop_time*1e3:.1f} send:{send_time*1e3:.1f}"
+            if dryrun:
+                print(f"\r\033[K{loop_s*1e3:.1f}ms ({1/loop_s:.0f}Hz) | {timing_str} | [DRY] {pos_str} | {gripper_str}", end="", flush=True)
+            else:
+                print(f"\r\033[K{loop_s*1e3:.1f}ms ({1/loop_s:.0f}Hz) | {timing_str} | {pos_str} | {gripper_str}", end="", flush=True)
+        else:
+            if dryrun:
+                print(f"\r\033[Ktime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | [DRYRUN] | {pos_str} | {gripper_str}", end="", flush=True)
+            else:
+                print(f"\r\033[Ktime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {pos_str} | {gripper_str}", end="", flush=True)
+
+        if duration is not None and time.perf_counter() - start >= duration:
+            return
+
+
 def xense_flare_teleop_loop(
     robot: Robot,
     fps: int,
@@ -965,31 +1070,7 @@ def xense_flare_teleop_loop(
                 except Exception:
                     pass  # Lighthouse visualization is optional
 
-            if not debug_timing:
-                # Display observation data
-                col_width = 25
-
-                # Print header
-                print("\n" + "-" * (col_width + 15))
-                print(f"{'OBSERVATION':<{col_width}} | {'VALUE':>12}")
-                print("-" * (col_width + 15))
-
-                # Display pose data
-                pose_keys = ["tcp.x", "tcp.y", "tcp.z", "tcp.qw", "tcp.qx", "tcp.qy", "tcp.qz"]
-                for key in pose_keys:
-                    if key in obs:
-                        print(f"{key:<{col_width}} | {obs[key]:>12.4f}")
-
-                # Display gripper
-                if "gripper.pos" in obs:
-                    print(f"{'gripper.pos':<{col_width}} | {obs['gripper.pos']:>12.4f}")
-
-                # Count images
-                image_count = sum(1 for k, v in obs.items() if hasattr(v, 'shape') and len(v.shape) >= 2)
-                print(f"{'[Images]':<{col_width}} | {image_count:>12}", flush=True)
-
-                # Move cursor up
-                move_cursor_up(len(pose_keys) + 4)
+            # Terminal display is handled below (outside display_data block)
 
         dt_s = time.perf_counter() - loop_start
         busy_wait(1 / fps - dt_s)
@@ -997,25 +1078,15 @@ def xense_flare_teleop_loop(
         timing_stats["loop_times"].append(loop_s * 1000)
 
         if debug_timing:
-            # Display timing info
-            print()
-            print("🔍 XENSE FLARE TIMING DEBUG")
-            print("=" * 50)
-            print(f"📊 Total observation: {total_obs_time * 1000:.1f}ms")
-            print(f"⏱️  Loop time:        {loop_s * 1000:.1f}ms")
-            print(f"🎯 Target period:     {1000/fps:.1f}ms")
-            print(f"📈 Loop efficiency:   {(1000/fps)/(loop_s * 1000)*100:.1f}%")
-            print("=" * 50, flush=True)
-
-            # Move cursor up to refresh in place
-            move_cursor_up(8)
+            # Display timing info (single line, clear before print)
+            print(f"\r\033[K🔍 obs: {total_obs_time*1000:5.1f}ms | loop: {loop_s*1000:5.1f}ms | target: {1000/fps:.1f}ms | eff: {(1/fps)/loop_s*100:5.1f}%", end="", flush=True)
         else:
-            # Simple status line
+            # Simple status line (single line with clear)
             pose_str = ""
             if "tcp.x" in obs and "tcp.y" in obs and "tcp.z" in obs:
                 pose_str = f"pos=[{obs['tcp.x']:.3f}, {obs['tcp.y']:.3f}, {obs['tcp.z']:.3f}]"
             gripper_str = f"grip={obs.get('gripper.pos', 0.0):.2f}"
-            print(f"\rtime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {pose_str} | {gripper_str}", end="", flush=True)
+            print(f"\r\033[Ktime: {loop_s * 1e3:.2f}ms ({1 / loop_s:.0f} Hz) | {pose_str} | {gripper_str}", end="", flush=True)
 
         if duration is not None and time.perf_counter() - start >= duration:
             # Print final statistics before exiting
@@ -1418,6 +1489,101 @@ def teleoperate(cfg: TeleoperateConfig):
                         logger.info("Vive Tracker disconnected")
                 except Exception as e:
                     logger.error(f"Error disconnecting Vive Tracker: {e}\n{traceback.format_exc()}")
+
+            if robot is not None:
+                try:
+                    if robot.is_connected:
+                        robot.disconnect()
+                        logger.info("Robot safely disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting robot: {e}\n{traceback.format_exc()}")
+                    # Force cleanup even if disconnect fails
+                    try:
+                        if hasattr(robot, '_robot') and robot._robot is not None:
+                            robot._robot.Stop()
+                    except Exception:
+                        pass
+    # Check if this is Flexiv Rizon4 robot with xense_flare teleoperator
+    elif cfg.robot.type == "flexiv_rizon4" and cfg.teleop.type == "xense_flare":
+        logger.info("Detected Flexiv Rizon4 robot with Xense Flare teleoperator, using specialized teleop loop")
+
+        robot = None
+        teleop = None
+
+        try:
+            # Create robot instance
+            robot = make_robot_from_config(cfg.robot)
+
+            # Ensure robot is in CARTESIAN_MOTION_FORCE mode for xense_flare teleop
+            from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode
+            if robot.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
+                raise ValueError(
+                    f"Xense Flare teleoperation requires CARTESIAN_MOTION_FORCE mode, "
+                    f"but robot is configured with {robot.config.control_mode}"
+                )
+
+            # Connect to robot with error handling
+            try:
+                robot.connect(go_to_start=False)
+                logger.info(f"Start TCP pose (quat): {robot.get_current_tcp_pose_quat()}")
+            except Exception as e:
+                logger.error(f"Failed to connect to robot: {e}\n{traceback.format_exc()}")
+                raise
+
+            teleop_action_processor, robot_action_processor, robot_observation_processor = (
+                make_default_processors()
+            )
+
+            # Connect to teleoperator with error handling
+            try:
+                teleop = make_teleoperator_from_config(cfg.teleop)
+                # Xense Flare requires current TCP pose for Vive Tracker coordinate transformation
+                # get_current_tcp_pose_quat() returns 8D [x,y,z,qw,qx,qy,qz,gripper], take first 7
+                current_tcp_pose = robot.get_current_tcp_pose_quat()[:7]
+                teleop.connect(current_tcp_pose_quat=current_tcp_pose)
+                logger.info("Connected to Xense Flare teleoperator")
+            except Exception as e:
+                logger.error(f"Failed to connect to Xense Flare: {e}\n{traceback.format_exc()}")
+                raise
+
+            # Run teleoperation loop
+            try:
+                xense_flare_flexiv_teleop_loop(
+                    teleop=teleop,
+                    robot=robot,
+                    fps=cfg.fps,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    teleop_action_processor=teleop_action_processor,
+                    robot_action_processor=robot_action_processor,
+                    robot_observation_processor=robot_observation_processor,
+                    dryrun=cfg.dryrun,
+                    debug_timing=cfg.debug_timing,
+                )
+            except KeyboardInterrupt:
+                logger.info("Teleoperation interrupted by user")
+            except Exception as e:
+                logger.error(f"Error during teleoperation loop: {e}\n{traceback.format_exc()}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Error in teleoperation setup or execution: {e}\n{traceback.format_exc()}")
+            logger.error(f"Teleoperation failed\n{traceback.format_exc()}")
+        finally:
+            # Safe disconnect - ensure both robot and teleop are disconnected
+            if cfg.display_data:
+                try:
+                    rr.rerun_shutdown()
+                except Exception as e:
+                    logger.warn(f"Error shutting down rerun: {e}")
+
+            if teleop is not None:
+                try:
+                    if teleop.is_connected:
+                        teleop.disconnect()
+                        logger.info("Xense Flare teleoperator disconnected")
+                except Exception as e:
+                    logger.error(f"Error disconnecting Xense Flare: {e}\n{traceback.format_exc()}")
 
             if robot is not None:
                 try:
