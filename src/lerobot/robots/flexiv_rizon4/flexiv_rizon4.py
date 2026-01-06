@@ -117,9 +117,10 @@ class FlexivRizon4(Robot):
         self._robot: flexivrdk.Robot | None = None
         self._is_connected = False
 
+        self._flare_gripper: FlareGripper | None = None
         if config.use_gripper:
             self._flare_gripper = FlareGripper(config.flare_gripper)
-            
+
         # Control state - stores the current flexivrdk.Mode
         self._current_mode: flexivrdk.Mode | None = None
 

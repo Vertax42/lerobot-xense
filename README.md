@@ -48,6 +48,9 @@ bash ./setup_env.sh --install # you need to enter password for sudo access to in
 mamba list | grep ffmpeg
 ffmpeg -encoders | grep libsvtav1
 ```
+## 🤖 Flexiv Rizon4 Robot with Flare Gripper Policy Implementation
+
+Lerobot record XenseFlare dataset can be directly used for FlexivRizon4 policy training.  🎉
 
 ## 📊 Weights & Biases
 
