@@ -227,7 +227,7 @@ EOF
         else
             echo "[WARN] onnxruntime CUDA provider not found, skipping RPATH fix."
         fi
-        
+
 
         # Workaround:
         # After installing xensesdk, remove OpenCV's bundled Qt platform plugin if present.
@@ -284,6 +284,9 @@ EOF
     cp "$SDK_DIR/PXREARobotSDK.h" include/
     cp -r "$SDK_DIR/nlohmann" include/
     cp "$SDK_DIR/build/libPXREARobotSDK.so" lib/
+
+    # Clean up old build artifacts to avoid stale CMake cache issues
+    rm -rf build *.egg-info
 
     pip uninstall -y xensevr_pc_service_sdk 2>/dev/null || true
     python setup.py install
