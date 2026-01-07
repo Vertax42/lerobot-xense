@@ -519,10 +519,14 @@ class FlexivRizon4(Robot):
                 "jntVelScale": 30,  # Joint velocity scale [1-100]
             },
         )
+        while not self._robot.primitive_states()["reachedTarget"]:
+            time.sleep(0.1)
+        
         if self.config.flare_gripper_init_open:
             self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
         else:
             self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
+        
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
@@ -561,6 +565,7 @@ class FlexivRizon4(Robot):
             self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
         else:
             self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
+        
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
