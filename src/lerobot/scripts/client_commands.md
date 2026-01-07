@@ -15,6 +15,7 @@ lerobot-teleoperate \
 ```python
 lerobot-teleoperate \
     --robot.type=arx5_follower \
+    --robot.control_mode=cartesian_control \
     --robot.enable_tactile_sensors=false \
     --teleop.type=mock_teleop \
     --fps=30 \
@@ -36,6 +37,7 @@ lerobot-teleoperate \
 ```
 
 ## Flexiv Rizon4 Robot with Flare Gripper teleoperate by Pico4 command
+
 ```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
@@ -46,7 +48,9 @@ lerobot-teleoperate \
     --display_data=true \
     --dryrun=true
 ```
+
 ## Flexiv Rizon4 Robot with Xense Flare teleoperate by Xense Flare command
+
 ```bash
 lerobot-teleoperate \
     --robot.type=flexiv_rizon4 \
@@ -60,6 +64,7 @@ lerobot-teleoperate \
 ```
 
 ## xense_flare Robot teleoperate by Mock Teleop command
+
 ### 1e892b82baa5 -another mac addr
 
 ```python

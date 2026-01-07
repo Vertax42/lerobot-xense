@@ -64,7 +64,7 @@ class BiARX5Config(RobotConfig):
     )
 
     # Control mode (default: joint control for teleoperation)
-    control_mode: BiARX5ControlMode = BiARX5ControlMode.JOINT_CONTROL
+    control_mode: BiARX5ControlMode = BiARX5ControlMode.TEACH_MODE
 
     # Inference mode
     inference_mode: bool = False
