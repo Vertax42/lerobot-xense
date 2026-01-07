@@ -115,8 +115,8 @@ dependencies = [
 pygame-dep = ["pygame>=2.5.1,<2.7.0"]
 placo-dep = ["placo>=0.9.6,<0.10.0"]
 xense = [
-    "xensesdk==1.6.5",
-] # Install with: pip install xensesdk==1.6.5 --no-deps (numpy conflict with rerun-sdk)
+    "xensesdk>=1.7.0",
+]
 transformers-dep = ["transformers>=4.53.0,<5.0.0"]
 grpcio-dep = [
     "grpcio==1.73.1",

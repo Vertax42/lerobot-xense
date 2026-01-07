@@ -1,27 +1,18 @@
 import sys
+
+# Work around conda environments that ship `$CONDA_PREFIX/lib/udev/` (a directory),
+# which can break `pyudev` and therefore `xensesdk` device scanning.
+from lerobot.cameras.xense.camera_xense import _patch_ctypes_find_library_for_udev
+_patch_ctypes_find_library_for_udev()
+
+# Now safe to import xensesdk
 from xensesdk import ExampleView
 from xensesdk import Sensor, CameraSource
 
 
 def main():
-    # Work around conda environments that ship `$CONDA_PREFIX/lib/udev/` (a directory),
-    # which can break `pyudev` and therefore `xensesdk` device scanning.
-    from lerobot.cameras.xense.camera_xense import _patch_ctypes_find_library_for_udev
 
-    _patch_ctypes_find_library_for_udev()
-
-    # Import torch to initialize CUDA runtime before xensesdk
-    # This is critical for onnxruntime GPU detection
-    try:
-        import torch
-
-        print(
-            f"Loaded torch {torch.__version__} with CUDA available: {torch.cuda.is_available()}"
-        )
-    except ImportError:
-        print("Warning: torch not available, xensesdk may fall back to CPU inference")
-
-    sensor_0 = Sensor.create("OG000337", use_gpu=True, api=CameraSource.CV2_V4L2)
+    sensor_0 = Sensor.create("OG000337", use_gpu=True   , api=CameraSource.CV2_V4L2)
     View = ExampleView(sensor_0)
     View2d = View.create2d(
         Sensor.OutputType.Difference,

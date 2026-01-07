@@ -204,12 +204,26 @@ EOF
         echo "[ERROR] Lerobot installation failed. See the error output above."
         exit 1
     fi
-    echo "[INFO] Installing xensesdk..."
+    echo "[INFO] Installing xensesdk and xensegripper..."
 
-    uv pip install onnxruntime-gpu==1.19.2
-    if uv pip install xensesdk==1.6.5; then
+    if uv pip install xensesdk xensegripper; then
         uv pip install av==15.1.0
-        echo "[INFO] xensesdk installed successfully!"
+        echo "[INFO] xensesdk and xensegripper installed successfully!"
+
+        # Fix onnxruntime-gpu CUDA library loading issue
+        # onnxruntime uses dlopen() to load CUDA provider, which doesn't respect LD_LIBRARY_PATH
+        # We use patchelf to set RPATH so it can find CUDA libraries in conda environment
+        echo "[INFO] Fixing onnxruntime-gpu RPATH for CUDA libraries..."
+        uv pip install patchelf
+        ONNX_CUDA_SO="${CONDA_PREFIX}/lib/python3.10/site-packages/onnxruntime/capi/libonnxruntime_providers_cuda.so"
+        if [[ -f "$ONNX_CUDA_SO" ]]; then
+            patchelf --set-rpath "${CONDA_PREFIX}/lib" "$ONNX_CUDA_SO"
+            echo "[INFO] onnxruntime-gpu RPATH fixed: $(patchelf --print-rpath "$ONNX_CUDA_SO")"
+        else
+            echo "[WARN] onnxruntime CUDA provider not found, skipping RPATH fix."
+        fi
+        
+
         # Workaround:
         # After installing xensesdk, remove OpenCV's bundled Qt platform plugin if present.
         # This avoids Qt/XCB plugin loading issues inside conda environments.
@@ -232,20 +246,7 @@ EOF
         fi
 
     else
-        echo "[ERROR] xensesdk installation failed. See the error output above."
-        exit 1
-    fi
-
-    # Install xensegripper without overriding xensesdk version
-    echo "[INFO] Installing xensegripper (keeping xensesdk==1.6.5)..."
-    # Use --no-deps to prevent xensegripper from pulling in xensesdk 1.7.0
-    if uv pip install xensegripper --no-deps; then
-        # Reinstall xensesdk to ensure correct version after any potential override
-        echo "[INFO] Reinstalling xensesdk==1.6.5..."
-        uv pip install xensesdk==1.6.5 --force-reinstall --no-deps
-        echo "[INFO] xensegripper installed successfully!"
-    else
-        echo "[ERROR] xensegripper installation failed. See the error output above."
+        echo "[ERROR] xensesdk/xensegripper installation failed. See the error output above."
         exit 1
     fi
 
