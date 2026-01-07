@@ -151,6 +151,11 @@ elif [[ "$1" == "--install" ]]; then
     PROJECT_ROOT=$(pwd)
     ARX5_SDK_DIR="$PROJECT_ROOT/src/lerobot/robots/bi_arx5/ARX5_SDK"
     if [[ -d "$ARX5_SDK_DIR" ]]; then
+        # Uninstall pip spdlog before building ARX5 SDK to avoid header conflicts
+        # pip spdlog installs headers in $CONDA_PREFIX/include/python3.10/spdlog/ which conflicts
+        # with conda's spdlog headers during ARX5 SDK compilation
+        pip uninstall -y spdlog 2>/dev/null || true
+        
         echo "[INFO] Building ARX5 SDK..."
         cd "$ARX5_SDK_DIR"
         rm -rf build
