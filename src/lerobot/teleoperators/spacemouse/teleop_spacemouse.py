@@ -39,7 +39,12 @@ from lerobot.teleoperators.spacemouse.config_spacemouse import SpacemouseConfig
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.teleoperators.utils import TeleopEvents
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import euler_to_quaternion, normalize_quaternion, get_logger
+from lerobot.utils.robot_utils import (
+    euler_to_quaternion,
+    get_logger,
+    normalize_quaternion,
+    quaternion_to_rotation_6d,
+)
 
 
 class SpacemouseTeleop(Teleoperator):
@@ -123,7 +128,9 @@ class SpacemouseTeleop(Teleoperator):
         """Spacemouse doesn't support feedback."""
         return {}
 
-    def connect(self, calibrate: bool = True, current_tcp_pose_euler: np.ndarray = np.zeros(7, dtype=np.float32)) -> None:
+    def connect(
+        self, calibrate: bool = True, current_tcp_pose_euler: np.ndarray = np.zeros(7, dtype=np.float32)
+    ) -> None:
         """Connect to the 3D Spacemouse."""
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected")
@@ -197,8 +204,12 @@ class SpacemouseTeleop(Teleoperator):
         positive_idx = raw_state >= self.config.deadzone
         negative_idx = raw_state <= -self.config.deadzone
         filtered_state = np.zeros_like(raw_state)
-        filtered_state[positive_idx] = (raw_state[positive_idx] - self.config.deadzone) / (1 - self.config.deadzone)
-        filtered_state[negative_idx] = (raw_state[negative_idx] + self.config.deadzone) / (1 - self.config.deadzone)
+        filtered_state[positive_idx] = (raw_state[positive_idx] - self.config.deadzone) / (
+            1 - self.config.deadzone
+        )
+        filtered_state[negative_idx] = (raw_state[negative_idx] + self.config.deadzone) / (
+            1 - self.config.deadzone
+        )
 
         # Apply axis inversion
         invert = np.where(self.config.invert_axes, -1.0, 1.0)
@@ -361,18 +372,18 @@ class SpacemouseTeleop(Teleoperator):
         self.logger.info(f"{self} disconnected.")
 
     def convert_to_flexiv_action(self, spacemouse_action: dict[str, Any]) -> dict[str, Any]:
-        """Convert spacemouse action (Euler angles) to Flexiv Rizon4 action (quaternion).
+        """Convert spacemouse action (Euler angles) to Flexiv Rizon4 action (6D rotation).
 
         This matches the behavior of spacemouse_teleop.py example:
         - Spacemouse maintains absolute pose in Euler angles [x, y, z, roll, pitch, yaw]
-        - Convert to quaternion format [x, y, z, qw, qx, qy, qz] for Flexiv SDK
+        - Convert to 6D rotation format [x, y, z, r1-r6] for Flexiv robot
 
         Args:
             spacemouse_action: Dictionary with keys {x, y, z, roll, pitch, yaw, gripper_pos}
         Returns:
-            Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
+            Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.r1-r6, gripper.pos}
         """
-        # Convert Euler angles to quaternion
+        # Convert Euler angles to quaternion first
         quat = euler_to_quaternion(
             spacemouse_action["roll"],
             spacemouse_action["pitch"],
@@ -382,15 +393,20 @@ class SpacemouseTeleop(Teleoperator):
         # Normalize quaternion to ensure unit length
         quat = normalize_quaternion(quat, input_format="wxyz")
 
-        # Map to Flexiv action format (matching Flexiv SDK SendCartesianMotionForce signature)
+        # Convert quaternion to 6D rotation representation
+        r6d = quaternion_to_rotation_6d(quat[0], quat[1], quat[2], quat[3])
+
+        # Map to Flexiv action format with 6D rotation
         return {
             "tcp.x": spacemouse_action["x"],
             "tcp.y": spacemouse_action["y"],
             "tcp.z": spacemouse_action["z"],
-            "tcp.qw": quat[0],
-            "tcp.qx": quat[1],
-            "tcp.qy": quat[2],
-            "tcp.qz": quat[3],
+            "tcp.r1": r6d[0],
+            "tcp.r2": r6d[1],
+            "tcp.r3": r6d[2],
+            "tcp.r4": r6d[3],
+            "tcp.r5": r6d[4],
+            "tcp.r6": r6d[5],
             "gripper.pos": spacemouse_action["gripper_pos"],
         }
 
@@ -399,5 +415,5 @@ class SpacemouseTeleop(Teleoperator):
         if self._is_connected:
             try:
                 self.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.error(f"Failed to disconnect from Spacemouse: {e}")

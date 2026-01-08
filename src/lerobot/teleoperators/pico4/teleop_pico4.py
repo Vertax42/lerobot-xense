@@ -40,7 +40,12 @@ import numpy as np
 from lerobot.teleoperators.pico4.config_pico4 import Pico4Config
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import normalize_quaternion, slerp_quaternion, get_logger
+from lerobot.utils.robot_utils import (
+    get_logger,
+    normalize_quaternion,
+    quaternion_to_rotation_6d,
+    slerp_quaternion,
+)
 
 
 class Pico4(Teleoperator):
@@ -73,8 +78,11 @@ class Pico4(Teleoperator):
 
     Output action format (Flexiv Rizon4):
     - tcp.x, tcp.y, tcp.z: absolute EEF target position (meters)
-    - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute EEF target orientation (quaternion)
+    - tcp.r1-r6: absolute EEF target orientation (6D rotation representation)
     - gripper.pos: absolute gripper position (meters, from trigger)
+
+    6D rotation representation uses the first two columns of the rotation matrix,
+    which provides continuous representation without singularities.
     """
 
     config_class = Pico4Config
@@ -107,17 +115,23 @@ class Pico4(Teleoperator):
 
         # Window filter queues for raw Pico4 data (before coordinate transformation)
         # Filter raw pose data from Pico4 SDK
-        self._raw_pos_queue: Queue = Queue(self.config.filter_window_size)  # Raw position [x, y, z] in Pico4 frame
-        self._raw_quat_queue: Queue = Queue(self.config.filter_window_size)  # Raw quaternion [qx, qy, qz, qw] in Pico4 frame
+        self._raw_pos_queue: Queue = Queue(
+            self.config.filter_window_size
+        )  # Raw position [x, y, z] in Pico4 frame
+        self._raw_quat_queue: Queue = Queue(
+            self.config.filter_window_size
+        )  # Raw quaternion [qx, qy, qz, qw] in Pico4 frame
 
         # State tracking
         self._enabled: bool = False
         self._was_enabled: bool = False  # Track previous enable state for edge detection
-        self._orientation_control_active: bool = True  # Whether orientation control is active (disabled if offset too large)
+        self._orientation_control_active: bool = (
+            True  # Whether orientation control is active (disabled if offset too large)
+        )
         self._was_reset_button_pressed: bool = False  # Track previous reset button state for edge detection
         self._last_grip: float = 0.0  # Last grip value for debugging
         self._last_a_button: bool = False  # Last A button state (cached from get_action)
-        
+
         # Position jump filtering
         self._last_raw_pose: np.ndarray | None = None  # Last raw pose for jump detection
         self._jump_filter_count: int = 0  # Count of filtered jumps for debugging
@@ -139,21 +153,23 @@ class Pico4(Teleoperator):
 
         Returns a dictionary with dtype, shape, and names for the action space:
         - tcp.x, tcp.y, tcp.z: absolute TCP position (meters) in Flexiv frame
-        - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion) in Flexiv frame
+        - tcp.r1-r6: absolute TCP orientation (6D rotation) in Flexiv frame
         - gripper.pos: absolute gripper position (meters)
         """
         return {
             "dtype": "float32",
-            "shape": (8,),
+            "shape": (10,),
             "names": {
                 "tcp.x": 0,
                 "tcp.y": 1,
                 "tcp.z": 2,
-                "tcp.qw": 3,
-                "tcp.qx": 4,
-                "tcp.qy": 5,
-                "tcp.qz": 6,
-                "gripper.pos": 7,
+                "tcp.r1": 3,
+                "tcp.r2": 4,
+                "tcp.r3": 5,
+                "tcp.r4": 6,
+                "tcp.r5": 7,
+                "tcp.r6": 8,
+                "gripper.pos": 9,
             },
         }
 
@@ -162,7 +178,9 @@ class Pico4(Teleoperator):
         """Pico4 doesn't support feedback."""
         return {}
 
-    def connect(self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray = np.zeros(8, dtype=np.float32)) -> None:
+    def connect(
+        self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray = np.zeros(8, dtype=np.float32)
+    ) -> None:
         """Connect to the Pico4 VR headset via xrt SDK.
 
         Important: The Pico4 coordinate system origin is set when the Unity application
@@ -207,7 +225,7 @@ class Pico4(Teleoperator):
                     pose = xrt.get_left_controller_pose()
                 else:
                     raise RuntimeError("No controller configured")
-                
+
                 # Check if pose data is valid
                 pose_has_data = any(abs(v) > 1e-6 for v in pose)
                 if pose_has_data:
@@ -296,7 +314,9 @@ class Pico4(Teleoperator):
         # Reset jump filter state
         self._last_raw_pose = None
 
-        self.logger.info(f"Reset target pose to: pos={pose_7d[:3]}, quat={pose_7d[3:7]}, gripper={gripper_pos}")
+        self.logger.info(
+            f"Reset target pose to: pos={pose_7d[:3]}, quat={pose_7d[3:7]}, gripper={gripper_pos}"
+        )
 
     def _quaternion_multiply(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
         """Multiply two quaternions q1 * q2. Both in [qw, qx, qy, qz] format."""
@@ -344,12 +364,15 @@ class Pico4(Teleoperator):
         # Extract position and quaternion from raw data
         pos = controller_pose_raw[:3].copy()  # [x, y, z] in Pico4 frame
         # Pico4 provides [x, y, z, qx, qy, qz, qw], convert to [qw, qx, qy, qz] for internal use
-        quat = np.array([
-            controller_pose_raw[6],  # qw
-            controller_pose_raw[3],  # qx
-            controller_pose_raw[4],  # qy
-            controller_pose_raw[5],  # qz
-        ], dtype=np.float32)  # [qw, qx, qy, qz] in Pico4 frame
+        quat = np.array(
+            [
+                controller_pose_raw[6],  # qw
+                controller_pose_raw[3],  # qx
+                controller_pose_raw[4],  # qy
+                controller_pose_raw[5],  # qz
+            ],
+            dtype=np.float32,
+        )  # [qw, qx, qy, qz] in Pico4 frame
         quat = normalize_quaternion(quat, input_format="wxyz")
 
         # When window_size=1, skip filtering and return raw data directly
@@ -383,7 +406,7 @@ class Pico4(Teleoperator):
             # 2. SLERP each half to get midpoint
             # 3. SLERP the two midpoints to get final result
             mid = n // 2
-            left_half = quat_list[:mid+1]
+            left_half = quat_list[: mid + 1]
             right_half = quat_list[mid:]
 
             # SLERP first half: from first to middle
@@ -405,7 +428,9 @@ class Pico4(Teleoperator):
 
         return filtered_pos, filtered_quat
 
-    def _transform_pico_to_flexiv_coordinate(self, pos: np.ndarray, quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def _transform_pico_to_flexiv_coordinate(
+        self, pos: np.ndarray, quat: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Transform pose from Pico4 coordinate system to Flexiv coordinate system.
 
         This is Step 2: Coordinate transformation after filtering.
@@ -443,11 +468,14 @@ class Pico4(Teleoperator):
         #    /
         #   Z (toward user)
 
-        transformed_pos = np.array([
-            -pos[2],  # Pico4 Z (in) -> Flexiv X (forward, negated because opposite direction)
-            -pos[0],  # Pico4 X (right) -> Flexiv Y (left, negated)
-            pos[1],   # Pico4 Y (up) -> Flexiv Z (up, same)
-        ], dtype=np.float32)
+        transformed_pos = np.array(
+            [
+                -pos[2],  # Pico4 Z (in) -> Flexiv X (forward, negated because opposite direction)
+                -pos[0],  # Pico4 X (right) -> Flexiv Y (left, negated)
+                pos[1],  # Pico4 Y (up) -> Flexiv Z (up, same)
+            ],
+            dtype=np.float32,
+        )
 
         # Quaternion transformation: rotate coordinate frame from Pico4 to Flexiv
         # The transformation is a 120° rotation around axis [1, -1, -1]/√3
@@ -488,7 +516,7 @@ class Pico4(Teleoperator):
 
         Returns a dictionary with absolute EEF pose (matching Flexiv Rizon4 format):
         - tcp.x, tcp.y, tcp.z: absolute TCP position (meters) in Flexiv frame
-        - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion) in Flexiv frame
+        - tcp.r1-r6: absolute TCP orientation (6D rotation) in Flexiv frame
         - gripper.pos: absolute gripper position (meters)
         """
         if not self._is_connected or self._xrt is None:
@@ -546,7 +574,7 @@ class Pico4(Teleoperator):
             # Position: record reference position for relative control
             self._ref_pos = filtered_pos_flexiv.copy()
             self._start_pos = self._target_pos.copy()
-            
+
             # Save start orientation for sensitivity scaling
             self._start_quat = self._target_quat.copy()
 
@@ -565,7 +593,7 @@ class Pico4(Teleoperator):
             offset_w = self._quat_offset[0]
             offset_angle_rad = 2.0 * np.arccos(np.clip(abs(offset_w), 0.0, 1.0))
             offset_angle_deg = np.degrees(offset_angle_rad)
-            
+
             # If angle > 90°, use the shorter path by negating the quaternion
             # This ensures we always use the quaternion representation with angle <= 90°
             if offset_angle_deg > 90.0:
@@ -574,7 +602,9 @@ class Pico4(Teleoperator):
                 self._quat_offset = normalize_quaternion(self._quat_offset, input_format="wxyz")
                 offset_angle_rad = 2.0 * np.arccos(np.clip(self._quat_offset[0], 0.0, 1.0))
                 offset_angle_deg = np.degrees(offset_angle_rad)
-                self.logger.debug(f"Using shorter path: offset angle = {offset_angle_deg:.1f}° (was {180.0 - offset_angle_deg:.1f}°)")
+                self.logger.debug(
+                    f"Using shorter path: offset angle = {offset_angle_deg:.1f}° (was {180.0 - offset_angle_deg:.1f}°)"
+                )
 
             # Log offset details for debugging
             self.logger.debug(
@@ -584,7 +614,7 @@ class Pico4(Teleoperator):
                 f"offset_quat={self._quat_offset}, "
                 f"offset_angle={offset_angle_deg:.1f}°"
             )
-            
+
             if offset_angle_deg > self.config.orientation_offset_warning_deg:
                 self.logger.warn(
                     f"Orientation offset too large: {offset_angle_deg:.1f}° > {self.config.orientation_offset_warning_deg}°. "
@@ -615,7 +645,7 @@ class Pico4(Teleoperator):
                 # This gives intuitive control: controller orientation directly maps to robot orientation
                 full_target_quat = self._quaternion_multiply(filtered_quat_flexiv, self._quat_offset)
                 full_target_quat = normalize_quaternion(full_target_quat, input_format="wxyz")
-                
+
                 # Apply orientation sensitivity using SLERP
                 # ori_sensitivity=1.0: full tracking, ori_sensitivity=0.5: half speed
                 if self.config.ori_sensitivity < 1.0:
@@ -633,18 +663,23 @@ class Pico4(Teleoperator):
         # trigger=0 -> gripper closed (0), trigger=1 -> gripper open (gripper_width)
         self._target_gripper_pos = 1.0 - float(controller_trigger) * self.config.gripper_width
 
-        # Step 7: Return in Flexiv Rizon4 action format
-        # Format: {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
-        # _target_quat is in [qw, qx, qy, qz] format
+        # Step 7: Return in Flexiv Rizon4 action format with 6D rotation
+        # Format: {tcp.x, tcp.y, tcp.z, tcp.r1-r6, gripper.pos}
+        # _target_quat is in [qw, qx, qy, qz] format, convert to 6D rotation
+        r6d = quaternion_to_rotation_6d(
+            self._target_quat[0], self._target_quat[1], self._target_quat[2], self._target_quat[3]
+        )
         return {
-            "tcp.x": float(self._target_pos[0]),
-            "tcp.y": float(self._target_pos[1]),
-            "tcp.z": float(self._target_pos[2]),
-            "tcp.qw": float(self._target_quat[0]),
-            "tcp.qx": float(self._target_quat[1]),
-            "tcp.qy": float(self._target_quat[2]),
-            "tcp.qz": float(self._target_quat[3]),
-            "gripper.pos": float(self._target_gripper_pos),
+            "tcp.x": self._target_pos[0],
+            "tcp.y": self._target_pos[1],
+            "tcp.z": self._target_pos[2],
+            "tcp.r1": r6d[0],
+            "tcp.r2": r6d[1],
+            "tcp.r3": r6d[2],
+            "tcp.r4": r6d[3],
+            "tcp.r5": r6d[4],
+            "tcp.r6": r6d[5],
+            "gripper.pos": self._target_gripper_pos,
         }
 
     def get_target_pose_array(self) -> tuple[np.ndarray, float]:
@@ -655,15 +690,18 @@ class Pico4(Teleoperator):
             Tuple of (tcp_pose, gripper_pos) where tcp_pose is [x, y, z, qw, qx, qy, qz] in Flexiv frame
         """
         # _target_quat is in [qw, qx, qy, qz] format
-        tcp_pose = np.array([
-            self._target_pos[0],
-            self._target_pos[1],
-            self._target_pos[2],
-            self._target_quat[0],  # qw
-            self._target_quat[1],  # qx
-            self._target_quat[2],  # qy
-            self._target_quat[3],  # qz
-        ], dtype=np.float32)
+        tcp_pose = np.array(
+            [
+                self._target_pos[0],
+                self._target_pos[1],
+                self._target_pos[2],
+                self._target_quat[0],  # qw
+                self._target_quat[1],  # qx
+                self._target_quat[2],  # qy
+                self._target_quat[3],  # qz
+            ],
+            dtype=np.float32,
+        )
         return tcp_pose, self._target_gripper_pos
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -672,23 +710,23 @@ class Pico4(Teleoperator):
 
     def get_reset_button(self) -> bool:
         """Get the state of the reset button with edge detection.
-        
+
         Only returns True on the rising edge (button just pressed), not while held.
         This prevents multiple resets when the button is held down.
-        
+
         Note: This uses the cached A button state from the last get_action() call
         to avoid additional SDK calls. Make sure get_action() is called before this.
-        
+
         Returns:
             True if reset button was just pressed (rising edge), False otherwise.
         """
         # Use cached button state from get_action() to avoid extra SDK calls
         current_pressed = self._last_a_button
-        
+
         # Edge detection: only trigger on rising edge (was not pressed, now pressed)
         just_pressed = current_pressed and not self._was_reset_button_pressed
         self._was_reset_button_pressed = current_pressed
-        
+
         return just_pressed
 
     def disconnect(self) -> None:
