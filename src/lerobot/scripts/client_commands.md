@@ -96,8 +96,8 @@ lerobot-record \
 lerobot-record \
     --robot.type=xense_flare \
     --robot.mac_addr=6ebbc5f53240 \
-    --dataset.repo_id=Vertax/xense_flare_open_lock \
-    --dataset.num_episodes=50 \
+    --dataset.repo_id=Vertax/xense_flare_open_lock_20260108 \
+    --dataset.num_episodes=20 \
     --dataset.single_task="open the lock with the key" \
     --dataset.fps=20 \
     --display_data=false \

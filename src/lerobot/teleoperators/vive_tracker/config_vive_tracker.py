@@ -41,6 +41,9 @@ class ViveTrackerConfig(TeleoperatorConfig):
         filter_window_size: Moving average filter window size for smoothing.
         position_jump_threshold: Max allowed position change per frame (meters).
         enable_position_jump_filter: Whether to enable position jump filtering.
+        position_deadzone: Min position change to register (meters), smaller changes ignored.
+        rotation_deadzone: Min rotation change to register (radians), smaller changes ignored.
+        enable_deadzone_filter: Whether to enable deadzone filtering for noise suppression.
     """
 
     id: str = "vive_tracker"
@@ -56,6 +59,11 @@ class ViveTrackerConfig(TeleoperatorConfig):
     filter_window_size: int = 3  # Moving average filter window size
     position_jump_threshold: float = 0.1  # Max position change per frame (meters)
     enable_position_jump_filter: bool = False  # Enable position jump filtering
+
+    # Deadzone filter settings (ignore small fluctuations/noise)
+    position_deadzone: float = 0.003  # Min position change to register (meters), ignore smaller movements
+    rotation_deadzone: float = 0.02  # Min rotation change to register (radians), ignore smaller rotations ~1deg
+    enable_deadzone_filter: bool = True  # Enable deadzone filtering for noise suppression
 
     # Coordinate system alignment
     vive_to_ee_pos: list = field(
