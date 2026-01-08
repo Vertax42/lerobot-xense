@@ -62,7 +62,7 @@ class XenseFlareTeleopConfig(TeleoperatorConfig):
     # Gripper settings
     enable_gripper: bool = True
     gripper_max_pos: float = 85.0  # SDK max position
-    gripper_max_readout: float = 82.0  # Max readout after calibration
+    gripper_max_readout: float = 83.5  # Max readout after calibration
 
     # Vive Tracker settings
     vive_config_path: Optional[str] = None

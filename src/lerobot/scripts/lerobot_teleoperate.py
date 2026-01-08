@@ -861,7 +861,7 @@ def xense_flare_flexiv_teleop_loop(
 
         # Get robot observation
         obs_start = time.perf_counter()
-        # obs = robot.get_observation()
+        obs = robot.get_observation()
         obs_time = time.perf_counter() - obs_start
 
         # Get teleop action from Xense Flare (TCP pose + gripper)
@@ -895,10 +895,10 @@ def xense_flare_flexiv_teleop_loop(
 
         if display_data:
             # Process robot observation through pipeline
-            # obs_transition = robot_observation_processor(obs)
+            obs_transition = robot_observation_processor(obs)
 
             log_rerun_data(
-                # observation=obs_transition,
+                observation=obs_transition,
                 action=teleop_action,
             )
 

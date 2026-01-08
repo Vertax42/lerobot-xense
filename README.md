@@ -6,6 +6,11 @@
 
 This repository is tested on Ubuntu 22.04, NVIDIA Unix Driver Archive >= 570.144. We strongly recommend using [`Mamba`](https://github.com/conda-forge/miniforge?tab=readme-ov-file#install) to manage your conda environments. You can also use conda, but it will take significantly longer. Due to the xensesdk dependencies, lerobot-xense works only with python 3.10 and pytorch 2.7.1+ with cuda-12.8 right now.
 
+```bash
+curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+bash Miniforge3-$(uname)-$(uname -m).sh
+```
+
 ### 📦 Environment Setup
 
 **Step 1:** 📥 Download and install the XenseVR PC Service `.deb` package from [XenseVR-PC-Service v0.1.0 Release](https://github.com/Vertax42/XenseVR-PC-Service/releases/tag/v0.1.0).
