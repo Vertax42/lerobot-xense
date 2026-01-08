@@ -35,15 +35,17 @@ from typing import Any
 
 import numpy as np
 
+from lerobot.utils.robot_utils import (
+    get_logger,
+    matrix_to_pose7d,
+    normalize_quaternion,
+    quaternion_to_matrix,
+    quaternion_to_rotation_6d,
+    slerp_quaternion,
+)
+
 from ..teleoperator import Teleoperator
 from .config_vive_tracker import ViveTrackerConfig
-from lerobot.utils.robot_utils import (
-    normalize_quaternion,
-    slerp_quaternion,
-    quaternion_to_matrix,
-    matrix_to_pose7d,
-    get_logger,
-)
 
 
 class PoseData:
@@ -59,9 +61,7 @@ class PoseData:
         self.device_name = device_name
         self.timestamp = timestamp
         self.position = np.asarray(position, dtype=np.float64)  # [x, y, z]
-        self.rotation = np.asarray(
-            rotation, dtype=np.float64
-        )  # [qw, qx, qy, qz] quaternion (wxyz format)
+        self.rotation = np.asarray(rotation, dtype=np.float64)  # [qw, qx, qy, qz] quaternion (wxyz format)
 
     @property
     def pose_7d(self) -> np.ndarray:
@@ -89,7 +89,9 @@ class ViveTrackerTeleop(Teleoperator):
     - transform_matrix = ee_init_pose * vive_init_pose.inverse()
     - action_pose = transform_matrix * vive_current_pose
 
-    Output format: [x, y, z, qw, qx, qy, qz] (7D pose in robot frame)
+    Output format: [x, y, z, r1, r2, r3, r4, r5, r6] (9D pose with 6D rotation)
+    - r1-r3: First column of rotation matrix
+    - r4-r6: Second column of rotation matrix
     """
 
     config_class = ViveTrackerConfig
@@ -107,11 +109,10 @@ class ViveTrackerTeleop(Teleoperator):
             import pysurvive
 
             self._pysurvive = pysurvive
-        except ImportError:
+        except ImportError as e:
             raise ImportError(
-                "pysurvive library not found. Please install it: "
-                "pip install pysurvive or build from source"
-            )
+                "pysurvive library not found. Please install it: pip install pysurvive or build from source"
+            ) from e
 
         # Build pysurvive parameters
         survive_args = sys.argv[:1]  # Keep program name
@@ -148,8 +149,7 @@ class ViveTrackerTeleop(Teleoperator):
 
         # pre-computed vive-to-ee transformation matrix
         self._vive_to_ee_matrix = quaternion_to_matrix(
-            np.concatenate([self.config.vive_to_ee_pos, self.config.vive_to_ee_quat]),
-            input_format="wxyz"
+            np.concatenate([self.config.vive_to_ee_pos, self.config.vive_to_ee_quat]), input_format="wxyz"
         )
 
         # For coordinate system alignment
@@ -168,15 +168,17 @@ class ViveTrackerTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        """Action features: 7D pose [x, y, z, qw, qx, qy, qz]."""
+        """Action features: 9D pose [x, y, z, r1, r2, r3, r4, r5, r6] using 6D rotation."""
         return {
             "tcp.x": float,
             "tcp.y": float,
             "tcp.z": float,
-            "tcp.qw": float,
-            "tcp.qx": float,
-            "tcp.qy": float,
-            "tcp.qz": float,
+            "tcp.r1": float,
+            "tcp.r2": float,
+            "tcp.r3": float,
+            "tcp.r4": float,
+            "tcp.r5": float,
+            "tcp.r6": float,
         }
 
     @property
@@ -194,9 +196,7 @@ class ViveTrackerTeleop(Teleoperator):
         """Vive Tracker uses lighthouse calibration, always True if connected."""
         return self.is_connected
 
-    def _filter_raw_pose(
-        self, pos: np.ndarray, quat: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _filter_raw_pose(self, pos: np.ndarray, quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Apply window filter to raw pose data.
 
         Args:
@@ -226,9 +226,7 @@ class ViveTrackerTeleop(Teleoperator):
         if n == 1:
             filtered_quat = quat_list[0]
         elif n == 2:
-            filtered_quat = slerp_quaternion(
-                quat_list[0], quat_list[1], 0.5, input_format="wxyz"
-            )
+            filtered_quat = slerp_quaternion(quat_list[0], quat_list[1], 0.5, input_format="wxyz")
         else:
             mid = n // 2
             left_half = quat_list[: mid + 1]
@@ -237,28 +235,20 @@ class ViveTrackerTeleop(Teleoperator):
             if len(left_half) == 1:
                 left_mid = left_half[0]
             else:
-                left_mid = slerp_quaternion(
-                    left_half[0], left_half[-1], 0.5, input_format="wxyz"
-                )
+                left_mid = slerp_quaternion(left_half[0], left_half[-1], 0.5, input_format="wxyz")
 
             if len(right_half) == 1:
                 right_mid = right_half[0]
             else:
-                right_mid = slerp_quaternion(
-                    right_half[0], right_half[-1], 0.5, input_format="wxyz"
-                )
+                right_mid = slerp_quaternion(right_half[0], right_half[-1], 0.5, input_format="wxyz")
 
-            filtered_quat = slerp_quaternion(
-                left_mid, right_mid, 0.5, input_format="wxyz"
-            )
+            filtered_quat = slerp_quaternion(left_mid, right_mid, 0.5, input_format="wxyz")
 
         filtered_quat = normalize_quaternion(filtered_quat, input_format="wxyz")
 
         return filtered_pos, filtered_quat
 
-    def connect(
-        self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None
-    ) -> None:
+    def connect(self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None) -> None:
         """Start Vive Tracker pose tracking and compute coordinate transformation.
 
         Args:
@@ -282,14 +272,10 @@ class ViveTrackerTeleop(Teleoperator):
             self._is_connected = True
 
             # Start threads
-            self._collector_thread = threading.Thread(
-                target=self._pose_collector, daemon=True
-            )
+            self._collector_thread = threading.Thread(target=self._pose_collector, daemon=True)
             self._collector_thread.start()
 
-            self._processor_thread = threading.Thread(
-                target=self._pose_processor, daemon=True
-            )
+            self._processor_thread = threading.Thread(target=self._pose_processor, daemon=True)
             self._processor_thread.start()
 
             self.logger.info(" ✅ Vive Tracker pose collector and processor started")
@@ -329,7 +315,7 @@ class ViveTrackerTeleop(Teleoperator):
             # Where vive_init and vive_current both need to be multiplied by vive2ee
             ee_init_pose = np.array(current_tcp_pose_quat, dtype=np.float64)
             ee_init_matrix = quaternion_to_matrix(ee_init_pose, input_format="wxyz")
-            
+
             # vive_init needs to include vive2ee transformation
             vive_init_matrix_raw = quaternion_to_matrix(vive_init_pose, input_format="wxyz")
             vive_init_matrix_with_vive2ee = vive_init_matrix_raw @ self._vive_to_ee_matrix
@@ -379,9 +365,7 @@ class ViveTrackerTeleop(Teleoperator):
 
     def calibrate(self) -> None:
         """Calibration is handled by pysurvive/lighthouse system."""
-        self.logger.info(
-            "Vive Tracker uses lighthouse calibration, no runtime calibration needed"
-        )
+        self.logger.info("Vive Tracker uses lighthouse calibration, no runtime calibration needed")
 
     def configure(self) -> None:
         """No additional configuration needed."""
@@ -397,21 +381,20 @@ class ViveTrackerTeleop(Teleoperator):
         Data processing pipeline:
         1. Get raw data: vive_tracker_pose from Vive Tracker
         2. Apply window filter to raw pose data
-        3. Transform from Vive Tracker to Flexiv coordinate system
-        4. Return in Flexiv Rizon4 format
+        3. Transform from Vive Tracker to robot coordinate system
+        4. Convert quaternion to 6D rotation representation
+        5. Return in robot format with 6D rotation
 
-        Returns a dictionary with absolute EEF pose (matching Flexiv Rizon4 format):
-        - tcp.x, tcp.y, tcp.z: absolute TCP position (meters) in Flexiv frame (mm -> m)
-        - tcp.qw, tcp.qx, tcp.qy, tcp.qz: absolute TCP orientation (quaternion) in Flexiv frame
-        - gripper.pos: absolute gripper position (meters) now set to 0.0 # TODO: add gripper position
+        Returns a dictionary with absolute EEF pose:
+        - tcp.x, tcp.y, tcp.z: absolute TCP position (meters)
+        - tcp.r1-r6: absolute TCP orientation (6D rotation representation)
+        - gripper.pos: gripper position (set to 0.0, handled by XenseFlareTeleop)
         """
         if not self.is_connected:
             raise RuntimeError("Vive Tracker is not connected")
 
         if self._transform_matrix is None:
-            raise RuntimeError(
-                "Transformation matrix not computed. Call connect() first."
-            )
+            raise RuntimeError("Transformation matrix not computed. Call connect() first.")
 
         # Get pose for active vive tracker
         with self._data_lock:
@@ -452,15 +435,20 @@ class ViveTrackerTeleop(Teleoperator):
 
         action_pose = matrix_to_pose7d(action_matrix, output_format="wxyz")
 
+        # Convert quaternion to 6D rotation representation
+        r6d = quaternion_to_rotation_6d(action_pose[3], action_pose[4], action_pose[5], action_pose[6])
+
         return {
-            "tcp.x": float(action_pose[0]),
-            "tcp.y": float(action_pose[1]),
-            "tcp.z": float(action_pose[2]),
-            "tcp.qw": float(action_pose[3]),
-            "tcp.qx": float(action_pose[4]),
-            "tcp.qy": float(action_pose[5]),
-            "tcp.qz": float(action_pose[6]),
-            "gripper.pos": float(0.0),
+            "tcp.x": action_pose[0],
+            "tcp.y": action_pose[1],
+            "tcp.z": action_pose[2],
+            "tcp.r1": r6d[0],
+            "tcp.r2": r6d[1],
+            "tcp.r3": r6d[2],
+            "tcp.r4": r6d[3],
+            "tcp.r5": r6d[4],
+            "tcp.r6": r6d[5],
+            "gripper.pos": 0.0,
         }
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
@@ -514,15 +502,12 @@ class ViveTrackerTeleop(Teleoperator):
 
             lighthouses = [n for n in all_devices if n.startswith("LH")]
             trackers = [
-                n
-                for n in all_devices
-                if n.startswith("WM") or n.startswith("T2") or n.startswith("HMD")
+                n for n in all_devices if n.startswith("WM") or n.startswith("T2") or n.startswith("HMD")
             ]
 
             if len(trackers) >= required_trackers and len(lighthouses) >= 1:
                 self.logger.info(
-                    f"Required devices found: {len(lighthouses)} lighthouses, "
-                    f"{len(trackers)} trackers"
+                    f"Required devices found: {len(lighthouses)} lighthouses, {len(trackers)} trackers"
                 )
                 break
 
@@ -532,11 +517,7 @@ class ViveTrackerTeleop(Teleoperator):
             all_devices = list(self._devices_info.keys())
 
         lighthouses = [n for n in all_devices if n.startswith("LH")]
-        trackers = [
-            n
-            for n in all_devices
-            if n.startswith("WM") or n.startswith("T2") or n.startswith("HMD")
-        ]
+        trackers = [n for n in all_devices if n.startswith("WM") or n.startswith("T2") or n.startswith("HMD")]
         others = [n for n in all_devices if n not in lighthouses and n not in trackers]
 
         result = {
@@ -546,9 +527,7 @@ class ViveTrackerTeleop(Teleoperator):
             "all": all_devices,
         }
 
-        self.logger.info(
-            f"Detection complete: {len(lighthouses)} lighthouses, {len(trackers)} trackers"
-        )
+        self.logger.info(f"Detection complete: {len(lighthouses)} lighthouses, {len(trackers)} trackers")
         return result
 
     def _pose_collector(self) -> None:
@@ -639,9 +618,7 @@ class ViveTrackerTeleop(Teleoperator):
             if n.startswith("WM") or n.startswith("T2") or n.startswith("HMD")
         ]
 
-        reference_lh = (
-            "LH0" if "LH0" in lighthouses else (lighthouses[0] if lighthouses else None)
-        )
+        reference_lh = "LH0" if "LH0" in lighthouses else (lighthouses[0] if lighthouses else None)
 
         self.logger.info("=" * 50)
         self.logger.info("Reference Coordinate System Information")
@@ -680,7 +657,5 @@ class ViveTrackerTeleop(Teleoperator):
             return [
                 name
                 for name in self._devices_info.keys()
-                if name.startswith("WM")
-                or name.startswith("T2")
-                or name.startswith("HMD")
+                if name.startswith("WM") or name.startswith("T2") or name.startswith("HMD")
             ]

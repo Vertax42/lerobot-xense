@@ -25,12 +25,18 @@ supporting two control modes (NRT = Non-Real-Time for Python API):
    - Uses impedance control with configurable stiffness via stiffness_ratio
 
 2. CARTESIAN_MOTION_FORCE (maps to NRT_CARTESIAN_MOTION_FORCE):
+   - Uses 6D rotation representation (r1-r6) for continuity and better learning
    - When use_force=False: Pure motion control
-     - Action: TCP pose (7D)
-     - Observation: TCP pose (7D)
+     - Action: TCP pose (9D: x,y,z + r1-r6) + gripper (1D) = 10D
+     - Observation: TCP pose (9D) + gripper (1D) = 10D
    - When use_force=True: Motion + force control
-     - Action: TCP pose (7D) + target wrench (6D) = 13D
-     - Observation: TCP pose (7D) + external wrench (6D) = 13D
+     - Action: TCP pose (9D) + target wrench (6D) + gripper (1D) = 16D
+     - Observation: TCP pose (9D) + external wrench (6D) + gripper (1D) = 16D
+
+   6D Rotation Representation:
+   - r1, r2, r3: First column of rotation matrix
+   - r4, r5, r6: Second column of rotation matrix
+   - Reference: "On the Continuity of Rotation Representations in Neural Networks"
 
 Note: Python API can only use NRT modes due to language timing limitations.
 
@@ -49,7 +55,12 @@ from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode, Flexi
 from lerobot.robots.flexiv_rizon4.flare_gripper import FlareGripper
 from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import get_logger, quaternion_to_euler
+from lerobot.utils.robot_utils import (
+    get_logger,
+    quaternion_to_euler,
+    quaternion_to_rotation_6d,
+    rotation_6d_to_quaternion,
+)
 
 # Alias for flexivrdk.Mode for convenience
 Mode = flexivrdk.Mode
@@ -57,7 +68,8 @@ Mode = flexivrdk.Mode
 # Constants from flexivrdk
 CART_DOF = 6  # Cartesian degrees of freedom
 JOINT_DOF = 7  # Flexiv Rizon4 robot joint DOF
-POSE_SIZE = 7  # Pose size (position + quaternion)
+POSE_SIZE_QUAT = 7  # Pose size with quaternion (position + quaternion)
+POSE_SIZE_6D = 9  # Pose size with 6D rotation (position + 6D rotation)
 
 
 class FlexivRizon4(Robot):
@@ -115,7 +127,7 @@ class FlexivRizon4(Robot):
         self._current_mode: flexivrdk.Mode | None = None
 
         # Home TCP pose - stored after moving to home position
-        # Format: [x, y, z, qw, qx, qy, qz] (7D)
+        # Format: [x, y, z, qw, qx, qy, qz] (7D) - SDK format with quaternion
         self._home_tcp_pose: np.ndarray | None = None
 
         # Gripper key (1D) - always used
@@ -150,16 +162,27 @@ class FlexivRizon4(Robot):
         self._zero_vel = [0.0] * JOINT_DOF
 
     def _init_cartesian_mode(self) -> None:
-        """Initialize keys and buffers for CARTESIAN_MOTION_FORCE control mode."""
-        # TCP pose observation keys: tcp.{x, y, z, qw, qx, qy, qz}
+        """Initialize keys and buffers for CARTESIAN_MOTION_FORCE control mode.
+
+        Uses 6D rotation representation (r1-r6) instead of quaternion for:
+        - Continuity: No discontinuities like Euler angles (gimbal lock)
+        - No double-cover: Unlike quaternions where q and -q represent same rotation
+        - Better for neural networks: Continuous representation is easier to learn
+
+        Reference: "On the Continuity of Rotation Representations in Neural Networks"
+        """
+        # TCP pose observation/action keys: tcp.{x, y, z, r1, r2, r3, r4, r5, r6}
+        # 6D rotation: r1-r3 = first column, r4-r6 = second column of rotation matrix
         self._tcp_pose_keys = (
             "tcp.x",
             "tcp.y",
             "tcp.z",
-            "tcp.qw",
-            "tcp.qx",
-            "tcp.qy",
-            "tcp.qz",
+            "tcp.r1",
+            "tcp.r2",
+            "tcp.r3",
+            "tcp.r4",
+            "tcp.r5",
+            "tcp.r6",
         )
 
         # TCP velocity observation keys: tcp.{vx, vy, vz, wx, wy, wz}
@@ -172,16 +195,8 @@ class FlexivRizon4(Robot):
             "tcp.wz",
         )
 
-        # TCP pose action keys: tcp.{x, y, z, qw, qx, qy, qz}
-        self._action_tcp_pose_keys = (
-            "tcp.x",
-            "tcp.y",
-            "tcp.z",
-            "tcp.qw",
-            "tcp.qx",
-            "tcp.qy",
-            "tcp.qz",
-        )
+        # TCP pose action keys (same as observation keys for 6D rotation)
+        self._action_tcp_pose_keys = self._tcp_pose_keys
 
         # Pre-cache max contact wrench (always needed in Cartesian mode for safety)
         self._max_contact_wrench = self.config.max_contact_wrench
@@ -210,8 +225,8 @@ class FlexivRizon4(Robot):
 
         Action space (all include gripper):
         - JOINT_IMPEDANCE: joint positions (7D) + gripper (1D) = 8D
-        - CARTESIAN_MOTION_FORCE + use_force=False: TCP pose (7D) + gripper (1D) = 8D
-        - CARTESIAN_MOTION_FORCE + use_force=True: TCP pose (7D) + wrench (6D) + gripper (1D) = 14D
+        - CARTESIAN_MOTION_FORCE + use_force=False: TCP pose (9D: xyz + 6D rotation) + gripper (1D) = 10D
+        - CARTESIAN_MOTION_FORCE + use_force=True: TCP pose (9D) + wrench (6D) + gripper (1D) = 16D
         """
         features = {}
 
@@ -220,7 +235,7 @@ class FlexivRizon4(Robot):
             features.update(dict.fromkeys(self._action_joint_keys, float))
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
-            # TCP pose (7D)
+            # TCP pose (9D: xyz + 6D rotation)
             features.update(dict.fromkeys(self._action_tcp_pose_keys, float))
             if self.config.use_force:
                 # + target wrench (6D)
@@ -239,8 +254,8 @@ class FlexivRizon4(Robot):
 
         Observation space (all include gripper):
         - JOINT_IMPEDANCE: joint pos (7D) + vel (7D) + effort (7D) + gripper pos (1D) = 22D
-        - CARTESIAN_MOTION_FORCE + use_force=False: TCP pose (7D) + gripper (1D) = 8D
-        - CARTESIAN_MOTION_FORCE + use_force=True: TCP pose (7D) + wrench (6D) + gripper (1D) = 14D
+        - CARTESIAN_MOTION_FORCE + use_force=False: TCP pose (9D: xyz + 6D rotation) + gripper (1D) = 10D
+        - CARTESIAN_MOTION_FORCE + use_force=True: TCP pose (9D) + wrench (6D) + gripper (1D) = 16D
         """
         features = {}
 
@@ -253,7 +268,7 @@ class FlexivRizon4(Robot):
             features.update(dict.fromkeys(self._joint_effort_keys, float))
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
-            # TCP pose (7D)
+            # TCP pose (9D: xyz + 6D rotation)
             features.update(dict.fromkeys(self._tcp_pose_keys, float))
             if self.config.use_force:
                 # + external wrench (6D)
@@ -647,8 +662,8 @@ class FlexivRizon4(Robot):
 
         Returns a dictionary with observation data. The content depends on control_mode:
         - JOINT_IMPEDANCE: joint_1-7.{pos,vel,effort} (21D) + gripper.pos (1D) = 22D
-        - CARTESIAN_MOTION_FORCE + use_force=False: tcp.{x,y,z,qw,qx,qy,qz} (7D) + gripper (1D) = 8D
-        - CARTESIAN_MOTION_FORCE + use_force=True: tcp pose + external wrench (13D) + gripper (1D) = 14D
+        - CARTESIAN_MOTION_FORCE + use_force=False: tcp.{x,y,z,r1-r6} (9D) + gripper (1D) = 10D
+        - CARTESIAN_MOTION_FORCE + use_force=True: tcp pose (9D) + external wrench (6D) + gripper (1D) = 16D
 
         Also includes camera images if configured.
         """
@@ -662,27 +677,39 @@ class FlexivRizon4(Robot):
         if self.config.control_mode == ControlMode.JOINT_IMPEDANCE:
             # Joint positions (7D)
             for i, key in enumerate(self._joint_pos_keys):
-                obs_dict[key] = float(states.q[i])
+                obs_dict[key] = states.q[i]
 
             # Joint velocities (7D)
             for i, key in enumerate(self._joint_vel_keys):
-                obs_dict[key] = float(states.dq[i])
+                obs_dict[key] = states.dq[i]
 
             # Joint efforts/torques (7D)
             for i, key in enumerate(self._joint_effort_keys):
-                obs_dict[key] = float(states.tau[i])
+                obs_dict[key] = states.tau[i]
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
-            # TCP pose (7D)
+            # TCP pose from SDK: [x, y, z, qw, qx, qy, qz]
             tcp_pose = states.tcp_pose
-            for i, key in enumerate(self._tcp_pose_keys):
-                obs_dict[key] = float(tcp_pose[i])
+
+            # Position (3D)
+            obs_dict["tcp.x"] = tcp_pose[0]
+            obs_dict["tcp.y"] = tcp_pose[1]
+            obs_dict["tcp.z"] = tcp_pose[2]
+
+            # Convert quaternion to 6D rotation representation
+            r6d = quaternion_to_rotation_6d(tcp_pose[3], tcp_pose[4], tcp_pose[5], tcp_pose[6])
+            obs_dict["tcp.r1"] = r6d[0]
+            obs_dict["tcp.r2"] = r6d[1]
+            obs_dict["tcp.r3"] = r6d[2]
+            obs_dict["tcp.r4"] = r6d[3]
+            obs_dict["tcp.r5"] = r6d[4]
+            obs_dict["tcp.r6"] = r6d[5]
 
             if self.config.use_force:
                 # + external wrench (6D)
                 ext_wrench = states.ext_wrench_in_tcp
                 for i, key in enumerate(self._wrench_keys):
-                    obs_dict[key] = float(ext_wrench[i])
+                    obs_dict[key] = ext_wrench[i]
 
         else:
             raise ValueError(f"Unsupported control_mode: {self.config.control_mode}")
@@ -738,15 +765,7 @@ class FlexivRizon4(Robot):
 
         # Return [x, y, z, roll, pitch, yaw, gripper_pos]
         return np.array(
-            [
-                float(tcp_pose[0]),  # x
-                float(tcp_pose[1]),  # y
-                float(tcp_pose[2]),  # z
-                float(roll),
-                float(pitch),
-                float(yaw),
-                gripper_pos,
-            ],
+            [tcp_pose[0], tcp_pose[1], tcp_pose[2], roll, pitch, yaw, gripper_pos],
             dtype=np.float32,
         )
 
@@ -776,16 +795,7 @@ class FlexivRizon4(Robot):
 
         # Return [x, y, z, qw, qx, qy, qz, gripper_pos]
         return np.array(
-            [
-                float(tcp_pose[0]),  # x
-                float(tcp_pose[1]),  # y
-                float(tcp_pose[2]),  # z
-                float(tcp_pose[3]),  # qw
-                float(tcp_pose[4]),  # qx
-                float(tcp_pose[5]),  # qy
-                float(tcp_pose[6]),  # qz
-                gripper_pos,
-            ],
+            [*tcp_pose, gripper_pos],
             dtype=np.float32,
         )
 
@@ -794,8 +804,8 @@ class FlexivRizon4(Robot):
 
         The action format depends on the control_mode and use_force:
         - JOINT_IMPEDANCE: {joint_i.pos: float} for i in 1..7, + gripper.pos
-        - CARTESIAN_MOTION_FORCE + use_force=False: {tcp.x, ..., tcp.qz: float} + gripper.pos
-        - CARTESIAN_MOTION_FORCE + use_force=True: pose + wrench + gripper.pos
+        - CARTESIAN_MOTION_FORCE + use_force=False: {tcp.x, tcp.y, tcp.z, tcp.r1-r6} + gripper.pos
+        - CARTESIAN_MOTION_FORCE + use_force=True: pose (9D) + wrench (6D) + gripper.pos
 
         Args:
             action: Dictionary of action values
@@ -854,12 +864,29 @@ class FlexivRizon4(Robot):
     def _send_cartesian_pure_motion_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send Cartesian pure motion command (NRT mode, no force control).
 
-        Action keys: action.tcp.{x,y,z,qw,qx,qy,qz}
+        Action keys: action.tcp.{x,y,z,r1,r2,r3,r4,r5,r6}
 
-        Note: Calling SendCartesianMotionForce with only target_pose results in pure motion control.
+        The action uses 6D rotation representation which is converted to quaternion
+        for the Flexiv SDK (SendCartesianMotionForce expects [x,y,z,qw,qx,qy,qz]).
         """
-        # Extract target TCP pose directly from action
-        target_pose = [action[key] for key in self._action_tcp_pose_keys]
+        # Extract position
+        x, y, z = action["tcp.x"], action["tcp.y"], action["tcp.z"]
+
+        # Extract 6D rotation and convert to quaternion
+        r6d = np.array(
+            [
+                action["tcp.r1"],
+                action["tcp.r2"],
+                action["tcp.r3"],
+                action["tcp.r4"],
+                action["tcp.r5"],
+                action["tcp.r6"],
+            ]
+        )
+        quat = rotation_6d_to_quaternion(r6d)  # Returns [qw, qx, qy, qz]
+
+        # Build target pose for SDK: [x, y, z, qw, qx, qy, qz]
+        target_pose = [x, y, z, quat[0], quat[1], quat[2], quat[3]]
 
         # Send command using NRT API (pure motion - no wrench parameter needed)
         self._robot.SendCartesianMotionForce(target_pose)
@@ -869,10 +896,31 @@ class FlexivRizon4(Robot):
     def _send_cartesian_motion_force_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send Cartesian motion-force command (NRT mode).
 
-        Action keys: action.tcp.{x,y,z,qw,qx,qy,qz} + action.tcp.{fx,fy,fz,mx,my,mz}
+        Action keys: action.tcp.{x,y,z,r1-r6} + action.tcp.{fx,fy,fz,mx,my,mz}
+
+        The action uses 6D rotation representation which is converted to quaternion
+        for the Flexiv SDK (SendCartesianMotionForce expects [x,y,z,qw,qx,qy,qz]).
         """
-        # Extract target TCP pose and wrench directly from action
-        target_pose = [action[key] for key in self._action_tcp_pose_keys]
+        # Extract position
+        x, y, z = action["tcp.x"], action["tcp.y"], action["tcp.z"]
+
+        # Extract 6D rotation and convert to quaternion
+        r6d = np.array(
+            [
+                action["tcp.r1"],
+                action["tcp.r2"],
+                action["tcp.r3"],
+                action["tcp.r4"],
+                action["tcp.r5"],
+                action["tcp.r6"],
+            ]
+        )
+        quat = rotation_6d_to_quaternion(r6d)  # Returns [qw, qx, qy, qz]
+
+        # Build target pose for SDK: [x, y, z, qw, qx, qy, qz]
+        target_pose = [x, y, z, quat[0], quat[1], quat[2], quat[3]]
+
+        # Extract target wrench
         target_wrench = [action[key] for key in self._action_wrench_keys]
 
         # Send command using NRT API
@@ -895,7 +943,7 @@ class FlexivRizon4(Robot):
             return
 
         # Set gripper position
-        self._flare_gripper.set_gripper_position(float(action[self._gripper_key]))  # normalized [0, 1]
+        self._flare_gripper.set_gripper_position(action[self._gripper_key])  # normalized [0, 1]
 
     def clear_fault(self) -> bool:
         """Attempt to clear robot fault.

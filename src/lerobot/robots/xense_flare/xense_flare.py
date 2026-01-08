@@ -30,9 +30,8 @@ This implementation uses the Xense SDK for sensor and gripper control,
 and Vive Tracker (pysurvive) for precise trajectory tracking.
 """
 
-import time
 from functools import cached_property
-from typing import Any, Union
+from typing import Any
 
 import numpy as np
 
@@ -40,12 +39,12 @@ from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnected
 from lerobot.utils.robot_utils import get_logger
 
 from ..robot import Robot
-from .config_xense_flare import XenseFlareConfig, SensorOutputType
+from .config_xense_flare import SensorOutputType, XenseFlareConfig
 
 # Import Xense SDK components
 try:
-    from xensesdk import call_service, Sensor
-    from xensegripper import XenseGripper, XenseCamera
+    from xensegripper import XenseCamera, XenseGripper
+    from xensesdk import Sensor, call_service
 
     XENSE_SDK_AVAILABLE = True
 except ImportError:
@@ -53,7 +52,7 @@ except ImportError:
 
 # Import Vive Tracker (required)
 try:
-    from lerobot.teleoperators.vive_tracker import ViveTrackerTeleop, ViveTrackerConfig
+    from lerobot.teleoperators.vive_tracker import ViveTrackerConfig, ViveTrackerTeleop
 
     VIVE_TRACKER_AVAILABLE = True
 except ImportError:
@@ -71,7 +70,7 @@ class XenseFlare(Robot):
 
     1. Trajectory Data (Vive Tracker):
        - tcp.x/y/z: End-effector position (m)
-       - tcp.qw/qx/qy/qz: End-effector orientation (quaternion)
+       - tcp.r1-r6: End-effector orientation (6D rotation representation)
 
     2. Visual Data (Wrist Camera):
        - wrist_cam: Wrist RGB image (H, W, 3)
@@ -84,19 +83,22 @@ class XenseFlare(Robot):
 
     Note: This device has no action features - it is operated manually
     and only records observations for data collection.
+
+    6D Rotation Representation:
+    - r1-r3: First column of rotation matrix
+    - r4-r6: Second column of rotation matrix
     """
 
     config_class = XenseFlareConfig
     name = "xense_flare"
+    x1 = 1
 
     def __init__(self, config: XenseFlareConfig):
         super().__init__(config)
         self.config = config
 
         if not XENSE_SDK_AVAILABLE:
-            raise ImportError(
-                "Xense SDK not found. Please install xensesdk, xensegripper packages."
-            )
+            raise ImportError("Xense SDK not found. Please install xensesdk, xensegripper packages.")
 
         if config.enable_vive and not VIVE_TRACKER_AVAILABLE:
             raise ImportError(
@@ -107,9 +109,9 @@ class XenseFlare(Robot):
         self.logger = get_logger(f"XenseFlare-{config.mac_addr[:6]}")
 
         # Components (initialized on connect)
-        self._camera: "XenseCamera" = None
-        self._gripper: "XenseGripper" = None
-        self._sensors: dict[str, "Sensor"] = {}
+        self._camera: XenseCamera = None
+        self._gripper: XenseGripper = None
+        self._sensors: dict[str, Sensor] = {}
         self._vive_tracker = None  # ViveTrackerTeleop, initialized on connect if enabled
 
         # Available sensors (discovered on connect)
@@ -137,7 +139,8 @@ class XenseFlare(Robot):
         - gripper.pos: float
         - wrist_cam: (H, W, 3) image tuple
         - <sensor_key>: (H, W, 3) tactile image (key from config.sensor_keys or "sensor_{sn}")
-        - tcp.x/y/z/qw/qx/qy/qz: float
+        - tcp.x/y/z: float (position)
+        - tcp.r1-r6: float (6D rotation representation)
         """
         features = {}
 
@@ -154,13 +157,17 @@ class XenseFlare(Robot):
                 features[key] = (h, w, 3)
 
         # Vive Tracker pose (always included - required component)
+        # Position (3D)
         features["tcp.x"] = float
         features["tcp.y"] = float
         features["tcp.z"] = float
-        features["tcp.qw"] = float
-        features["tcp.qx"] = float
-        features["tcp.qy"] = float
-        features["tcp.qz"] = float
+        # 6D rotation representation
+        features["tcp.r1"] = float
+        features["tcp.r2"] = float
+        features["tcp.r3"] = float
+        features["tcp.r4"] = float
+        features["tcp.r5"] = float
+        features["tcp.r6"] = float
 
         # Gripper state
         if self.config.enable_gripper:
@@ -174,7 +181,7 @@ class XenseFlare(Robot):
         Action features for data collection.
 
         Returns the features that get_action() provides:
-        - Vive Tracker pose (tcp.x/y/z, tcp.qw/qx/qy/qz)
+        - Vive Tracker pose (tcp.x/y/z, tcp.r1-r6)
         - Gripper position (gripper.pos)
 
         These are used for recording demonstrations where XenseFlare
@@ -182,15 +189,17 @@ class XenseFlare(Robot):
         """
         features = {}
 
-        # TCP pose from Vive Tracker
+        # TCP pose from Vive Tracker (position + 6D rotation)
         if self.config.enable_vive:
             features["tcp.x"] = float
             features["tcp.y"] = float
             features["tcp.z"] = float
-            features["tcp.qw"] = float
-            features["tcp.qx"] = float
-            features["tcp.qy"] = float
-            features["tcp.qz"] = float
+            features["tcp.r1"] = float
+            features["tcp.r2"] = float
+            features["tcp.r3"] = float
+            features["tcp.r4"] = float
+            features["tcp.r5"] = float
+            features["tcp.r6"] = float
 
         # Gripper position (always included if gripper enabled)
         if self.config.enable_gripper:
@@ -242,7 +251,7 @@ class XenseFlare(Robot):
                 self.logger.info("  ✅ Vive Tracker connected")
             except Exception as e:
                 self.logger.error(f"  ❌ Failed to connect Vive Tracker: {e}")
-                raise RuntimeError(f"Vive Tracker failed to connect: {e}")
+                raise RuntimeError(f"Vive Tracker failed to connect: {e}") from e
         else:
             self.logger.info("Vive Tracker disabled (mounted on robot arm)")
 
@@ -260,7 +269,7 @@ class XenseFlare(Robot):
         # Initialize sensors
         if self.config.enable_sensor and self._available_sensors:
             self.logger.info("Initializing sensors...")
-            for sn in self._available_sensors.keys():
+            for sn in self._available_sensors:
                 try:
                     self._sensors[sn] = Sensor.create(
                         sn,
@@ -270,15 +279,13 @@ class XenseFlare(Robot):
                     self.logger.info(f"  ✅ Sensor {sn} initialized")
                 except Exception as e:
                     self.logger.error(f"  ❌ Failed to initialize sensor {sn}: {e}")
-                    raise RuntimeError(f"Failed to initialize sensor {sn}: {e}")
+                    raise RuntimeError(f"Failed to initialize sensor {sn}: {e}") from e
 
         # Initialize camera
         if self.config.enable_camera:
             self.logger.info("Initializing wrist camera...")
             try:
-                camera_id = call_service(
-                    f"master_{self.config.mac_addr}", "list_camera"
-                )
+                camera_id = call_service(f"master_{self.config.mac_addr}", "list_camera")
                 if camera_id:
                     self._camera = XenseCamera(
                         next(iter(camera_id.values())),
@@ -365,33 +372,39 @@ class XenseFlare(Robot):
             - gripper.pos: Gripper position (if enabled)
             - wrist_cam: Wrist camera image (if enabled)
             - sensor_<sn>: Tactile sensor rectify images (if enabled)
-            - tcp.x/y/z/qw/qx/qy/qz: End-effector pose from Vive Tracker (if enable_vive=True)
+            - tcp.x/y/z: End-effector position from Vive Tracker (if enable_vive=True)
+            - tcp.r1-r6: End-effector orientation as 6D rotation (if enable_vive=True)
         """
         if not self.is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected")
 
         obs = {}
 
-        # Get Vive Tracker pose (only if enabled)
+        # Get Vive Tracker pose (only if enabled) - now returns 6D rotation
         if self.config.enable_vive and self._vive_tracker is not None:
             try:
                 action = self._vive_tracker.get_action()
                 obs["tcp.x"] = action.get("tcp.x", 0.0)
                 obs["tcp.y"] = action.get("tcp.y", 0.0)
                 obs["tcp.z"] = action.get("tcp.z", 0.0)
-                obs["tcp.qw"] = action.get("tcp.qw", 1.0)
-                obs["tcp.qx"] = action.get("tcp.qx", 0.0)
-                obs["tcp.qy"] = action.get("tcp.qy", 0.0)
-                obs["tcp.qz"] = action.get("tcp.qz", 0.0)
+                obs["tcp.r1"] = action.get("tcp.r1", 1.0)
+                obs["tcp.r2"] = action.get("tcp.r2", 0.0)
+                obs["tcp.r3"] = action.get("tcp.r3", 0.0)
+                obs["tcp.r4"] = action.get("tcp.r4", 0.0)
+                obs["tcp.r5"] = action.get("tcp.r5", 1.0)
+                obs["tcp.r6"] = action.get("tcp.r6", 0.0)
             except Exception as e:
                 self.logger.warn(f"Failed to get Vive Tracker pose: {e}")
+                # Default: identity rotation matrix first two columns
                 obs["tcp.x"] = 0.0
                 obs["tcp.y"] = 0.0
                 obs["tcp.z"] = 0.0
-                obs["tcp.qw"] = 1.0
-                obs["tcp.qx"] = 0.0
-                obs["tcp.qy"] = 0.0
-                obs["tcp.qz"] = 0.0
+                obs["tcp.r1"] = 1.0
+                obs["tcp.r2"] = 0.0
+                obs["tcp.r3"] = 0.0
+                obs["tcp.r4"] = 0.0
+                obs["tcp.r5"] = 1.0
+                obs["tcp.r6"] = 0.0
 
         # Get gripper state (normalized to [0, 1])
         if self.config.enable_gripper and self._gripper is not None:
@@ -414,7 +427,7 @@ class XenseFlare(Robot):
                     # Return black image on failure
                     raise ValueError("Failed to read camera")
             except Exception as e:
-                raise ValueError(f"Failed to read camera: {e}")
+                raise ValueError(f"Failed to read camera: {e}") from e
 
         # Get sensor data (rectify or difference based on config)
         # Use config.get_sensor_key() to get custom key name or default "sensor_{sn}"
@@ -437,7 +450,7 @@ class XenseFlare(Robot):
                     else:
                         raise ValueError(f"Failed to read sensor {sn}")
                 except Exception as e:
-                    raise ValueError(f"Failed to read sensor {sn}: {e}")
+                    raise ValueError(f"Failed to read sensor {sn}: {e}") from e
 
         return obs
 
@@ -455,13 +468,13 @@ class XenseFlare(Robot):
 
         This method is used when XenseFlare acts as a teleoperation device.
         It combines:
-        - TCP pose from Vive Tracker (if enabled)
+        - TCP pose from Vive Tracker (if enabled) with 6D rotation
         - Gripper position from encoder
 
         Returns:
             dict containing:
             - tcp.x, tcp.y, tcp.z: TCP position (meters)
-            - tcp.qw, tcp.qx, tcp.qy, tcp.qz: TCP orientation (quaternion)
+            - tcp.r1-r6: TCP orientation (6D rotation representation)
             - gripper.pos: Gripper position (0=closed, 1=fully open)
         """
         if not self.is_connected:
@@ -469,18 +482,20 @@ class XenseFlare(Robot):
 
         action = {}
 
-        # Get pose from Vive Tracker if enabled
+        # Get pose from Vive Tracker if enabled (now returns 6D rotation)
         if self.config.enable_vive and self._vive_tracker is not None:
             try:
                 vive_action = self._vive_tracker.get_action()
-                # Copy pose data from vive tracker
+                # Copy pose data from vive tracker (6D rotation format)
                 action["tcp.x"] = vive_action.get("tcp.x", 0.0)
                 action["tcp.y"] = vive_action.get("tcp.y", 0.0)
                 action["tcp.z"] = vive_action.get("tcp.z", 0.0)
-                action["tcp.qw"] = vive_action.get("tcp.qw", 1.0)
-                action["tcp.qx"] = vive_action.get("tcp.qx", 0.0)
-                action["tcp.qy"] = vive_action.get("tcp.qy", 0.0)
-                action["tcp.qz"] = vive_action.get("tcp.qz", 0.0)
+                action["tcp.r1"] = vive_action.get("tcp.r1", 1.0)
+                action["tcp.r2"] = vive_action.get("tcp.r2", 0.0)
+                action["tcp.r3"] = vive_action.get("tcp.r3", 0.0)
+                action["tcp.r4"] = vive_action.get("tcp.r4", 0.0)
+                action["tcp.r5"] = vive_action.get("tcp.r5", 1.0)
+                action["tcp.r6"] = vive_action.get("tcp.r6", 0.0)
             except Exception as e:
                 self.logger.warn(f"Failed to get Vive Tracker action: {e}")
 
@@ -499,15 +514,13 @@ class XenseFlare(Robot):
     def _scan_sensors(self) -> dict:
         """Scan for available sensors on the device."""
         try:
-            sensor_sns = call_service(
-                f"master_{self.config.mac_addr}", "scan_sensor_sn"
-            )
+            sensor_sns = call_service(f"master_{self.config.mac_addr}", "scan_sensor_sn")
             return sensor_sns if sensor_sns else {}
         except Exception as e:
             self.logger.error(f"Error scanning sensors: {e}")
             return {}
 
-    def get_sensor(self, id: Union[int, str]) -> "Sensor":
+    def get_sensor(self, id: int | str) -> "Sensor":
         """
         Get a sensor by ID or serial number.
 
@@ -524,9 +537,7 @@ class XenseFlare(Robot):
             id = list(self._sensors.keys())[id]
 
         if id not in self._sensors:
-            self.logger.error(
-                f"Sensor {id} not found, available: {list(self._sensors.keys())}"
-            )
+            self.logger.error(f"Sensor {id} not found, available: {list(self._sensors.keys())}")
             return None
 
         return self._sensors[id]
@@ -584,15 +595,17 @@ class XenseFlare(Robot):
                 raw_pos -= self.config.gripper_max_pos
                 # Normalize to [0, 1] range
                 if raw_pos < -0.02 or raw_pos > self.config.gripper_max_readout:
-                    self.logger.warn(f"Gripper pos {raw_pos:.2f} out of range [0, {self.config.gripper_max_readout}], clamping")
+                    self.logger.warn(
+                        f"Gripper pos {raw_pos:.2f} out of range [0, {self.config.gripper_max_readout}], clamping"
+                    )
                     raw_pos = np.clip(raw_pos, 0, self.config.gripper_max_readout)
 
                 normalized_pos = raw_pos / self.config.gripper_max_readout
                 return max(0.0, min(1.0, normalized_pos))
             else:
                 raise ValueError("Failed to get gripper position")
-        except Exception:
-            raise ValueError("Failed to get gripper position")
+        except Exception as e:
+            raise ValueError("Failed to get gripper position") from e
 
     def calibrate_gripper(self) -> None:
         """

@@ -29,13 +29,13 @@ since the robot arm provides pose information.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 from ..config import RobotConfig
 
 
 class SensorOutputType(Enum):
     """Output type for tactile sensors."""
+
     RECTIFY = "rectify"
     DIFFERENCE = "difference"
 
@@ -99,8 +99,8 @@ class XenseFlareConfig(RobotConfig):
     sensor_keys: dict[str, str] = field(default_factory=dict)
 
     # Vive Tracker settings (only used when enable_vive=True)
-    vive_config_path: Optional[str] = None
-    vive_lh_config: Optional[str] = None
+    vive_config_path: str | None = None
+    vive_lh_config: str | None = None
 
     # Vive Tracker to end-effector transformation
     vive_to_ee_pos: list = field(

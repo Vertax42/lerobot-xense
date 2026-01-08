@@ -40,19 +40,20 @@ Instructions:
 Examples:
     # Default calibration (tracker as origin, 60s timeout)
     python -m lerobot.robots.xense_flare.calibrate_vive
-    
+
     # Use Lighthouse 0 as origin
     python -m lerobot.robots.xense_flare.calibrate_vive --origin lh0
-    
+
     # Longer timeout (2 minutes)
     python -m lerobot.robots.xense_flare.calibrate_vive --timeout 120
 """
 
-import pysurvive
-import sys
-import time
 import argparse
 import signal
+import sys
+import time
+
+import pysurvive
 
 from lerobot.utils.robot_utils import get_logger
 
@@ -96,10 +97,10 @@ def calibrate_vive(timeout=60, origin="tracker"):
                 - "lh0": Origin at LH0 position, LH0 looks in +X direction
     """
     global running
-    
+
     # Set up signal handler
     signal.signal(signal.SIGINT, signal_handler)
-    
+
     print_banner()
 
     # Display origin mode
@@ -117,7 +118,7 @@ def calibrate_vive(timeout=60, origin="tracker"):
     # Build arguments with force-calibrate flag
     args = sys.argv[:1]  # Keep program name
     args.extend(["--force-calibrate"])
-    
+
     # Add center-on-lh0 flag if origin is lh0
     if origin == "lh0":
         args.extend(["--center-on-lh0"])
@@ -136,7 +137,7 @@ def calibrate_vive(timeout=60, origin="tracker"):
     detected_devices = {}  # {name: {"samples": 0, "valid": 0, "last_pos": None}}
     start_time = time.time()
     last_status_time = 0
-    
+
     # Initial device detection phase (5 seconds)
     logger.info("Device detection phase (5 seconds)...")
     detection_start = time.time()
@@ -148,17 +149,19 @@ def calibrate_vive(timeout=60, origin="tracker"):
                 detected_devices[name] = {"samples": 0, "valid": 0, "last_pos": None}
                 logger.info(f"Detected: {name}")
         time.sleep(0.01)
-    
+
     # Categorize devices
     lighthouses = [n for n in detected_devices if is_lighthouse_device(n)]
     trackers = [n for n in detected_devices if is_tracker_device(n)]
-    
+
     logger.info(f"Detected Lighthouses: {lighthouses}")
     logger.info(f"Detected Trackers: {trackers}")
 
     if len(lighthouses) < 2:
-        logger.warn(f"Only {len(lighthouses)} lighthouse(s) detected. "
-              "For best results, 2 lighthouses are recommended.")
+        logger.warn(
+            f"Only {len(lighthouses)} lighthouse(s) detected. "
+            "For best results, 2 lighthouses are recommended."
+        )
 
     if not trackers:
         logger.warn("No trackers detected! Will continue waiting during calibration...")
@@ -179,7 +182,7 @@ def calibrate_vive(timeout=60, origin="tracker"):
             updated = actx.NextUpdated()
             if updated:
                 name = str(updated.Name(), "utf-8")
-                
+
                 # Add new device if not seen before
                 if name not in detected_devices:
                     detected_devices[name] = {"samples": 0, "valid": 0, "last_pos": None, "last_rot": None}
@@ -188,29 +191,29 @@ def calibrate_vive(timeout=60, origin="tracker"):
                         trackers.append(name)
                     elif is_lighthouse_device(name):
                         lighthouses.append(name)
-                
+
                 pose_obj = updated.Pose()
                 pose_data = pose_obj[0]
 
                 # Get position and rotation
                 pos = [pose_data.Pos[0], pose_data.Pos[1], pose_data.Pos[2]]
                 rot = [pose_data.Rot[0], pose_data.Rot[1], pose_data.Rot[2], pose_data.Rot[3]]  # [w, x, y, z]
-                
+
                 detected_devices[name]["samples"] += 1
                 detected_devices[name]["last_pos"] = pos
                 detected_devices[name]["last_rot"] = rot
-                
+
                 # Check if position is valid (not NaN and within reasonable range)
                 if all(abs(p) < 100 for p in pos) and not any(p != p for p in pos):
                     detected_devices[name]["valid"] += 1
 
-            # Print status every 3 seconds
+                # Print status every 3 seconds
                 current_time = time.time()
             if current_time - last_status_time >= 3.0:
                 last_status_time = current_time
                 logger.info(f"[{elapsed:.0f}s] Calibration Status:")
                 logger.info("-" * 50)
-                
+
                 for name in trackers:
                     if name in detected_devices:
                         info = detected_devices[name]
@@ -227,7 +230,7 @@ def calibrate_vive(timeout=60, origin="tracker"):
                         logger.info(f"  {name}: Samples={info['samples']:5d}, Valid={info['valid']:5d}")
                         logger.info(f"         Pos={pos_str}")
                         logger.info(f"         Rot={rot_str}")
-                
+
                 if not trackers:
                     logger.info("  No trackers detected yet...")
                 logger.info("-" * 50)
@@ -242,10 +245,12 @@ def calibrate_vive(timeout=60, origin="tracker"):
     logger.info("         Calibration Summary")
     logger.info("=" * 60)
     logger.info(f"Duration: {time.time() - start_time:.1f} seconds")
-    logger.info(f"Origin Mode: {'LH0 (Lighthouse at origin)' if origin == 'lh0' else 'Tracker (Tracker at origin)'}")
+    logger.info(
+        f"Origin Mode: {'LH0 (Lighthouse at origin)' if origin == 'lh0' else 'Tracker (Tracker at origin)'}"
+    )
     logger.info(f"Lighthouses: {lighthouses}")
     logger.info(f"Trackers: {trackers}")
-    
+
     # Per-tracker summary
     all_success = True
     for name in trackers:
@@ -255,7 +260,7 @@ def calibrate_vive(timeout=60, origin="tracker"):
             if info["valid"] <= 100:
                 all_success = False
             logger.info(f"  {name}: {info['samples']} samples, {info['valid']} valid - {status}")
-    
+
     if not trackers:
         logger.info("  No trackers were detected!")
         all_success = False
@@ -283,9 +288,9 @@ Origin Modes:
     tracker  - Origin at Tracker position during calibration (default)
                LH0 will be placed on the +Y axis
                Good for robot-centric applications
-               
+
     lh0      - Origin at Lighthouse 0 (LH0) position
-               LH0 looks in the +X direction  
+               LH0 looks in the +X direction
                Good for fixed room-centric applications
 
 Examples:
@@ -294,20 +299,17 @@ Examples:
     python calibrate_vive.py --origin tracker       # Tracker as origin (explicit)
     python calibrate_vive.py --timeout 120          # 2 minute calibration
     python calibrate_vive.py --origin lh0 --timeout 120
-        """
+        """,
     )
     parser.add_argument(
-        "--timeout",
-        type=int,
-        default=60,
-        help="Calibration timeout in seconds (default: 60)"
+        "--timeout", type=int, default=60, help="Calibration timeout in seconds (default: 60)"
     )
     parser.add_argument(
         "--origin",
         type=str,
         choices=["tracker", "lh0"],
         default="tracker",
-        help="Coordinate origin mode: 'tracker' (origin at Tracker) or 'lh0' (origin at Lighthouse 0). Default: tracker"
+        help="Coordinate origin mode: 'tracker' (origin at Tracker) or 'lh0' (origin at Lighthouse 0). Default: tracker",
     )
 
     args = parser.parse_args()

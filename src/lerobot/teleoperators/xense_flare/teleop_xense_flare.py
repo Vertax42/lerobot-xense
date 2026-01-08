@@ -31,13 +31,13 @@ import numpy as np
 from lerobot.utils.robot_utils import get_logger
 
 from ..teleoperator import Teleoperator
-from ..vive_tracker import ViveTrackerTeleop, ViveTrackerConfig
+from ..vive_tracker import ViveTrackerConfig, ViveTrackerTeleop
 from .config_xense_flare_teleop import XenseFlareTeleopConfig
 
 # Import Xense SDK components
 try:
-    from xensesdk import call_service
     from xensegripper import XenseGripper
+    from xensesdk import call_service
 
     XENSE_SDK_AVAILABLE = True
 except ImportError:
@@ -51,10 +51,14 @@ class XenseFlareTeleop(Teleoperator):
     Provides 6-DoF TCP pose from Vive Tracker and gripper position from encoder
     for teleoperating robot arms.
 
-    Action features:
+    Action features (9D pose + 1D gripper = 10D):
     - tcp.x, tcp.y, tcp.z: TCP position (meters)
-    - tcp.qw, tcp.qx, tcp.qy, tcp.qz: TCP orientation (quaternion)
+    - tcp.r1-r6: TCP orientation (6D rotation representation)
     - gripper.pos: Gripper position (0=closed, 1=fully open)
+
+    6D Rotation:
+    - r1-r3: First column of rotation matrix
+    - r4-r6: Second column of rotation matrix
     """
 
     config_class = XenseFlareTeleopConfig
@@ -65,15 +69,13 @@ class XenseFlareTeleop(Teleoperator):
         self.config = config
 
         if not XENSE_SDK_AVAILABLE:
-            raise ImportError(
-                "Xense SDK not found. Please install xensesdk, xensegripper packages."
-            )
+            raise ImportError("Xense SDK not found. Please install xensesdk, xensegripper packages.")
 
         # Logger
         self.logger = get_logger(f"XenseFlareTeleop-{config.mac_addr[:6]}")
 
         # Components (initialized on connect)
-        self._gripper: "XenseGripper" = None
+        self._gripper: XenseGripper = None
         self._vive_tracker: ViveTrackerTeleop = None
 
         # Connection state
@@ -94,15 +96,17 @@ class XenseFlareTeleop(Teleoperator):
 
     @property
     def action_features(self) -> dict:
-        """Action features: 7D pose + gripper position."""
+        """Action features: 9D pose (xyz + 6D rotation) + gripper position."""
         return {
             "tcp.x": float,
             "tcp.y": float,
             "tcp.z": float,
-            "tcp.qw": float,
-            "tcp.qx": float,
-            "tcp.qy": float,
-            "tcp.qz": float,
+            "tcp.r1": float,
+            "tcp.r2": float,
+            "tcp.r3": float,
+            "tcp.r4": float,
+            "tcp.r5": float,
+            "tcp.r6": float,
             "gripper.pos": float,
         }
 
@@ -121,9 +125,7 @@ class XenseFlareTeleop(Teleoperator):
         """Xense Flare uses factory calibration, always True if connected."""
         return self.is_connected
 
-    def connect(
-        self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None
-    ) -> None:
+    def connect(self, calibrate: bool = True, current_tcp_pose_quat: np.ndarray | None = None) -> None:
         """Connect to Xense Flare and start pose tracking.
 
         Args:
@@ -170,9 +172,7 @@ class XenseFlareTeleop(Teleoperator):
 
     def calibrate(self) -> None:
         """Calibration is handled by Vive Tracker lighthouse system."""
-        self.logger.info(
-            "Xense Flare uses lighthouse calibration, no runtime calibration needed"
-        )
+        self.logger.info("Xense Flare uses lighthouse calibration, no runtime calibration needed")
 
     def configure(self) -> None:
         """No additional configuration needed."""
@@ -184,13 +184,13 @@ class XenseFlareTeleop(Teleoperator):
 
         Returns a dictionary with:
         - tcp.x, tcp.y, tcp.z: TCP position (meters)
-        - tcp.qw, tcp.qx, tcp.qy, tcp.qz: TCP orientation (quaternion)
+        - tcp.r1-r6: TCP orientation (6D rotation representation)
         - gripper.pos: Gripper position (0=closed, 1=fully open)
         """
         if not self.is_connected:
             raise RuntimeError("XenseFlareTeleop is not connected")
 
-        # Get TCP pose from Vive Tracker
+        # Get TCP pose from Vive Tracker (already in 6D rotation format)
         vive_action = self._vive_tracker.get_action()
 
         # Get gripper position (from cached value - fast)
@@ -200,10 +200,12 @@ class XenseFlareTeleop(Teleoperator):
             "tcp.x": vive_action["tcp.x"],
             "tcp.y": vive_action["tcp.y"],
             "tcp.z": vive_action["tcp.z"],
-            "tcp.qw": vive_action["tcp.qw"],
-            "tcp.qx": vive_action["tcp.qx"],
-            "tcp.qy": vive_action["tcp.qy"],
-            "tcp.qz": vive_action["tcp.qz"],
+            "tcp.r1": vive_action["tcp.r1"],
+            "tcp.r2": vive_action["tcp.r2"],
+            "tcp.r3": vive_action["tcp.r3"],
+            "tcp.r4": vive_action["tcp.r4"],
+            "tcp.r5": vive_action["tcp.r5"],
+            "tcp.r6": vive_action["tcp.r6"],
             "gripper.pos": gripper_pos,
         }
 
@@ -252,7 +254,9 @@ class XenseFlareTeleop(Teleoperator):
                 raw_pos -= self.config.gripper_max_pos
                 # Normalize to [0, 1] range
                 if raw_pos < 0.0 or raw_pos > self.config.gripper_max_readout:
-                    self.logger.warn(f"Gripper pos {raw_pos:.2f} out of range [0, {self.config.gripper_max_readout}], clamping")
+                    self.logger.warn(
+                        f"Gripper pos {raw_pos:.2f} out of range [0, {self.config.gripper_max_readout}], clamping"
+                    )
                     raw_pos = max(0.0, min(raw_pos, self.config.gripper_max_readout))
                 normalized_pos = raw_pos / self.config.gripper_max_readout
                 return max(0.0, min(1.0, normalized_pos))
@@ -282,4 +286,3 @@ class XenseFlareTeleop(Teleoperator):
             self._gripper.register_button_callback(event_type, callback)
         else:
             self.logger.warn("No gripper initialized, cannot register callback")
-
