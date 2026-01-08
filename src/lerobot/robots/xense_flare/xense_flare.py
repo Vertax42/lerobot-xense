@@ -210,10 +210,10 @@ class XenseFlare(Robot):
     @property
     def cameras(self) -> dict:
         """Return dict of image sources for thread allocation in recording.
-        
+
         XenseFlare manages cameras internally but needs to report count for image_writer_threads.
         Returns dict with keys matching image features: wrist_cam + tactile sensors.
-        
+
         Note: Uses config.sensor_keys for sensor count (available before connect()).
         """
         cameras = {}
@@ -452,12 +452,12 @@ class XenseFlare(Robot):
     def get_action(self) -> dict:
         """
         Get action data from Xense Flare (pose from Vive Tracker + gripper position).
-        
+
         This method is used when XenseFlare acts as a teleoperation device.
         It combines:
         - TCP pose from Vive Tracker (if enabled)
         - Gripper position from encoder
-        
+
         Returns:
             dict containing:
             - tcp.x, tcp.y, tcp.z: TCP position (meters)
@@ -597,7 +597,7 @@ class XenseFlare(Robot):
     def calibrate_gripper(self) -> None:
         """
         Calibrate the gripper encoder.
-        
+
         This should be called when the gripper position reading is incorrect.
         The calibration process will reset the encoder to match the physical position.
         """

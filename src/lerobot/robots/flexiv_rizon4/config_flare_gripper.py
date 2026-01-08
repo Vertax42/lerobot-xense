@@ -22,12 +22,13 @@ from enum import Enum
 
 class SensorOutputType(Enum):
     """Output type for tactile sensors."""
+
     RECTIFY = "rectify"
     DIFFERENCE = "difference"
 
 
 @dataclass
-class FlareGripperConfig():
+class FlareGripperConfig:
     """Configuration for FlareGripper.
 
     The FlareGripper is UMI-Like gripper device.
@@ -58,11 +59,11 @@ class FlareGripperConfig():
     # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
     # Set to the maximum readout value from your gripper
     gripper_max_pos: float = 85.0
-    
+
     # Gripper control parameters for set_position()
     gripper_v_max: float = 80.0  # Maximum velocity mm/s
     gripper_f_max: float = 20.0  # Maximum force N
-    
+
     # Initialize gripper to fully open on connect
     init_open: bool = True
 

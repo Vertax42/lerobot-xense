@@ -185,8 +185,8 @@ class SpacemouseTeleop(Teleoperator):
             pose_6d: 6D EEF pose [x, y, z, roll, pitch, yaw]
             gripper_pos: Gripper position in meters
         """
-        self._target_pose_6d = np.array(pose_6d, dtype=np.float32).copy()
-        self._target_gripper_pos = float(gripper_pos)
+        self._target_pose_6d = np.asarray(pose_6d, dtype=np.float32).copy()
+        self._target_gripper_pos = gripper_pos
         self.logger.info(f"✅ Reset target pose to: {pose_6d}, gripper: {gripper_pos}")
 
     def _get_filtered_state(self) -> np.ndarray:
@@ -201,9 +201,8 @@ class SpacemouseTeleop(Teleoperator):
         filtered_state[negative_idx] = (raw_state[negative_idx] + self.config.deadzone) / (1 - self.config.deadzone)
 
         # Apply axis inversion
-        invert = np.array(self.config.invert_axes, dtype=np.float32)
-        invert = np.where(invert, -1.0, 1.0)
-        filtered_state = filtered_state * invert
+        invert = np.where(self.config.invert_axes, -1.0, 1.0)
+        filtered_state *= invert
 
         # Moving average filter Use public method of queue to avoid race condition
         if self._motion_queue.full():
@@ -256,10 +255,7 @@ class SpacemouseTeleop(Teleoperator):
 
         # Update gripper position with clamping
         self._target_gripper_pos += gripper_cmd * self.config.gripper_speed * dt
-        if self._target_gripper_pos >= self.config.gripper_width:
-            self._target_gripper_pos = self.config.gripper_width
-        elif self._target_gripper_pos <= 0:
-            self._target_gripper_pos = 0
+        self._target_gripper_pos = np.clip(self._target_gripper_pos, 0, self.config.gripper_width)
 
         # Check if any input is active
         motion_active = np.any(np.abs(state) > 0.01)
@@ -267,13 +263,13 @@ class SpacemouseTeleop(Teleoperator):
 
         # Return absolute pose dict
         return {
-            "x": float(self._target_pose_6d[0]),
-            "y": float(self._target_pose_6d[1]),
-            "z": float(self._target_pose_6d[2]),
-            "roll": float(self._target_pose_6d[3]),
-            "pitch": float(self._target_pose_6d[4]),
-            "yaw": float(self._target_pose_6d[5]),
-            "gripper_pos": float(self._target_gripper_pos),
+            "x": self._target_pose_6d[0],
+            "y": self._target_pose_6d[1],
+            "z": self._target_pose_6d[2],
+            "roll": self._target_pose_6d[3],
+            "pitch": self._target_pose_6d[4],
+            "yaw": self._target_pose_6d[5],
+            "gripper_pos": self._target_gripper_pos,
         }
 
     def get_target_pose_array(self) -> tuple[np.ndarray, float]:
@@ -376,25 +372,25 @@ class SpacemouseTeleop(Teleoperator):
         Returns:
             Dictionary with keys {tcp.x, tcp.y, tcp.z, tcp.qw, tcp.qx, tcp.qy, tcp.qz, gripper.pos}
         """
-        # Convert Euler angles to quaternion (matching spacemouse_teleop.py euler_to_quaternion)
-        quat_tuple = euler_to_quaternion(
+        # Convert Euler angles to quaternion
+        quat = euler_to_quaternion(
             spacemouse_action["roll"],
             spacemouse_action["pitch"],
             spacemouse_action["yaw"],
-        )  # Returns (qw, qx, qy, qz)
+        )  # Returns np.ndarray [qw, qx, qy, qz]
 
         # Normalize quaternion to ensure unit length
-        quat = normalize_quaternion(np.array(quat_tuple), input_format="wxyz")
+        quat = normalize_quaternion(quat, input_format="wxyz")
 
         # Map to Flexiv action format (matching Flexiv SDK SendCartesianMotionForce signature)
         return {
             "tcp.x": spacemouse_action["x"],
             "tcp.y": spacemouse_action["y"],
             "tcp.z": spacemouse_action["z"],
-            "tcp.qw": float(quat[0]),
-            "tcp.qx": float(quat[1]),
-            "tcp.qy": float(quat[2]),
-            "tcp.qz": float(quat[3]),
+            "tcp.qw": quat[0],
+            "tcp.qx": quat[1],
+            "tcp.qy": quat[2],
+            "tcp.qz": quat[3],
             "gripper.pos": spacemouse_action["gripper_pos"],
         }
 

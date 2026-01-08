@@ -502,11 +502,11 @@ def xense_flare_record_loop(
 ):
     """
     Record loop for XenseFlare data collection gripper.
-    
+
     XenseFlare is special because it acts as both:
     - A robot (provides observation: camera, tactile, gripper position)
     - A teleoperator (provides action: Vive Tracker pose + gripper position)
-    
+
     The action comes from robot.get_action() instead of a separate teleoperator.
     """
     if dataset is not None and dataset.fps != fps:

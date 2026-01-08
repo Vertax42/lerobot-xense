@@ -8,8 +8,6 @@ Utility methods.
 __copyright__ = "Copyright (C) 2016-2025 Flexiv Ltd. All Rights Reserved."
 __author__ = "Flexiv"
 
-import math
-
 # pip install scipy
 from scipy.spatial.transform import Rotation as R
 
@@ -33,11 +31,7 @@ def quat2eulerZYX(quat, degree=False):
 
     # Convert target quaternion to Euler ZYX using scipy package's 'xyz' extrinsic rotation
     # NOTE: scipy uses [x,y,z,w] order to represent quaternion
-    eulerZYX = (
-        R.from_quat([quat[1], quat[2], quat[3], quat[0]])
-        .as_euler("xyz", degrees=degree)
-        .tolist()
-    )
+    eulerZYX = R.from_quat([quat[1], quat[2], quat[3], quat[0]]).as_euler("xyz", degrees=degree).tolist()
 
     return eulerZYX
 

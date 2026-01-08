@@ -40,7 +40,7 @@ import numpy as np
 from lerobot.teleoperators.pico4.config_pico4 import Pico4Config
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-from lerobot.utils.robot_utils import normalize_quaternion, get_logger
+from lerobot.utils.robot_utils import normalize_quaternion, slerp_quaternion, get_logger
 
 
 class Pico4(Teleoperator):
@@ -318,65 +318,9 @@ class Pico4(Teleoperator):
             return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)  # Identity [qw, qx, qy, qz]
         return np.array([qw, -qx, -qy, -qz], dtype=np.float32) / norm_sq
 
-    def _quaternion_to_euler(self, qw: float, qx: float, qy: float, qz: float) -> tuple[float, float, float]:
-        """Convert quaternion [qw, qx, qy, qz] to Euler angles (roll, pitch, yaw)."""
-        roll = np.arctan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy))
-        sinp = 2 * (qw * qy - qz * qx)
-        pitch = np.copysign(np.pi / 2, sinp) if abs(sinp) >= 1 else np.arcsin(sinp)
-        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        return (roll, pitch, yaw)
-
     def _slerp_quaternion(self, q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
-        """Spherical Linear Interpolation (SLERP) between two quaternions.
-
-        SLERP is the proper way to interpolate between quaternions on the unit sphere,
-        ensuring constant angular velocity and shortest path rotation.
-
-        Formula: q(t) = (sin((1-t)*θ)/sin(θ)) * q1 + (sin(t*θ)/sin(θ)) * q2
-        where θ = arccos(dot(q1, q2))
-
-        Args:
-            q1: First quaternion [qw, qx, qy, qz]
-            q2: Second quaternion [qw, qx, qy, qz]
-            t: Interpolation factor [0, 1], where 0 returns q1 and 1 returns q2
-
-        Returns:
-            Interpolated quaternion [qw, qx, qy, qz]
-        """
-        # Normalize inputs (already in wxyz format)
-        q1 = normalize_quaternion(q1, input_format="wxyz")
-        q2 = normalize_quaternion(q2, input_format="wxyz")
-
-        # Compute dot product (cosine of angle between quaternions)
-        dot = np.dot(q1, q2)
-
-        # If dot product is negative, negate one quaternion for shortest path
-        # This ensures we take the shorter rotation path (q and -q represent same rotation)
-        if dot < 0.0:
-            q2 = -q2
-            dot = -dot
-
-        # Clamp dot product to valid range [-1, 1] for arccos
-        dot = np.clip(dot, -1.0, 1.0)
-
-        # If quaternions are very close (dot > 0.9995), use linear interpolation
-        # This avoids numerical instability when sin(θ) is very small
-        if abs(dot) > 0.9995:
-            result = q1 + t * (q2 - q1)
-            return normalize_quaternion(result, input_format="wxyz")
-
-        # Compute angle between quaternions
-        theta = np.arccos(abs(dot))
-        sin_theta = np.sin(theta)
-
-        # SLERP weights
-        w1 = np.sin((1 - t) * theta) / sin_theta
-        w2 = np.sin(t * theta) / sin_theta
-
-        # Spherical interpolation
-        result = w1 * q1 + w2 * q2
-
-        return normalize_quaternion(result, input_format="wxyz")
+        """Spherical Linear Interpolation (SLERP) between two quaternions."""
+        return slerp_quaternion(q1, q2, t, input_format="wxyz")
 
     def _filter_raw_pose(self, controller_pose_raw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Apply window filter to raw Pico4 controller pose data.

@@ -23,7 +23,6 @@ import flexivrdk
 
 from lerobot.cameras.configs import CameraConfig
 from lerobot.robots.config import RobotConfig
-
 from lerobot.robots.flexiv_rizon4.config_flare_gripper import FlareGripperConfig, SensorOutputType
 
 
@@ -98,7 +97,9 @@ class FlexivRizon4Config(RobotConfig):
     control_frequency: float = 100.0  # Hz
 
     # Connection behavior
-    go_to_start: bool = True  # If True, move robot to start position after connecting. If False, stay at current position.
+    go_to_start: bool = (
+        True  # If True, move robot to start position after connecting. If False, stay at current position.
+    )
 
     # Camera configurations (external cameras, e.g., scene cameras)
     # Note: When using xense_flare, wrist camera comes from XenseFlareConfig
@@ -119,7 +120,7 @@ class FlexivRizon4Config(RobotConfig):
     stiffness_ratio: float = 1.0
 
     # Cartesian motion parameters (from example: SEARCH_VELOCITY = 0.02 m/s)
-    cartesian_max_linear_vel: float = 0.2  # m/s, conservative defaultcd /home/vertax/lerobot-xense && mamba activate lerobot-xense && python3 -m lerobot.scripts.lerobot_test --teleop.type=spacemouse --help 2>&1 | head -40
+    cartesian_max_linear_vel: float = 0.2  # m/s
 
     # Force control settings (for CARTESIAN_MOTION_FORCE mode when use_force=True)
     # Reference frame for force control (flexivrdk.CoordType.WORLD or flexivrdk.CoordType.TCP)
@@ -151,16 +152,12 @@ class FlexivRizon4Config(RobotConfig):
     # For heavy manipulation: use [50.0, 50.0, 50.0, 10.0, 10.0, 10.0] or higher
     # For force control mode: set to [inf, inf, inf, inf, inf, inf] to disable (handled automatically)
     # Use inf to disable wrench regulation entirely
-    max_contact_wrench: list[float] = field(
-        default_factory=lambda: [30.0, 30.0, 30.0, 5.0, 5.0, 5.0]
-    )
+    max_contact_wrench: list[float] = field(default_factory=lambda: [30.0, 30.0, 30.0, 5.0, 5.0, 5.0])
 
     # Target wrench for force control [fx, fy, fz, mx, my, mz] in N and Nm
     # Zero means pure motion control (no force applied)
     # From example: PRESSING_FORCE = 5.0 N
-    target_wrench: list[float] = field(
-        default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-    )
+    target_wrench: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     # Collision detection thresholds (from example)
     # EXT_FORCE_THRESHOLD = 10.0 N, EXT_TORQUE_THRESHOLD = 5.0 Nm
@@ -196,10 +193,12 @@ class FlexivRizon4Config(RobotConfig):
     # Tactile sensor settings
     flare_gripper_rectify_size: tuple[int, int] = (400, 700)
     flare_gripper_sensor_output_type: SensorOutputType = SensorOutputType.RECTIFY
-    flare_gripper_sensor_keys: dict[str, str] = field(default_factory=lambda: {
-        "OG000657": "right_tactile",
-        "OG000450": "left_tactile",
-    })
+    flare_gripper_sensor_keys: dict[str, str] = field(
+        default_factory=lambda: {
+            "OG000657": "right_tactile",
+            "OG000450": "left_tactile",
+        }
+    )
 
     # Gripper normalization: raw_pos / gripper_max_pos -> [0, 1]
     flare_gripper_max_pos: float = 85.0
@@ -225,27 +224,17 @@ class FlexivRizon4Config(RobotConfig):
 
         # Validate joint parameters have correct length (7-DOF robot)
         if len(self.joint_max_vel) != 7:
-            raise ValueError(
-                f"joint_max_vel must have 7 elements, got {len(self.joint_max_vel)}"
-            )
+            raise ValueError(f"joint_max_vel must have 7 elements, got {len(self.joint_max_vel)}")
         if len(self.joint_max_acc) != 7:
-            raise ValueError(
-                f"joint_max_acc must have 7 elements, got {len(self.joint_max_acc)}"
-            )
+            raise ValueError(f"joint_max_acc must have 7 elements, got {len(self.joint_max_acc)}")
 
         # Validate Cartesian/force parameters have correct length (6-DOF)
         if len(self.force_control_axis) != 6:
-            raise ValueError(
-                f"force_control_axis must have 6 elements, got {len(self.force_control_axis)}"
-            )
+            raise ValueError(f"force_control_axis must have 6 elements, got {len(self.force_control_axis)}")
         if len(self.max_contact_wrench) != 6:
-            raise ValueError(
-                f"max_contact_wrench must have 6 elements, got {len(self.max_contact_wrench)}"
-            )
+            raise ValueError(f"max_contact_wrench must have 6 elements, got {len(self.max_contact_wrench)}")
         if len(self.target_wrench) != 6:
-            raise ValueError(
-                f"target_wrench must have 6 elements, got {len(self.target_wrench)}"
-            )
+            raise ValueError(f"target_wrench must have 6 elements, got {len(self.target_wrench)}")
 
         # Validate start position parameters
         if len(self.start_position_degree) != 7:
@@ -253,9 +242,7 @@ class FlexivRizon4Config(RobotConfig):
                 f"start_position_degree must have 7 elements, got {len(self.start_position_degree)}"
             )
         if not 1 <= self.start_vel_scale <= 100:
-            raise ValueError(
-                f"start_vel_scale must be between 1 and 100, got {self.start_vel_scale}"
-            )
+            raise ValueError(f"start_vel_scale must be between 1 and 100, got {self.start_vel_scale}")
 
         # Create FlareGripperConfig from exposed parameters (only if use_gripper=True)
         if self.use_gripper:

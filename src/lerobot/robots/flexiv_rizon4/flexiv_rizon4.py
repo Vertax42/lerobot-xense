@@ -37,29 +37,19 @@ Note: Python API can only use NRT modes due to language timing limitations.
 Reference: https://rdk.flexiv.com/api/
 """
 
-import math
 import time
 from functools import cached_property
 from typing import Any
 
+import flexivrdk
 import numpy as np
 
-from lerobot.utils.robot_utils import get_logger
-
-try:
-    import flexivrdk
-except ImportError as e:
-    raise ImportError(
-        "flexivrdk is required for Flexiv Rizon4 robot. "
-        "Please install it following the instructions at https://rdk.flexiv.com/"
-    ) from e
-
 from lerobot.cameras.utils import make_cameras_from_configs
+from lerobot.robots.flexiv_rizon4.config_flexiv_rizon4 import ControlMode, FlexivRizon4Config
+from lerobot.robots.flexiv_rizon4.flare_gripper import FlareGripper
+from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
-
-from ..robot import Robot
-from .flare_gripper import FlareGripper
-from .config_flexiv_rizon4 import ControlMode, FlexivRizon4Config
+from lerobot.utils.robot_utils import get_logger, quaternion_to_euler
 
 # Alias for flexivrdk.Mode for convenience
 Mode = flexivrdk.Mode
@@ -145,25 +135,17 @@ class FlexivRizon4(Robot):
     def _init_joint_mode(self) -> None:
         """Initialize keys and buffers for joint impedance control mode."""
         # Joint state observation keys: joint_{1-7}.{pos, vel, effort}
-        self._joint_pos_keys = tuple(
-            f"joint_{i}.pos" for i in range(1, JOINT_DOF + 1)
-        )
-        self._joint_vel_keys = tuple(
-            f"joint_{i}.vel" for i in range(1, JOINT_DOF + 1)
-        )
-        self._joint_effort_keys = tuple(
-            f"joint_{i}.effort" for i in range(1, JOINT_DOF + 1)
-        )
+        self._joint_pos_keys = tuple(f"joint_{i}.pos" for i in range(1, JOINT_DOF + 1))
+        self._joint_vel_keys = tuple(f"joint_{i}.vel" for i in range(1, JOINT_DOF + 1))
+        self._joint_effort_keys = tuple(f"joint_{i}.effort" for i in range(1, JOINT_DOF + 1))
 
         # Joint action keys: joint_{1-7}.pos
-        self._action_joint_keys = tuple(
-            f"joint_{i}.pos" for i in range(1, JOINT_DOF + 1)
-        )
+        self._action_joint_keys = tuple(f"joint_{i}.pos" for i in range(1, JOINT_DOF + 1))
 
         # Pre-cache config values as lists (for API calls)
         self._max_vel = self.config.joint_max_vel  # Already a list
         self._max_acc = self.config.joint_max_acc  # Already a list
-        
+
         # Zero velocity array for SendJointPosition API
         self._zero_vel = [0.0] * JOINT_DOF
 
@@ -235,14 +217,14 @@ class FlexivRizon4(Robot):
 
         if self.config.control_mode == ControlMode.JOINT_IMPEDANCE:
             # Joint positions (7D)
-            features.update({key: float for key in self._action_joint_keys})
+            features.update(dict.fromkeys(self._action_joint_keys, float))
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
             # TCP pose (7D)
-            features.update({key: float for key in self._action_tcp_pose_keys})
+            features.update(dict.fromkeys(self._action_tcp_pose_keys, float))
             if self.config.use_force:
                 # + target wrench (6D)
-                features.update({key: float for key in self._action_wrench_keys})
+                features.update(dict.fromkeys(self._action_wrench_keys, float))
 
         else:
             raise ValueError(f"Unsupported control_mode: {self.config.control_mode}")
@@ -264,18 +246,18 @@ class FlexivRizon4(Robot):
 
         if self.config.control_mode == ControlMode.JOINT_IMPEDANCE:
             # Joint positions (7D)
-            features.update({key: float for key in self._joint_pos_keys})
+            features.update(dict.fromkeys(self._joint_pos_keys, float))
             # Joint velocities (7D)
-            features.update({key: float for key in self._joint_vel_keys})
+            features.update(dict.fromkeys(self._joint_vel_keys, float))
             # Joint efforts/torques (7D)
-            features.update({key: float for key in self._joint_effort_keys})
+            features.update(dict.fromkeys(self._joint_effort_keys, float))
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
             # TCP pose (7D)
-            features.update({key: float for key in self._tcp_pose_keys})
+            features.update(dict.fromkeys(self._tcp_pose_keys, float))
             if self.config.use_force:
                 # + external wrench (6D)
-                features.update({key: float for key in self._wrench_keys})
+                features.update(dict.fromkeys(self._wrench_keys, float))
 
         else:
             raise ValueError(f"Unsupported control_mode: {self.config.control_mode}")
@@ -288,16 +270,28 @@ class FlexivRizon4(Robot):
     def _cameras_ft(self) -> dict[str, tuple]:
         """Return camera/image features from Flare GriNonepper and external cameras."""
         features = {}
-        
+
         if self._flare_gripper and self.config.use_gripper:
-            features["wrist_cam"] = (self._flare_gripper._config.cam_size[1], self._flare_gripper._config.cam_size[0], 3)
-            features["left_tactile"] = (self._flare_gripper._config.rectify_size[1], self._flare_gripper._config.rectify_size[0], 3)
-            features["right_tactile"] = (self._flare_gripper._config.rectify_size[1], self._flare_gripper._config.rectify_size[0], 3)
-        
+            features["wrist_cam"] = (
+                self._flare_gripper._config.cam_size[1],
+                self._flare_gripper._config.cam_size[0],
+                3,
+            )
+            features["left_tactile"] = (
+                self._flare_gripper._config.rectify_size[1],
+                self._flare_gripper._config.rectify_size[0],
+                3,
+            )
+            features["right_tactile"] = (
+                self._flare_gripper._config.rectify_size[1],
+                self._flare_gripper._config.rectify_size[0],
+                3,
+            )
+
         # External cameras (e.g., scene cameras)
         for cam in self.cameras:
             features[cam] = (self.config.cameras[cam].height, self.config.cameras[cam].width, 3)
-        
+
         return features
 
     @cached_property
@@ -325,9 +319,7 @@ class FlexivRizon4(Robot):
 
     def calibrate(self) -> None:
         """Flexiv robots are factory calibrated, no runtime calibration needed."""
-        self.logger.info(
-            "Flexiv Rizon4 is factory calibrated, no runtime calibration needed."
-        )
+        self.logger.info("Flexiv Rizon4 is factory calibrated, no runtime calibration needed.")
 
     def zero_ft_sensor(self) -> None:
         """Zero force-torque sensor offset.
@@ -338,15 +330,13 @@ class FlexivRizon4(Robot):
         if not self.is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
-        self.logger.warn(
-            "Zeroing force-torque sensors, make sure nothing is in contact with the robot"
-        )
+        self.logger.warn("Zeroing force-torque sensors, make sure nothing is in contact with the robot")
 
         # Switch to primitive execution mode
         self._robot.SwitchMode(flexivrdk.Mode.NRT_PRIMITIVE_EXECUTION)
 
         # Execute ZeroFTSensor primitive
-        self._robot.ExecutePrimitive("ZeroFTSensor", dict())
+        self._robot.ExecutePrimitive("ZeroFTSensor", {})
 
         # Wait for primitive to finish
         while not self._robot.primitive_states()["terminated"]:
@@ -371,18 +361,20 @@ class FlexivRizon4(Robot):
         if self.config.control_mode == ControlMode.JOINT_IMPEDANCE:
             # Joint impedance mode - set joint stiffness based on stiffness_ratio
             if self.config.stiffness_ratio != 1.0:
-                K_q_nom = robot_info.K_q_nom
-                new_Kq = np.multiply(K_q_nom, self.config.stiffness_ratio)
-                self._robot.SetJointImpedance(new_Kq)
-                self.logger.info(f"Joint impedance mode - set stiffness (ratio={self.config.stiffness_ratio}): {new_Kq}")
+                k_q_nom = robot_info.K_q_nom
+                new_kq = np.multiply(k_q_nom, self.config.stiffness_ratio)
+                self._robot.SetJointImpedance(new_kq)
+                self.logger.info(
+                    f"Joint impedance mode - set stiffness (ratio={self.config.stiffness_ratio}): {new_kq}"
+                )
             else:
                 self.logger.info(f"Joint impedance mode - using nominal stiffness: {robot_info.K_q_nom}")
                 return
 
         elif self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
             # Cartesian mode configuration
-            K_x_nom = robot_info.K_x_nom
-            self.logger.info(f"Cartesian mode - nominal Cartesian stiffness K_x_nom: {K_x_nom}")
+            k_x_nom = robot_info.K_x_nom
+            self.logger.info(f"Cartesian mode - nominal Cartesian stiffness k_x_nom: {k_x_nom}")
 
             # Configure force control if use_force is enabled
             if self.config.use_force:
@@ -429,14 +421,10 @@ class FlexivRizon4(Robot):
 
             # Clear any existing fault
             if self._robot.fault():
-                self.logger.warn(
-                    "Fault occurred on the connected robot, trying to clear ..."
-                )
+                self.logger.warn("Fault occurred on the connected robot, trying to clear ...")
                 # Try to clear the fault
                 if not self._robot.ClearFault():
-                    raise RuntimeError(
-                        "Failed to clear robot fault. Check the robot status."
-                    )
+                    raise RuntimeError("Failed to clear robot fault. Check the robot status.")
                 self.logger.info("Fault on the connected robot is cleared")
 
             # Enable the robot
@@ -448,9 +436,7 @@ class FlexivRizon4(Robot):
             start_time = time.time()
             while not self._robot.operational():
                 if time.time() - start_time > timeout:
-                    raise RuntimeError(
-                        f"Robot did not become operational within {timeout} seconds"
-                    )
+                    raise RuntimeError(f"Robot did not become operational within {timeout} seconds")
                 time.sleep(0.1)
 
             self.logger.info("Robot is now operational.")
@@ -481,7 +467,7 @@ class FlexivRizon4(Robot):
             mode_desc = self.config.control_mode.value
             if self.config.control_mode == ControlMode.CARTESIAN_MOTION_FORCE:
                 mode_desc += " (force enabled)" if self.config.use_force else " (motion only)"
-            
+
             if self._flare_gripper and self.config.use_gripper:
                 gripper_status = "with Flare Gripper (gripper + wrist_cam + tactile)"
             self.logger.info(f"✅ Flexiv Rizon4 connected and ready in {mode_desc} mode ({gripper_status}).")
@@ -520,9 +506,15 @@ class FlexivRizon4(Robot):
             },
         )
         if self.config.flare_gripper_init_open:
-            self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
+            self._flare_gripper._gripper.set_position_sync(
+                self.config.flare_gripper_max_pos,
+                vmax=self.config.flare_gripper_v_max / 2,
+                fmax=self.config.flare_gripper_f_max / 2,
+            )  # fully open
         else:
-            self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
+            self._flare_gripper._gripper.set_position_sync(
+                0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2
+            )  # fully closed
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
@@ -558,9 +550,15 @@ class FlexivRizon4(Robot):
             },
         )
         if self.config.flare_gripper_init_open:
-            self._flare_gripper._gripper.set_position_sync(self.config.flare_gripper_max_pos, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully open
+            self._flare_gripper._gripper.set_position_sync(
+                self.config.flare_gripper_max_pos,
+                vmax=self.config.flare_gripper_v_max / 2,
+                fmax=self.config.flare_gripper_f_max / 2,
+            )  # fully open
         else:
-            self._flare_gripper._gripper.set_position_sync(0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2) # fully closed
+            self._flare_gripper._gripper.set_position_sync(
+                0.0, vmax=self.config.flare_gripper_v_max / 2, fmax=self.config.flare_gripper_f_max / 2
+            )  # fully closed
         # Wait for target reached
         while not self._robot.primitive_states()["reachedTarget"]:
             time.sleep(0.1)
@@ -625,7 +623,7 @@ class FlexivRizon4(Robot):
                 raise RuntimeError("Failed to clear robot fault before mode switch")
 
         self._robot.SwitchMode(flexiv_mode)
-        
+
         # Wait for mode switch to complete and verify
         max_wait = 2.0  # seconds
         wait_start = time.perf_counter()
@@ -636,7 +634,7 @@ class FlexivRizon4(Robot):
                 self.logger.info(f"✅ Now in {self.config.control_mode.value} mode.")
                 return
             time.sleep(0.05)
-        
+
         # Mode switch failed
         actual_mode = self._robot.mode()
         raise RuntimeError(
@@ -669,7 +667,7 @@ class FlexivRizon4(Robot):
             # Joint velocities (7D)
             for i, key in enumerate(self._joint_vel_keys):
                 obs_dict[key] = float(states.dq[i])
-            
+
             # Joint efforts/torques (7D)
             for i, key in enumerate(self._joint_effort_keys):
                 obs_dict[key] = float(states.tau[i])
@@ -712,81 +710,84 @@ class FlexivRizon4(Robot):
 
     def get_current_tcp_pose_euler(self) -> np.ndarray:
         """Get current TCP pose in Euler angles format [x, y, z, roll, pitch, yaw, gripper_pos].
-        
+
         This method can be used for getting the current TCP pose in Euler angles format for initializing teleoperators (e.g., spacemouse) with the robot's
         current TCP pose. Only available in CARTESIAN_MOTION_FORCE mode.
-        
+
         Returns:
             numpy array of shape (7,) with [x, y, z, roll, pitch, yaw, gripper_pos]
         """
         if not self.is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if self.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
             raise ValueError("get_current_tcp_pose_euler requires CARTESIAN_MOTION_FORCE mode")
-        
+
         # Get current TCP pose (quaternion format)
         states = self._robot.states()
         tcp_pose = states.tcp_pose  # [x, y, z, qw, qx, qy, qz]
-        
+
         # Convert quaternion to Euler angles
-        qw, qx, qy, qz = tcp_pose[3], tcp_pose[4], tcp_pose[5], tcp_pose[6]
-        roll = math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy))
-        sinp = 2 * (qw * qy - qz * qx)
-        pitch = math.copysign(math.pi / 2, sinp) if abs(sinp) >= 1 else math.asin(sinp)
-        yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        
+        euler = quaternion_to_euler(tcp_pose[3], tcp_pose[4], tcp_pose[5], tcp_pose[6])
+        roll, pitch, yaw = euler[0], euler[1], euler[2]
+
         # Get gripper position directly from XenseFlare gripper
         gripper_pos = 0.0
         if self._flare_gripper and self.config.use_gripper:
             gripper_pos = self._flare_gripper.get_gripper_position()
-        
+
         # Return [x, y, z, roll, pitch, yaw, gripper_pos]
-        return np.array([
-            float(tcp_pose[0]),  # x
-            float(tcp_pose[1]),  # y
-            float(tcp_pose[2]),  # z
-            float(roll),
-            float(pitch),
-            float(yaw),
-            gripper_pos,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                float(tcp_pose[0]),  # x
+                float(tcp_pose[1]),  # y
+                float(tcp_pose[2]),  # z
+                float(roll),
+                float(pitch),
+                float(yaw),
+                gripper_pos,
+            ],
+            dtype=np.float32,
+        )
 
     def get_current_tcp_pose_quat(self) -> np.ndarray:
         """Get current TCP pose in quaternion format [x, y, z, qw, qx, qy, qz, gripper_pos].
-        
+
         This method can be used for getting the current TCP pose in quaternion format for initializing teleoperators (e.g., pico4) with the robot's
         current TCP pose. Only available in CARTESIAN_MOTION_FORCE mode.
-        
+
         Returns:
             numpy array of shape (8,) with [x, y, z, qw, qx, qy, qz, gripper_pos]
         """
         if not self.is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        
+
         if self.config.control_mode != ControlMode.CARTESIAN_MOTION_FORCE:
             raise ValueError("get_current_tcp_pose_quat requires CARTESIAN_MOTION_FORCE mode")
-        
+
         # Get current TCP pose (quaternion format)
         states = self._robot.states()
         tcp_pose = states.tcp_pose  # [x, y, z, qw, qx, qy, qz]
-        
+
         # Get gripper position directly from XenseFlare gripper
         gripper_pos = 0.0
         if self._flare_gripper and self.config.use_gripper:
             gripper_pos = self._flare_gripper.get_gripper_position()
-        
+
         # Return [x, y, z, qw, qx, qy, qz, gripper_pos]
-        return np.array([
-            float(tcp_pose[0]),  # x
-            float(tcp_pose[1]),  # y
-            float(tcp_pose[2]),  # z
-            float(tcp_pose[3]),  # qw
-            float(tcp_pose[4]),  # qx
-            float(tcp_pose[5]),  # qy
-            float(tcp_pose[6]),  # qz
-            gripper_pos,
-        ], dtype=np.float32)
+        return np.array(
+            [
+                float(tcp_pose[0]),  # x
+                float(tcp_pose[1]),  # y
+                float(tcp_pose[2]),  # z
+                float(tcp_pose[3]),  # qw
+                float(tcp_pose[4]),  # qx
+                float(tcp_pose[5]),  # qy
+                float(tcp_pose[6]),  # qz
+                gripper_pos,
+            ],
+            dtype=np.float32,
+        )
 
     def send_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send action command to the robot.
@@ -807,9 +808,7 @@ class FlexivRizon4(Robot):
 
         # Check for fault
         if self._robot.fault():
-            raise RuntimeError(
-                "Robot fault detected. Call robot.clear_fault() or reconnect."
-            )
+            raise RuntimeError("Robot fault detected. Call robot.clear_fault() or reconnect.")
 
         # Send robot arm action
         if self.config.control_mode == ControlMode.JOINT_IMPEDANCE:
@@ -852,13 +851,11 @@ class FlexivRizon4(Robot):
 
         return action
 
-    def _send_cartesian_pure_motion_action(
-        self, action: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _send_cartesian_pure_motion_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send Cartesian pure motion command (NRT mode, no force control).
 
         Action keys: action.tcp.{x,y,z,qw,qx,qy,qz}
-        
+
         Note: Calling SendCartesianMotionForce with only target_pose results in pure motion control.
         """
         # Extract target TCP pose directly from action
@@ -869,9 +866,7 @@ class FlexivRizon4(Robot):
 
         return action
 
-    def _send_cartesian_motion_force_action(
-        self, action: dict[str, Any]
-    ) -> dict[str, Any]:
+    def _send_cartesian_motion_force_action(self, action: dict[str, Any]) -> dict[str, Any]:
         """Send Cartesian motion-force command (NRT mode).
 
         Action keys: action.tcp.{x,y,z,qw,qx,qy,qz} + action.tcp.{fx,fy,fz,mx,my,mz}
@@ -900,7 +895,7 @@ class FlexivRizon4(Robot):
             return
 
         # Set gripper position
-        self._flare_gripper.set_gripper_position(float(action[self._gripper_key])) # normalized [0, 1]
+        self._flare_gripper.set_gripper_position(float(action[self._gripper_key]))  # normalized [0, 1]
 
     def clear_fault(self) -> bool:
         """Attempt to clear robot fault.
@@ -925,14 +920,14 @@ class FlexivRizon4(Robot):
 
     def disconnect(self) -> None:
         """Disconnect from the robot safely.
-        
+
         This method ensures safe disconnection even if errors occur during the process.
         It will attempt to:
         1. Move robot to home position (if possible)
         2. Stop any ongoing motion
         3. Disconnect gripper and cameras
         4. Clean up all resources
-        
+
         All errors are caught and logged, but the disconnect process continues to ensure cleanup.
         """
         if not self._is_connected:

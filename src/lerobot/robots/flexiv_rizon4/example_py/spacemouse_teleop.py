@@ -20,12 +20,17 @@ __copyright__ = "Copyright (C) 2016-2025 Flexiv Ltd. All Rights Reserved."
 __author__ = "Flexiv"
 
 import time
-import math
 import argparse
 import spdlog
 import numpy as np
 import flexivrdk
 from lerobot.teleoperators.spacemouse.peripherals import Spacemouse
+from lerobot.utils.robot_utils import (
+    euler_to_quaternion,
+    quaternion_to_euler,
+    quaternion_multiply,
+    normalize_quaternion,
+)
 from multiprocessing.managers import SharedMemoryManager
 from queue import Queue
 
@@ -65,57 +70,9 @@ EXT_TORQUE_THRESHOLD = 8.0
 START_POSITION_DEG = [0.0, -40.0, 0.0, 90.0, 0.0, 40.0, 0.0]
 
 
-# ==================================================================================================
-# Utility Functions  
-# ==================================================================================================
-
-def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> np.ndarray:
-    """Convert Euler angles (roll, pitch, yaw) to quaternion [qw, qx, qy, qz]."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    
-    qw = cr * cp * cy + sr * sp * sy
-    qx = sr * cp * cy - cr * sp * sy
-    qy = cr * sp * cy + sr * cp * sy
-    qz = cr * cp * sy - sr * sp * cy
-    
-    return np.array([qw, qx, qy, qz])
-
-
-def quaternion_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    """Multiply two quaternions q1 * q2. Both in [qw, qx, qy, qz] format."""
-    w1, x1, y1, z1 = q1
-    w2, x2, y2, z2 = q2
-    
-    return np.array([
-        w1*w2 - x1*x2 - y1*y2 - z1*z2,
-        w1*x2 + x1*w2 + y1*z2 - z1*y2,
-        w1*y2 - x1*z2 + y1*w2 + z1*x2,
-        w1*z2 + x1*y2 - y1*x2 + z1*w2
-    ])
-
-
-def normalize_quaternion(q: np.ndarray) -> np.ndarray:
-    """Normalize quaternion to unit length."""
-    norm = np.linalg.norm(q)
-    if norm < 1e-10:
-        return np.array([1.0, 0.0, 0.0, 0.0])
-    return q / norm
-
-
-def quaternion_to_euler(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
-    """Convert quaternion [qw, qx, qy, qz] to Euler angles [roll, pitch, yaw] in radians."""
-    roll = math.atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy))
-    sinp = 2 * (qw * qy - qz * qx)
-    pitch = math.copysign(math.pi / 2, sinp) if abs(sinp) >= 1 else math.asin(sinp)
-    yaw = math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-    return np.array([roll, pitch, yaw])
-
-
 class SpacemouseTeleop:
     """Spacemouse teleoperation controller for Flexiv robot."""
-    
+
     def __init__(self, robot: flexivrdk.Robot, logger: spdlog.ConsoleLogger, 
                  frequency: int = DEFAULT_FREQUENCY, enable_collision: bool = False,
                  enable_gripper: bool = False):
@@ -125,7 +82,7 @@ class SpacemouseTeleop:
         self.period = 1.0 / frequency
         self.enable_collision = enable_collision
         self.enable_gripper = enable_gripper
-        
+
         # Gripper interface (optional)
         self.gripper = None
         if enable_gripper:

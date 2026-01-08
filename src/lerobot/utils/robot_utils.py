@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import platform
 import time
 
@@ -27,10 +26,10 @@ SPDLOG_PATTERN = "[%H:%M:%S] [%n] [%^%l%$] %v"
 
 def get_logger(name: str) -> spdlog.ConsoleLogger:
     """Create a spdlog ConsoleLogger with unified format and colors.
-    
+
     Args:
         name: Logger name
-        
+
     Returns:
         Configured spdlog.ConsoleLogger instance with colored output
     """
@@ -204,9 +203,7 @@ def matrix_to_pose7d(matrix: np.ndarray, output_format: str = "wxyz") -> np.ndar
         )
 
 
-def euler_to_quaternion(
-    roll: float, pitch: float, yaw: float
-) -> tuple[float, float, float, float]:
+def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> np.ndarray:
     """Convert Euler angles (roll, pitch, yaw) to quaternion [qw, qx, qy, qz].
 
     Uses ZYX intrinsic rotation order (yaw → pitch → roll), which is:
@@ -222,23 +219,21 @@ def euler_to_quaternion(
         yaw: Rotation around z-axis in radians
 
     Returns:
-        Tuple of (qw, qx, qy, qz) representing the quaternion
+        np.ndarray of shape (4,) in [qw, qx, qy, qz] format.
     """
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+    cr, sr = np.cos(roll * 0.5), np.sin(roll * 0.5)
+    cp, sp = np.cos(pitch * 0.5), np.sin(pitch * 0.5)
+    cy, sy = np.cos(yaw * 0.5), np.sin(yaw * 0.5)
 
-    qw = cr * cp * cy + sr * sp * sy
-    qx = sr * cp * cy - cr * sp * sy
-    qy = cr * sp * cy + sr * cp * sy
-    qz = cr * cp * sy - sr * sp * cy
+    return np.array([
+        cr * cp * cy + sr * sp * sy,  # qw
+        sr * cp * cy - cr * sp * sy,  # qx
+        cr * sp * cy + sr * cp * sy,  # qy
+        cr * cp * sy - sr * sp * cy,  # qz
+    ], dtype=np.float32)
 
-    return (qw, qx, qy, qz)
 
-
-def quaternion_to_euler(
-    qw: float, qx: float, qy: float, qz: float
-) -> tuple[float, float, float]:
+def quaternion_to_euler(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
     """Convert quaternion [qw, qx, qy, qz] to Euler angles (roll, pitch, yaw).
 
     Uses ZYX intrinsic rotation order, consistent with Flexiv SDK and aerospace standard.
@@ -253,30 +248,47 @@ def quaternion_to_euler(
         qz: Quaternion z component
 
     Returns:
-        Tuple of (roll, pitch, yaw) in radians:
+        np.ndarray of shape (3,) in [roll, pitch, yaw] order (radians):
         - roll: Rotation around x-axis, range [-π, π]
         - pitch: Rotation around y-axis, range [-π/2, π/2]
         - yaw: Rotation around z-axis, range [-π, π]
     """
     # Roll (x-axis rotation)
-    sinr_cosp = 2 * (qw * qx + qy * qz)
-    cosr_cosp = 1 - 2 * (qx * qx + qy * qy)
-    roll = math.atan2(sinr_cosp, cosr_cosp)
+    sinr_cosp = 2.0 * (qw * qx + qy * qz)
+    cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
 
-    # Pitch (y-axis rotation)
-    sinp = 2 * (qw * qy - qz * qx)
-    # Handle gimbal lock
-    if abs(sinp) >= 1:
-        pitch = math.copysign(math.pi / 2, sinp)
-    else:
-        pitch = math.asin(sinp)
+    # Pitch (y-axis rotation) with gimbal lock handling
+    sinp = np.clip(2.0 * (qw * qy - qz * qx), -1.0, 1.0)
+    pitch = np.arcsin(sinp)
 
     # Yaw (z-axis rotation)
-    siny_cosp = 2 * (qw * qz + qx * qy)
-    cosy_cosp = 1 - 2 * (qy * qy + qz * qz)
-    yaw = math.atan2(siny_cosp, cosy_cosp)
+    siny_cosp = 2.0 * (qw * qz + qx * qy)
+    cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
 
-    return (roll, pitch, yaw)
+    return np.array([roll, pitch, yaw], dtype=np.float32)
+
+
+def quaternion_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    """Multiply two quaternions q1 * q2.
+
+    Args:
+        q1: First quaternion [qw, qx, qy, qz]
+        q2: Second quaternion [qw, qx, qy, qz]
+
+    Returns:
+        np.ndarray of shape (4,) representing q1 * q2 in [qw, qx, qy, qz] format.
+    """
+    w1, x1, y1, z1 = q1[0], q1[1], q1[2], q1[3]
+    w2, x2, y2, z2 = q2[0], q2[1], q2[2], q2[3]
+
+    return np.array([
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ], dtype=np.float32)
 
 
 def slerp_quaternion(
@@ -343,8 +355,13 @@ def normalize_quaternion(q: np.ndarray, input_format: str = "wxyz") -> np.ndarra
     # Check norm and normalize if needed
     norm = np.linalg.norm(q)
     if norm < 1e-10:
-        # Invalid quaternion, return identity
-        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        # Invalid quaternion, return identity in input_format
+        if input_format == "wxyz":
+            return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        elif input_format == "xyzw":
+            return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32)
+        else:
+            raise ValueError(f"Unknown input_format: {input_format}. Use 'wxyz' or 'xyzw'.")
 
     # Skip normalization if already unit quaternion (|norm - 1| < tolerance)
     if abs(norm - 1.0) > 1e-6:
