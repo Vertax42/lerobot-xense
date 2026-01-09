@@ -74,6 +74,7 @@ lerobot-teleoperate \
     --teleop.type=mock_teleop \
     --fps=20 \
     --display_data=true \
+    --debug_timing=true \
     --dryrun=false
 ```
 
@@ -261,7 +262,7 @@ lerobot-record \
     --dataset.push_to_hub=true
 ```
 
---------------------------------
+---
 
 ```python
 lerobot-record \
@@ -310,7 +311,7 @@ lerobot-train \
   --batch_size=32 \
   --steps=200000 \
   --policy.push_to_hub=true \
-  --wandb.disable_artifact=true 
+  --wandb.disable_artifact=true
 ```
 
 ## BiARX5 Robot lerobot-train command diffusion
@@ -333,6 +334,7 @@ lerobot-train \
 **Note on preview_time:**
 
 Adjust `--robot.preview_time` to reduce jittering:
+
 - 0.03-0.05s: Smoother motion, more delay (recommended for stable movements)
 - 0.01-0.02s: More responsive, but may cause jittering
 - 0.0: No preview (only for teleoperation/recording)
