@@ -18,7 +18,7 @@
 Xense Flare Example Script
 
 Demonstrates Xense Flare data collection gripper functionality with Rerun visualization.
-All sensor data (Vive tracker, gripper, camera, tactile sensors) is 
+All sensor data (Vive tracker, gripper, camera, tactile sensors) is
 visualized in the Rerun viewer.
 
 Usage:
@@ -27,21 +27,23 @@ Usage:
     python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --fps 60
 """
 
+import argparse
+import logging
 import os
 import sys
 import time
-import argparse
 import warnings
-import logging
 from collections import defaultdict
+
 import numpy as np
 
-from lerobot.utils.robot_utils import get_logger
 from lerobot.robots import make_robot_from_config
+from lerobot.utils.robot_utils import get_logger
 
 # Check Rerun availability
 try:
     import rerun as rr
+
     RERUN_AVAILABLE = True
 except ImportError:
     RERUN_AVAILABLE = False
@@ -59,6 +61,7 @@ SENSOR_PREFIX = "sensors"
 # =============================================================================
 # Rerun Visualization Helper Functions
 # =============================================================================
+
 
 def init_rerun(
     session_name: str = "xense_flare_example",
@@ -88,13 +91,13 @@ def init_rerun(
         # Suppress warnings and logging to avoid clutter
         warnings.filterwarnings("ignore")
         logging.getLogger("rerun").setLevel(logging.CRITICAL)
-        
+
         # Save original showwarning before Rerun can override it
         original_showwarning = warnings.showwarning
-        
+
         # Initialize Rerun
         rr.init(session_name)
-        
+
         # Restore original showwarning
         warnings.showwarning = original_showwarning
 
@@ -134,11 +137,7 @@ def log_camera_image(
     path = entity_path or f"{CAMERA_PREFIX}/{camera_name}"
 
     # Handle CHW -> HWC conversion if needed
-    if (
-        image.ndim == 3
-        and image.shape[0] in (1, 3, 4)
-        and image.shape[-1] not in (1, 3, 4)
-    ):
+    if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (1, 3, 4):
         image = np.transpose(image, (1, 2, 0))
 
     # Convert BGR to RGB if needed
@@ -169,12 +168,14 @@ def log_gripper_state(
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
     """Convert quaternion [qx, qy, qz, qw] to 3x3 rotation matrix."""
     qx, qy, qz, qw = q
-    
-    return np.array([
-        [1 - 2*(qy**2 + qz**2), 2*(qx*qy - qz*qw), 2*(qx*qz + qy*qw)],
-        [2*(qx*qy + qz*qw), 1 - 2*(qx**2 + qz**2), 2*(qy*qz - qx*qw)],
-        [2*(qx*qz - qy*qw), 2*(qy*qz + qx*qw), 1 - 2*(qx**2 + qy**2)]
-    ])
+
+    return np.array(
+        [
+            [1 - 2 * (qy**2 + qz**2), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx**2 + qz**2), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx**2 + qy**2)],
+        ]
+    )
 
 
 def log_coordinate_axes(
@@ -185,7 +186,7 @@ def log_coordinate_axes(
 ) -> None:
     """
     Log coordinate axes (XYZ) at a given pose.
-    
+
     Args:
         entity_path: Base entity path
         position: Position [x, y, z]
@@ -194,24 +195,26 @@ def log_coordinate_axes(
     """
     if not RERUN_AVAILABLE:
         return
-    
+
     # Convert quaternion to rotation matrix
     R = quaternion_to_rotation_matrix(rotation_xyzw)
-    
+
     # Axis directions in world frame
     x_axis = R @ np.array([axis_length, 0, 0])
     y_axis = R @ np.array([0, axis_length, 0])
     z_axis = R @ np.array([0, 0, axis_length])
-    
+
     # Log arrows for each axis
     origins = np.array([position, position, position])
     vectors = np.array([x_axis, y_axis, z_axis])
-    colors = np.array([
-        [255, 0, 0],    # X - Red
-        [0, 255, 0],    # Y - Green
-        [0, 0, 255],    # Z - Blue
-    ])
-    
+    colors = np.array(
+        [
+            [255, 0, 0],  # X - Red
+            [0, 255, 0],  # Y - Green
+            [0, 0, 255],  # Z - Blue
+        ]
+    )
+
     rr.log(
         f"{entity_path}/axes",
         rr.Arrows3D(
@@ -272,7 +275,7 @@ def log_vive_pose(
             colors=[[255, 50, 50]],  # Red
         ),
     )
-    
+
     # Log coordinate axes
     log_coordinate_axes(base_path, pos, rot, axis_length=0.08)
 
@@ -295,7 +298,7 @@ def log_lighthouse(
 ) -> None:
     """
     Log lighthouse as a static reference marker with label and coordinate axes.
-    
+
     Args:
         device_name: Name of the lighthouse device (e.g., "LH0", "LH1")
         position: Position [x, y, z]
@@ -303,13 +306,13 @@ def log_lighthouse(
     """
     if not RERUN_AVAILABLE:
         return
-    
+
     pos = np.array(position)
     rot = np.array(rotation_wxyz)  # [qw, qx, qy, qz]
     # Convert from [qw, qx, qy, qz] to [qx, qy, qz, qw] for Rerun
     rot_xyzw = np.array([rot[1], rot[2], rot[3], rot[0]])
     base_path = f"{TRACKER_PREFIX}/{device_name}"
-    
+
     # Use different colors for LH0/LH1
     if device_name == "LH0":
         color = [0, 255, 100]  # Green
@@ -317,7 +320,7 @@ def log_lighthouse(
         color = [100, 180, 255]  # Blue
     else:
         color = [255, 200, 100]  # Orange
-    
+
     # Log 3D transform
     rr.log(
         f"{base_path}/pose",
@@ -326,7 +329,7 @@ def log_lighthouse(
             rotation=rr.Quaternion(xyzw=rot_xyzw),
         ),
     )
-    
+
     # Log as LARGE 3D point with label
     rr.log(
         f"{base_path}/point",
@@ -337,7 +340,7 @@ def log_lighthouse(
             labels=[device_name],
         ),
     )
-    
+
     # Log coordinate axes for lighthouse pose
     log_coordinate_axes(base_path, pos, rot_xyzw, axis_length=0.15)
 
@@ -384,7 +387,7 @@ class TrajectoryVisualizer:
 
         # Keep only the last max_points
         if len(self.trajectories[device_name]) > self.max_points:
-            self.trajectories[device_name] = self.trajectories[device_name][-self.max_points:]
+            self.trajectories[device_name] = self.trajectories[device_name][-self.max_points :]
 
         # Log trajectory as line strip
         path = entity_path or f"{TRACKER_PREFIX}/{device_name}/trajectory"
@@ -417,6 +420,7 @@ def get_trajectory_visualizer() -> TrajectoryVisualizer:
 # Terminal Display Functions
 # =============================================================================
 
+
 def move_cursor_up(lines: int):
     """Move cursor up N lines"""
     sys.stdout.write(f"\033[{lines}A")
@@ -425,8 +429,10 @@ def move_cursor_up(lines: int):
 
 def make_button_callback(event_type: str):
     """Create a callback function for a specific button event type"""
+
     def callback():
         logger.info(f"[Button Event] {event_type}")
+
     return callback
 
 
@@ -436,15 +442,17 @@ def format_live_data(robot, obs: dict, frame_count: int, fps: float, timing: dic
     lines.append("=" * 70)
     lines.append(f"  Xense Flare Live Monitor | Frame: {frame_count:6d} | FPS: {fps:5.1f}")
     lines.append("=" * 70)
-    
+
     # Timing Section (if available)
     if timing:
         lines.append("")
         lines.append("┌─ ⏱️  Latency (ms) ──────────────────────────────────────────────────")
-        lines.append(f"│  Observation: {timing.get('obs', 0):.1f}  |  "
-                    f"Rerun: {timing.get('rerun', 0):.1f}  |  Total: {timing.get('total', 0):.1f}")
+        lines.append(
+            f"│  Observation: {timing.get('obs', 0):.1f}  |  "
+            f"Rerun: {timing.get('rerun', 0):.1f}  |  Total: {timing.get('total', 0):.1f}"
+        )
         lines.append("└" + "─" * 69)
-    
+
     # Vive Tracker Section
     lines.append("")
     lines.append("┌─ 🎯 Vive Tracker ─────────────────────────────────────────────────")
@@ -456,12 +464,12 @@ def format_live_data(robot, obs: dict, frame_count: int, fps: float, timing: dic
     else:
         lines.append("│  (No Vive data)")
     lines.append("└" + "─" * 69)
-    
+
     # Gripper Section
     lines.append("")
     lines.append("┌─ 🤖 Gripper ───────────────────────────────────────────────────────")
     if "gripper.pos" in obs:
-        pos = obs['gripper.pos']
+        pos = obs["gripper.pos"]
         # Create visual bar for position (0-85, where 85 is fully open)
         GRIPPER_MAX_POS = 85.0
         bar_width = 20
@@ -471,11 +479,11 @@ def format_live_data(robot, obs: dict, frame_count: int, fps: float, timing: dic
     else:
         lines.append("│  (No gripper data)")
     lines.append("└" + "─" * 69)
-    
+
     # Sensor Section
     lines.append("")
     lines.append("┌─ 🦖 Tactile Sensors ───────────────────────────────────────────────")
-    sensor_keys = [k for k in obs.keys() if "tactile" in k.lower() or k.startswith("sensor_")]
+    sensor_keys = [k for k in obs if "tactile" in k.lower() or k.startswith("sensor_")]
     if sensor_keys:
         for key in sensor_keys:
             img = obs[key]
@@ -487,7 +495,7 @@ def format_live_data(robot, obs: dict, frame_count: int, fps: float, timing: dic
     else:
         lines.append("│  (No sensor data)")
     lines.append("└" + "─" * 69)
-    
+
     # Camera Section
     lines.append("")
     lines.append("┌─ 📷 Camera ────────────────────────────────────────────────────────")
@@ -502,29 +510,29 @@ def format_live_data(robot, obs: dict, frame_count: int, fps: float, timing: dic
     else:
         lines.append("│  (No camera data)")
     lines.append("└" + "─" * 69)
-    
+
     lines.append("")
     lines.append("Press Ctrl+C to quit | View all data in Rerun viewer")
-    
+
     return lines
 
 
 def log_to_rerun(obs: dict, frame_count: int, robot=None):
     """
     Log observation data to Rerun.
-    
+
     Data sources (from robot.get_observation()):
     - Vive Tracker pose: via vive_tracker.get_action() -> tcp.x/y/z/qw/qx/qy/qz
     - Gripper state: via gripper.get_gripper_status() -> gripper.pos
     - Camera image: via camera.read() -> wrist_cam (BGR format)
     - Tactile sensors: via sensor.selectSensorInfo() -> sensor_<sn> (BGR format)
-    
+
     Visualization:
     - Camera/Tactile images: BGR to RGB conversion
     - Vive Tracker: 3D pose, coordinate axes, trajectory line
     - Lighthouses: Static reference markers with coordinate axes
     - Gripper: Position as scalar plot
-    
+
     Args:
         obs: Observation dictionary from robot.get_observation()
         frame_count: Current frame number
@@ -541,18 +549,18 @@ def log_to_rerun(obs: dict, frame_count: int, robot=None):
             obs.get("tcp.qz", 0),
             obs.get("tcp.qw", 1),
         ]
-        
+
         # Log pose with coordinate axes
         log_vive_pose(
             device_name="tracker",
             position=pos,
             rotation_xyzw=rot_xyzw,
         )
-        
+
         # Add to trajectory
         trajectory_viz = get_trajectory_visualizer()
         trajectory_viz.add_point("tracker", pos)
-    
+
     # Log lighthouse poses (static reference markers)
     if robot is not None:
         vive_tracker = robot.get_vive_tracker()
@@ -570,13 +578,13 @@ def log_to_rerun(obs: dict, frame_count: int, robot=None):
                             position=pose_data.position,
                             rotation_wxyz=pose_data.rotation,
                         )
-    
+
     # Log gripper position
     if "gripper.pos" in obs:
         log_gripper_state(position=obs["gripper.pos"])
-    
+
     # Log tactile sensor images (already RGB from get_observation)
-    for key in obs.keys():
+    for key in obs:
         if "tactile" in key.lower() or key.startswith("sensor_"):
             img = obs[key]
             if isinstance(img, np.ndarray) and img.ndim >= 2:
@@ -586,7 +594,7 @@ def log_to_rerun(obs: dict, frame_count: int, robot=None):
                     entity_path=f"{SENSOR_PREFIX}/{key}",
                     color_format="RGB",
                 )
-    
+
     # Log wrist camera (already RGB from get_observation)
     if "wrist_cam" in obs:
         img = obs["wrist_cam"]
@@ -607,93 +615,93 @@ def run_live_monitor(robot, args, use_rerun: bool = False):
     else:
         logger.info("Starting Live Monitor (Rerun visualization disabled)")
     logger.info("=" * 70)
-    
+
     # Print separator and prepare display area
     print()  # Blank line to separate logger output from live display
-    
+
     frame_count = 0
     fps = 0.0
     fps_update_interval = 10  # Update FPS every N frames
     last_fps_time = time.time()
-    
+
     # Number of lines we print (for cursor movement)
     num_lines = 0
     first_print = True  # Track first print to avoid cursor movement issues
-    
+
     # Timing accumulators
     time_obs = 0.0  # Total get_observation() time
     time_rerun = 0.0  # Rerun logging time
-    
+
     # Last timing info for display
     last_timing_info = None
-    
+
     target_interval = 1.0 / args.fps if args.fps > 0 else 0
-    
+
     try:
         while True:
             loop_start = time.time()
-            
+
             # Get observation
             t0 = time.perf_counter()
             obs = robot.get_observation()
             t1 = time.perf_counter()
-            
+
             # Accumulate observation time
-            time_obs += (t1 - t0)
-            
+            time_obs += t1 - t0
+
             # Log to Rerun (only if visualization is enabled)
             if use_rerun:
                 t2 = time.perf_counter()
                 log_to_rerun(obs, frame_count, robot=robot)
                 time_rerun += time.perf_counter() - t2
-            
+
             frame_count += 1
-            
+
             # Update FPS and timing stats
             if frame_count % fps_update_interval == 0:
                 current_time = time.time()
                 fps = fps_update_interval / (current_time - last_fps_time)
                 last_fps_time = current_time
-                
+
                 # Calculate average timing (in ms)
                 avg_obs = (time_obs / fps_update_interval) * 1000
                 avg_rerun = (time_rerun / fps_update_interval) * 1000
                 total = avg_obs + avg_rerun
-                
+
                 # Store timing info for display
                 last_timing_info = {
                     "obs": avg_obs,
                     "rerun": avg_rerun,
                     "total": total,
                 }
-                
+
                 # Reset accumulators
                 time_obs = 0.0
                 time_rerun = 0.0
-            
+
             # Format and print data to terminal
             if not args.no_print and frame_count % args.print_interval == 0:
                 lines = format_live_data(robot, obs, frame_count, fps, timing=last_timing_info)
-                
+
                 # Move cursor up to overwrite previous output (skip on first print)
                 if not first_print and num_lines > 0:
                     move_cursor_up(num_lines)
                 first_print = False
-                
+
                 # Print all lines (clear each line before printing)
                 for line in lines:
                     sys.stdout.write(f"\033[2K{line}\n")  # \033[2K clears entire line
                 sys.stdout.flush()
-                
+
                 num_lines = len(lines)
-            
+
             # Control loop rate
             elapsed = time.time() - loop_start
             if target_interval > 0:
                 sleep_time = max(0, target_interval - elapsed)
                 if sleep_time > 0:
                     time.sleep(sleep_time)
-                
+
     except KeyboardInterrupt:
         logger.info("\nInterrupted by user.")
 
@@ -707,7 +715,7 @@ Examples:
   python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240
   python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --no-sensor
   python -m lerobot.robots.xense_flare.xense_flare_example --mac_addr 6ebbc5f53240 --fps 30
-        """
+        """,
     )
     parser.add_argument(
         "--mac_addr",
@@ -775,9 +783,11 @@ Examples:
         logger.info("Xense Flare Example - Data Collection Mode")
     logger.info("=" * 70)
     logger.info(f"MAC Address: {args.mac_addr}")
-    logger.info(f"Components: gripper={'OFF' if args.no_gripper else 'ON'}, "
-                f"sensor={'OFF' if args.no_sensor else 'ON'}, "
-                f"cam={'OFF' if args.no_cam else 'ON'}")
+    logger.info(
+        f"Components: gripper={'OFF' if args.no_gripper else 'ON'}, "
+        f"sensor={'OFF' if args.no_sensor else 'ON'}, "
+        f"cam={'OFF' if args.no_cam else 'ON'}"
+    )
     logger.info(f"Sensor Output: {args.sensor_output}")
     logger.info(f"Visualization: rerun={'OFF' if not use_rerun else 'ON'}")
     logger.info("=" * 70)
@@ -792,12 +802,14 @@ Examples:
             logger.info("Rerun visualizer initialized! Viewer window should open.")
 
     # Import and create robot
-    from lerobot.robots.xense_flare import XenseFlareConfig, XenseFlare
+    from lerobot.robots.xense_flare import XenseFlareConfig
     from lerobot.robots.xense_flare.config_xense_flare import SensorOutputType
-    
+
     # Create config
-    sensor_output = SensorOutputType.RECTIFY if args.sensor_output == "rectify" else SensorOutputType.DIFFERENCE
-    
+    sensor_output = (
+        SensorOutputType.RECTIFY if args.sensor_output == "rectify" else SensorOutputType.DIFFERENCE
+    )
+
     config = XenseFlareConfig(
         mac_addr=args.mac_addr,
         enable_gripper=not args.no_gripper,
@@ -805,15 +817,15 @@ Examples:
         enable_camera=not args.no_cam,
         sensor_output_type=sensor_output,
     )
-    
+
     logger.info("Initializing Xense Flare...")
     robot = make_robot_from_config(config)
-    
+
     try:
         # Connect
         robot.connect()
         logger.info("Xense Flare connected!")
-        
+
         # Show system info
         info = robot.get_system_info()
         logger.info(f"  MAC: {info['mac_addr']}")
@@ -837,6 +849,7 @@ Examples:
     except Exception as e:
         logger.error(f"Error: {e}")
         import traceback
+
         traceback.print_exc()
     finally:
         logger.info("Disconnecting Xense Flare...")
@@ -847,4 +860,3 @@ Examples:
 
 if __name__ == "__main__":
     main()
-
