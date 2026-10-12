@@ -53,8 +53,8 @@ class DobotNova5DHConfig(RobotConfig):
 
     # Robot identification (right arm from bi_dobot_nova5_dh).
     robot_ip: str = "192.168.111.102"
-    dashboardPort: int = 29999
-    feedPortFour: int = 30004
+    dashboardPort: int = 29999  # noqa: N815 - preserve public configuration field names
+    feedPortFour: int = 30004  # noqa: N815 - preserve public configuration field names
 
     control_mode: ControlMode = ControlMode.CARTESIAN_MOTION
     control_frequency: float = 100.0
@@ -178,51 +178,32 @@ class DobotNova5DHConfig(RobotConfig):
 
     def _validate(self) -> None:
         if not 1 <= self.control_frequency <= 100:
-            raise ValueError(
-                f"control_frequency must be between 1 and 100 Hz, got {self.control_frequency}"
-            )
+            raise ValueError(f"control_frequency must be between 1 and 100 Hz, got {self.control_frequency}")
         if self.cartesian_ik_backoff_steps < 0:
-            raise ValueError(
-                f"cartesian_ik_backoff_steps must be >= 0, got {self.cartesian_ik_backoff_steps}"
-            )
+            raise ValueError(f"cartesian_ik_backoff_steps must be >= 0, got {self.cartesian_ik_backoff_steps}")
         if self.cartesian_ik_servoj_hold_s < 0:
-            raise ValueError(
-                f"cartesian_ik_servoj_hold_s must be >= 0, got {self.cartesian_ik_servoj_hold_s}"
-            )
+            raise ValueError(f"cartesian_ik_servoj_hold_s must be >= 0, got {self.cartesian_ik_servoj_hold_s}")
         if self.max_cartesian_step_m < 0:
-            raise ValueError(
-                f"max_cartesian_step_m must be >= 0, got {self.max_cartesian_step_m}"
-            )
+            raise ValueError(f"max_cartesian_step_m must be >= 0, got {self.max_cartesian_step_m}")
         if self.async_action_worker_frequency <= 0:
             raise ValueError(
-                "async_action_worker_frequency must be positive, "
-                f"got {self.async_action_worker_frequency}"
+                f"async_action_worker_frequency must be positive, got {self.async_action_worker_frequency}"
             )
         if not 0.0 <= self.gripper_open_threshold <= 1.0:
-            raise ValueError(
-                f"gripper_open_threshold must be in [0, 1], got {self.gripper_open_threshold}"
-            )
+            raise ValueError(f"gripper_open_threshold must be in [0, 1], got {self.gripper_open_threshold}")
         if not 0 <= int(self.tool_coordinate_index) <= 9:
-            raise ValueError(
-                f"tool_coordinate_index must be between 0 and 9, got {self.tool_coordinate_index}"
-            )
+            raise ValueError(f"tool_coordinate_index must be between 0 and 9, got {self.tool_coordinate_index}")
         if self.tool_identify not in (1, 2):
             raise ValueError(f"tool_identify must be 1 or 2, got {self.tool_identify}")
         self._validate_vector(self.workspace_min_xyz_m, 3, "workspace_min_xyz_m")
         self._validate_vector(self.workspace_max_xyz_m, 3, "workspace_max_xyz_m")
-        for axis, lower, upper in zip(
-            ("x", "y", "z"), self.workspace_min_xyz_m, self.workspace_max_xyz_m, strict=True
-        ):
+        for axis, lower, upper in zip(("x", "y", "z"), self.workspace_min_xyz_m, self.workspace_max_xyz_m, strict=True):
             if float(lower) >= float(upper):
-                raise ValueError(
-                    f"workspace has invalid {axis} bounds: min {lower} >= max {upper}"
-                )
+                raise ValueError(f"workspace has invalid {axis} bounds: min {lower} >= max {upper}")
         self._validate_vector(self.start_position_degree, 6, "start_position_degree")
         self._validate_vector(self.home_point_list, 6, "home_point_list")
         if not 1 <= self.start_vel_scale <= 100:
-            raise ValueError(
-                f"start_vel_scale must be between 1 and 100, got {self.start_vel_scale}"
-            )
+            raise ValueError(f"start_vel_scale must be between 1 and 100, got {self.start_vel_scale}")
 
     @staticmethod
     def _validate_vector(values: list[float], expected: int, name: str) -> None:

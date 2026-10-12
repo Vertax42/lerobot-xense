@@ -57,13 +57,15 @@ normal teleoperation path.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from threading import Lock, Thread
 from typing import Protocol
 
-from .config_dh_gripper_integrated import DHGripperIntegratedConfig
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import get_logger
+
+from .config_dh_gripper_integrated import DHGripperIntegratedConfig
 
 # ── Modbus RTU registers ───────────────────────────────────────────────────────
 _REG_INITIALIZE = 0x0100
@@ -191,20 +193,12 @@ class DHGripperIntegrated:
 
             if target_dirty and target_position is not None:
                 target_dh_pos = int(round(target_position * _DH_POS_OPEN))
-                last_sent_dh_pos = (
-                    None
-                    if last_sent_position is None
-                    else int(round(last_sent_position * _DH_POS_OPEN))
-                )
-                should_send = (
-                    last_sent_position is None
-                    or (
-                        target_dh_pos != last_sent_dh_pos
-                        and (
-                            self._config.command_epsilon == 0.0
-                            or abs(target_position - last_sent_position)
-                            > self._config.command_epsilon
-                        )
+                last_sent_dh_pos = None if last_sent_position is None else int(round(last_sent_position * _DH_POS_OPEN))
+                should_send = last_sent_position is None or (
+                    target_dh_pos != last_sent_dh_pos
+                    and (
+                        self._config.command_epsilon == 0.0
+                        or abs(target_position - last_sent_position) > self._config.command_epsilon
                     )
                 )
                 if should_send:
@@ -222,10 +216,7 @@ class DHGripperIntegrated:
                         consecutive_failures += 1
                 else:
                     with self._state_lock:
-                        if (
-                            self._target_position is not None
-                            and abs(self._target_position - target_position) < 1e-9
-                        ):
+                        if self._target_position is not None and abs(self._target_position - target_position) < 1e-9:
                             self._target_dirty = False
 
             if not poll_enabled:
@@ -250,13 +241,10 @@ class DHGripperIntegrated:
                     )
                 elif (
                     consecutive_failures > _POLL_FAIL_LOG_THRESHOLD
-                    and (consecutive_failures - _POLL_FAIL_LOG_THRESHOLD)
-                    % _POLL_FAIL_REPEAT_INTERVAL
-                    == 0
+                    and (consecutive_failures - _POLL_FAIL_LOG_THRESHOLD) % _POLL_FAIL_REPEAT_INTERVAL == 0
                 ):
                     self._logger.error(
-                        "DHGripperIntegrated: still unhealthy — "
-                        f"{consecutive_failures} consecutive failures."
+                        f"DHGripperIntegrated: still unhealthy — {consecutive_failures} consecutive failures."
                     )
                 elapsed = time.monotonic() - tick_start
                 time.sleep(max(0.0, interval_s - elapsed))
@@ -264,8 +252,7 @@ class DHGripperIntegrated:
 
             if consecutive_failures >= _POLL_FAIL_LOG_THRESHOLD:
                 self._logger.info(
-                    "DHGripperIntegrated: communication recovered after "
-                    f"{consecutive_failures} consecutive failures."
+                    f"DHGripperIntegrated: communication recovered after {consecutive_failures} consecutive failures."
                 )
             consecutive_failures = 0
 
@@ -294,9 +281,7 @@ class DHGripperIntegrated:
 
         self._logger.info("Triggering DH gripper hardware initialisation...")
         if not self._write_register(_REG_INITIALIZE, _INIT_TRIGGER):
-            raise RuntimeError(
-                "DHGripperIntegrated: failed to send initialisation command."
-            )
+            raise RuntimeError("DHGripperIntegrated: failed to send initialisation command.")
 
         deadline = time.monotonic() + self._config.init_timeout
         while time.monotonic() < deadline:
@@ -307,8 +292,7 @@ class DHGripperIntegrated:
             time.sleep(0.1)
 
         raise RuntimeError(
-            "DHGripperIntegrated: hardware initialisation timed out "
-            f"after {self._config.init_timeout:.1f} s."
+            f"DHGripperIntegrated: hardware initialisation timed out after {self._config.init_timeout:.1f} s."
         )
 
     # ── Connection lifecycle ──────────────────────────────────────────────────
@@ -340,13 +324,9 @@ class DHGripperIntegrated:
         try:
             self._hardware_initialize()
         except Exception as exc:
-            self._logger.error(
-                f"DHGripperIntegrated hardware initialisation failed: {exc}"
-            )
-            try:
+            self._logger.error(f"DHGripperIntegrated hardware initialisation failed: {exc}")
+            with contextlib.suppress(Exception):
                 modbus.close()
-            except Exception:
-                pass
             self._modbus = None
             self._is_connected = False
             raise
@@ -424,19 +404,13 @@ class DHGripperIntegrated:
         with self._state_lock:
             target_dh_pos = int(round(normalized_pos * _DH_POS_OPEN))
             last_sent_dh_pos = (
-                None
-                if self._last_sent_position is None
-                else int(round(self._last_sent_position * _DH_POS_OPEN))
+                None if self._last_sent_position is None else int(round(self._last_sent_position * _DH_POS_OPEN))
             )
-            target_changed = (
-                last_sent_dh_pos is None
-                or (
-                    target_dh_pos != last_sent_dh_pos
-                    and (
-                        self._config.command_epsilon == 0.0
-                        or abs(normalized_pos - self._last_sent_position)
-                        > self._config.command_epsilon
-                    )
+            target_changed = last_sent_dh_pos is None or (
+                target_dh_pos != last_sent_dh_pos
+                and (
+                    self._config.command_epsilon == 0.0
+                    or abs(normalized_pos - self._last_sent_position) > self._config.command_epsilon
                 )
             )
             self._target_position = normalized_pos

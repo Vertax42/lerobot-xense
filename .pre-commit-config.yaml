@@ -15,6 +15,9 @@
 default_language_version:
     python: python3.12
 
+# Preserve the supplied vendor SDK, including its reference PDF, as received.
+exclude: ^third_party/TCP_IP_Python_V4/
+
 repos:
   ##### Meta #####
   - repo: meta

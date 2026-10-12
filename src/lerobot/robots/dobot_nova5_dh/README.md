@@ -15,6 +15,11 @@ RS485 接口控制大寰 AG-95 夹爪，不需要 USB-RS485 转换器。
 
 ## 使用
 
+随仓库提供的 Dobot TCP/IP V4 SDK 位于 `third_party/TCP_IP_Python_V4/`。
+在仓库根目录执行 `pip install -e .` 后，SDK 会与 LeRobot 一起安装，不需要手动修改
+`sys.path`，也不需要原来的 `lerobot.robots.dobot_nova5` 目录。
+SDK 的告警 JSON 文件也包含在安装包内。
+
 ```python
 from lerobot.robots.dobot_nova5_dh import (
     ControlMode,

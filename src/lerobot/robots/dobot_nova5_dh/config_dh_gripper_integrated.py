@@ -68,10 +68,7 @@ class DHGripperIntegratedConfig:
 
     def __post_init__(self):
         if not 1 <= self.slave_id <= 247:
-            raise ValueError(
-                f"DHGripperIntegratedConfig: slave_id {self.slave_id} "
-                "out of Modbus range [1, 247]."
-            )
+            raise ValueError(f"DHGripperIntegratedConfig: slave_id {self.slave_id} out of Modbus range [1, 247].")
         if self.baudrate not in (9600, 19200, 38400, 115200):
             raise ValueError(
                 f"DHGripperIntegratedConfig: unsupported baudrate {self.baudrate}. "
@@ -84,19 +81,12 @@ class DHGripperIntegratedConfig:
                 stacklevel=2,
             )
         if not 20 <= self.gripper_force <= 100:
-            raise ValueError(
-                f"DHGripperIntegratedConfig: gripper_force {self.gripper_force} "
-                "out of range [20, 100]."
-            )
+            raise ValueError(f"DHGripperIntegratedConfig: gripper_force {self.gripper_force} out of range [20, 100].")
         if self.init_timeout <= 0:
-            raise ValueError(
-                "DHGripperIntegratedConfig: init_timeout must be positive, "
-                f"got {self.init_timeout}."
-            )
+            raise ValueError(f"DHGripperIntegratedConfig: init_timeout must be positive, got {self.init_timeout}.")
         if self.worker_frequency < 10.0:
             raise ValueError(
-                "DHGripperIntegratedConfig: worker_frequency must be at least 10 Hz, "
-                f"got {self.worker_frequency}."
+                f"DHGripperIntegratedConfig: worker_frequency must be at least 10 Hz, got {self.worker_frequency}."
             )
         if not 0.0 <= self.position_poll_frequency <= self.worker_frequency:
             raise ValueError(
@@ -105,6 +95,5 @@ class DHGripperIntegratedConfig:
             )
         if not 0.0 <= self.command_epsilon <= 1.0:
             raise ValueError(
-                "DHGripperIntegratedConfig: command_epsilon must be in [0, 1], "
-                f"got {self.command_epsilon}."
+                f"DHGripperIntegratedConfig: command_epsilon must be in [0, 1], got {self.command_epsilon}."
             )

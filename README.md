@@ -72,6 +72,11 @@ This repository uses `third_party/` git submodules to manage hardware SDK depend
 > flash reader). The Elite Python SDK is built against the local
 > `third_party/elite-robots-cs-sdk` C++ submodule (no network fetch of the C++ source).
 
+> The Dobot Nova5 driver uses the vendored Python SDK in
+> `third_party/TCP_IP_Python_V4/`. `pip install -e .` installs it as the
+> `TCP_IP_Python_V4` package, including its alarm JSON files; no separate SDK
+> checkout or `PYTHONPATH` setting is needed after installation.
+
 > **`xensevr_pc_service_sdk` (Pico4 teleop/tracker) has no submodule either.** Its
 > pybind11 sources live in-repo under
 > `src/lerobot/teleoperators/pico4/xensevr-pc-service-pybind/`, and the C SDK

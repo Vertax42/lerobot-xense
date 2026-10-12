@@ -98,6 +98,7 @@ dependencies = [
     "deepdiff>=7.0.1,<9.0.0",
     "imageio[ffmpeg]>=2.34.0,<3.0.0",
     "termcolor>=2.4.0,<4.0.0",
+    "requests>=2.32.0,<3.0.0", # Dobot TCP/IP SDK
 
     # Xense fork: spdlog is used by our robot_utils.get_logger() (always available)
     "spdlog",
@@ -230,7 +231,11 @@ lerobot-annotate-reward = "lerobot.scripts.lerobot_annotate_reward:main"
 
 # ---------------- Tool Configurations ----------------
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["src", "third_party"]
+include = ["lerobot*", "TCP_IP_Python_V4*"]
+
+[tool.setuptools.package-data]
+TCP_IP_Python_V4 = ["files/*.json"]
 
 [tool.ruff]
 target-version = "py312"
@@ -284,6 +289,7 @@ ignore = [
 "src/lerobot/cameras/configs.py" = ["UP042"]
 "src/lerobot/motors/motors_bus.py" = ["UP042"]
 "src/lerobot/robots/bi_elite_cs66_rt/config_bi_elite_cs66_rt.py" = ["UP042"]
+"src/lerobot/robots/dobot_nova5_dh/config_dobot_nova5_dh.py" = ["UP042"]
 "src/lerobot/robots/mock_robot.py" = ["UP042"]
 "tests/utils/test_visualization_utils.py" = ["UP042"]
 

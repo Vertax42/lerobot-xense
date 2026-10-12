@@ -33,12 +33,9 @@ from functools import cached_property
 from typing import Any
 
 import numpy as np
+from TCP_IP_Python_V4.dobot_api import DobotApiDashboard, DobotApiFeedBack
 
 from lerobot.cameras.utils import make_cameras_from_configs
-from lerobot.robots.dobot_nova5.TCP_IP_Python_V4.dobot_api import (
-    DobotApiDashboard,
-    DobotApiFeedBack,
-)
 from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import (
@@ -72,17 +69,13 @@ class _DobotModbusRTU:
         response = self._robot.ModbusCreate(master_ip, master_port, slave_id, is_rtu)
         error_id, values = self._parse(response)
         if error_id != 0 or not values:
-            raise RuntimeError(
-                f"ModbusCreate failed (error_id={error_id}): {response.strip()}"
-            )
+            raise RuntimeError(f"ModbusCreate failed (error_id={error_id}): {response.strip()}")
         self._index = int(values[0])
 
     def read_register(self, reg: int) -> int | None:
         for _ in range(_MODBUS_RETRIES):
             with contextlib.suppress(Exception):
-                error_id, values = self._parse(
-                    self._robot.GetHoldRegs(self._index, reg, 1)
-                )
+                error_id, values = self._parse(self._robot.GetHoldRegs(self._index, reg, 1))
                 if error_id == 0 and values:
                     return int(values[0])
         return None
@@ -91,9 +84,7 @@ class _DobotModbusRTU:
         value_string = "{" + str(value) + "}"
         for _ in range(_MODBUS_RETRIES):
             with contextlib.suppress(Exception):
-                error_id, _ = self._parse(
-                    self._robot.SetHoldRegs(self._index, reg, 1, value_string)
-                )
+                error_id, _ = self._parse(self._robot.SetHoldRegs(self._index, reg, 1, value_string))
                 if error_id == 0:
                     return True
         return False
@@ -173,9 +164,7 @@ class DobotNova5DH(Robot):
         self._gripper_key = "gripper.pos"
 
         if config.control_mode == ControlMode.JOINT_MOTION:
-            self._joint_pos_keys = tuple(
-                f"joint_{index}.pos" for index in range(1, JOINT_DOF + 1)
-            )
+            self._joint_pos_keys = tuple(f"joint_{index}.pos" for index in range(1, JOINT_DOF + 1))
             self._action_joint_keys = self._joint_pos_keys
         elif config.control_mode == ControlMode.CARTESIAN_MOTION:
             self._tcp_pose_keys = (
@@ -255,18 +244,14 @@ class DobotNova5DH(Robot):
         if not self.is_connected or self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         tool_index = int(self.config.tool_coordinate_index) if self.config.use_tool_coordinate else 0
-        self._raise_if_dobot_error(
-            self._robot, self._robot.Tool(tool_index), f"right Tool({tool_index})"
-        )
+        self._raise_if_dobot_error(self._robot, self._robot.Tool(tool_index), f"right Tool({tool_index})")
         self._wait_for_feedback_tool_index(tool_index)
         self.logger.info(f"Right arm global tool coordinate set to Tool({tool_index})")
 
     def set_servo_period(self, period_s: float) -> None:
         self._last_servo_period_s = float(np.clip(period_s, 0.004, 0.2))
 
-    def _wait_for_feedback_tool_index(
-        self, tool_index: int, timeout_s: float = 1.0
-    ) -> None:
+    def _wait_for_feedback_tool_index(self, tool_index: int, timeout_s: float = 1.0) -> None:
         start_time = time.time()
         while time.time() - start_time <= timeout_s:
             if int(self._feed_data.Tool) == tool_index:
@@ -333,8 +318,7 @@ class DobotNova5DH(Robot):
         while int(self._feed_data.RobotMode) == 9:
             if time.time() - start_time > timeout_s:
                 raise TimeoutError(
-                    "Right arm stayed in error mode after ClearError; "
-                    f"GetErrorID: {self._dobot_error_detail()}"
+                    f"Right arm stayed in error mode after ClearError; GetErrorID: {self._dobot_error_detail()}"
                 )
             time.sleep(0.1)
 
@@ -354,8 +338,7 @@ class DobotNova5DH(Robot):
             max_abs_error = float(np.max(np.abs(current_joint - target)))
             if robot_mode == 9:
                 raise RuntimeError(
-                    f"Right {description} failed: robot entered error mode; "
-                    f"GetErrorID: {self._dobot_error_detail()}"
+                    f"Right {description} failed: robot entered error mode; GetErrorID: {self._dobot_error_detail()}"
                 )
             if robot_mode == 5 and max_abs_error <= tolerance_deg:
                 return
@@ -368,8 +351,7 @@ class DobotNova5DH(Robot):
                 )
             if now - last_log_time >= 2.0:
                 self.logger.info(
-                    f"Waiting for right {description}: RobotMode={robot_mode}, "
-                    f"max_joint_error={max_abs_error:.3f} deg"
+                    f"Waiting for right {description}: RobotMode={robot_mode}, max_joint_error={max_abs_error:.3f} deg"
                 )
                 last_log_time = now
             time.sleep(0.1)
@@ -464,9 +446,7 @@ class DobotNova5DH(Robot):
                     "Connecting right DH gripper on dedicated Dashboard socket: "
                     f"{self.config.robot_ip}:{self.config.dashboardPort}"
                 )
-                self._gripper_robot = DobotApiDashboard(
-                    self.config.robot_ip, self.config.dashboardPort
-                )
+                self._gripper_robot = DobotApiDashboard(self.config.robot_ip, self.config.dashboardPort)
                 return _DobotModbusRTU(
                     self._gripper_robot,
                     self.config.master_ip,
@@ -480,8 +460,7 @@ class DobotNova5DH(Robot):
                         self._gripper_robot.close()
                     self._gripper_robot = None
                 self.logger.warn(
-                    "Right dedicated gripper Dashboard failed; falling back to the shared "
-                    f"robot Dashboard: {exception}"
+                    f"Right dedicated gripper Dashboard failed; falling back to the shared robot Dashboard: {exception}"
                 )
         try:
             return _DobotModbusRTU(
@@ -500,18 +479,12 @@ class DobotNova5DH(Robot):
 
     def connect(self, calibrate: bool = False, go_to_start: bool | None = None) -> None:
         if self._is_connected:
-            raise DeviceAlreadyConnectedError(
-                f"{self} is already connected; do not call robot.connect() twice."
-            )
+            raise DeviceAlreadyConnectedError(f"{self} is already connected; do not call robot.connect() twice.")
         try:
             self._feed_data = _FeedState()
             self.logger.info(f"Connecting right Dobot Nova5: {self.config.robot_ip}")
-            self._robot = DobotApiDashboard(
-                self.config.robot_ip, self.config.dashboardPort
-            )
-            self._feed = DobotApiFeedBack(
-                self.config.robot_ip, self.config.feedPortFour
-            )
+            self._robot = DobotApiDashboard(self.config.robot_ip, self.config.dashboardPort)
+            self._feed = DobotApiFeedBack(self.config.robot_ip, self.config.feedPortFour)
             self._is_connected = True
             self._feed_thread = threading.Thread(
                 target=self._feed_loop,
@@ -522,12 +495,8 @@ class DobotNova5DH(Robot):
             self._wait_for_first_feedback()
 
             if int(self._feed_data.RobotMode) == 9:
-                self.logger.warn(
-                    "Right robot is in error mode before enabling; trying ClearError."
-                )
-                self._raise_if_dobot_error(
-                    self._robot, self._robot.ClearError(), "right ClearError"
-                )
+                self.logger.warn("Right robot is in error mode before enabling; trying ClearError.")
+                self._raise_if_dobot_error(self._robot, self._robot.ClearError(), "right ClearError")
                 self._wait_until_not_error_mode()
 
             self.logger.info("Enabling right robot...")
@@ -552,9 +521,7 @@ class DobotNova5DH(Robot):
             for camera in self.cameras.values():
                 camera.connect()
 
-            should_go_to_start = (
-                bool(go_to_start) if go_to_start is not None else self.config.go_to_start
-            )
+            should_go_to_start = bool(go_to_start) if go_to_start is not None else self.config.go_to_start
             if should_go_to_start:
                 self._go_to_start()
 
@@ -577,8 +544,7 @@ class DobotNova5DH(Robot):
             now = time.time()
             if now - last_log_time >= 2.0:
                 self.logger.info(
-                    "Waiting for right robot to become operational: "
-                    f"feed/dashboard={feed_mode}/{dashboard_mode}"
+                    f"Waiting for right robot to become operational: feed/dashboard={feed_mode}/{dashboard_mode}"
                 )
                 last_log_time = now
             if now - start_time > timeout_s:
@@ -618,8 +584,7 @@ class DobotNova5DH(Robot):
                 self._gripper_robot = None
             self._gripper_connected = False
             self.logger.error(
-                "Failed to connect the right DH gripper; continuing without gripper "
-                f"control: {exception}"
+                f"Failed to connect the right DH gripper; continuing without gripper control: {exception}"
             )
 
     def _cleanup_failed_connect(self) -> None:
@@ -645,11 +610,7 @@ class DobotNova5DH(Robot):
             self._feed_thread = None
 
     def _initialize_gripper_position(self) -> None:
-        if not (
-            self._gripper
-            and self.config.use_gripper
-            and self._gripper_connected
-        ):
+        if not (self._gripper and self.config.use_gripper and self._gripper_connected):
             return
         target = 1.0 if self.config.dh_gripper_init_open else 0.0
         try:
@@ -657,8 +618,7 @@ class DobotNova5DH(Robot):
         except Exception as exception:
             self._gripper_connected = False
             self.logger.error(
-                "Right DH gripper initial move failed; disabling gripper commands for "
-                f"this session: {exception}"
+                f"Right DH gripper initial move failed; disabling gripper commands for this session: {exception}"
             )
 
     def _go_to_start(self) -> None:
@@ -707,9 +667,7 @@ class DobotNova5DH(Robot):
 
     def _read_gripper_pos(self) -> float:
         if self._gripper and self.config.use_gripper and self._gripper_connected:
-            return self._normalize_gripper_command(
-                float(self._gripper.get_gripper_position())
-            )
+            return self._normalize_gripper_command(float(self._gripper.get_gripper_position()))
         return 0.0
 
     def get_current_tcp_pose_quat(self) -> np.ndarray:
@@ -747,9 +705,7 @@ class DobotNova5DH(Robot):
                 for index in range(6):
                     observation[f"tcp.r{index + 1}"] = rotation_6d[index]
             else:
-                raise ValueError(
-                    f"Unsupported control_mode: {self.config.control_mode}"
-                )
+                raise ValueError(f"Unsupported control_mode: {self.config.control_mode}")
         timing["arm_ms"] = (time.perf_counter() - arm_start) * 1e3
 
         gripper_start = time.perf_counter()
@@ -760,9 +716,7 @@ class DobotNova5DH(Robot):
         for camera_key, camera in self.cameras.items():
             camera_start = time.perf_counter()
             observation[camera_key] = camera.async_read()
-            timing[f"cam[{camera_key}]_ms"] = (
-                time.perf_counter() - camera_start
-            ) * 1e3
+            timing[f"cam[{camera_key}]_ms"] = (time.perf_counter() - camera_start) * 1e3
         timing["cameras_ms"] = (time.perf_counter() - cameras_start) * 1e3
         timing["total_ms"] = (time.perf_counter() - observation_start) * 1e3
         self._last_obs_timing = timing
@@ -787,28 +741,20 @@ class DobotNova5DH(Robot):
     def _cartesian_feed_state(self) -> tuple[np.ndarray, np.ndarray]:
         with self._feed_lock:
             tcp_pose = np.asarray(self._feed_data.tcpPose, dtype=np.float64).copy()
-            joint_position = np.asarray(
-                self._feed_data.qActual, dtype=np.float64
-            ).copy()
+            joint_position = np.asarray(self._feed_data.qActual, dtype=np.float64).copy()
         return tcp_pose, joint_position
 
-    def _parse_ik_joint_values(
-        self, response: str, command_name: str
-    ) -> np.ndarray | None:
+    def _parse_ik_joint_values(self, response: str, command_name: str) -> np.ndarray | None:
         error_id, values = self._parse_dobot_response(response)
         if error_id != 0:
             return None
         if len(values) < JOINT_DOF:
-            self.logger.warn(
-                f"{command_name} returned too few joint values: {response.strip()}"
-            )
+            self.logger.warn(f"{command_name} returned too few joint values: {response.strip()}")
             return None
         try:
             return np.asarray(values[:JOINT_DOF], dtype=np.float64)
         except ValueError:
-            self.logger.warn(
-                f"{command_name} returned invalid joint values: {response.strip()}"
-            )
+            self.logger.warn(f"{command_name} returned invalid joint values: {response.strip()}")
             return None
 
     def _inverse_kin_with_joint_near(
@@ -818,9 +764,7 @@ class DobotNova5DH(Robot):
     ) -> np.ndarray | None:
         if self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
-        joint_near = "{" + ",".join(
-            f"{float(value):.6f}" for value in joint_near_deg
-        ) + "}"
+        joint_near = "{" + ",".join(f"{float(value):.6f}" for value in joint_near_deg) + "}"
         response = self._robot.InverseKin(
             *[float(value) for value in pose_mm_deg],
             useJointNear=1,
@@ -828,16 +772,12 @@ class DobotNova5DH(Robot):
         )
         return self._parse_ik_joint_values(response, "right InverseKin")
 
-    def _resolve_cartesian_servo_target(
-        self, target_pose_mm_deg: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    def _resolve_cartesian_servo_target(self, target_pose_mm_deg: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
         if not self.config.enable_cartesian_ik_guard:
             return target_pose_mm_deg, None
 
         current_pose, current_joint = self._cartesian_feed_state()
-        target_joint = self._inverse_kin_with_joint_near(
-            target_pose_mm_deg, current_joint
-        )
+        target_joint = self._inverse_kin_with_joint_near(target_pose_mm_deg, current_joint)
         if target_joint is not None:
             return target_pose_mm_deg, target_joint
 
@@ -845,9 +785,7 @@ class DobotNova5DH(Robot):
         for step in range(backoff_steps, 0, -1):
             ratio = step / float(backoff_steps + 1)
             candidate_pose = current_pose + ratio * (target_pose_mm_deg - current_pose)
-            target_joint = self._inverse_kin_with_joint_near(
-                candidate_pose, current_joint
-            )
+            target_joint = self._inverse_kin_with_joint_near(candidate_pose, current_joint)
             if target_joint is not None:
                 now = time.perf_counter()
                 if now - self._last_cartesian_guard_log_s >= 1.0:
@@ -868,9 +806,7 @@ class DobotNova5DH(Robot):
             self._last_cartesian_guard_log_s = now
         return current_pose, current_joint
 
-    def _send_cartesian_servoj(
-        self, target_joint_deg: np.ndarray, command_name: str
-    ) -> None:
+    def _send_cartesian_servoj(self, target_joint_deg: np.ndarray, command_name: str) -> None:
         if self._robot is None:
             raise DeviceNotConnectedError(f"{self} is not connected.")
         response = self._robot.ServoJ(*[float(value) for value in target_joint_deg])
@@ -884,14 +820,10 @@ class DobotNova5DH(Robot):
             suppress_small=True,
         )
 
-    def _log_cartesian_command_failure(
-        self, response: str | None, command_name: str
-    ) -> None:
+    def _log_cartesian_command_failure(self, response: str | None, command_name: str) -> None:
         debug = self._last_cartesian_command_debug
         if not debug:
-            self.logger.error(
-                f"Right {command_name} failed, but no Cartesian debug context was recorded."
-            )
+            self.logger.error(f"Right {command_name} failed, but no Cartesian debug context was recorded.")
             return
         target_pose = np.asarray(debug["target_pose_mm_deg"], dtype=np.float64)
         reasons: list[str] = []
@@ -946,9 +878,7 @@ class DobotNova5DH(Robot):
             delta_position = target_position_mm - current_pose[:3]
             delta_norm = float(np.linalg.norm(delta_position))
             if delta_norm > max_step_mm:
-                target_position_mm = current_pose[:3] + delta_position * (
-                    max_step_mm / delta_norm
-                )
+                target_position_mm = current_pose[:3] + delta_position * (max_step_mm / delta_norm)
                 step_limited = True
 
         rotation_6d = np.asarray(
@@ -996,9 +926,7 @@ class DobotNova5DH(Robot):
             return
 
         if not (
-            self.config.enable_cartesian_ik_guard
-            and self.config.cartesian_ik_servoj
-            and response_error_id in (-2, -1)
+            self.config.enable_cartesian_ik_guard and self.config.cartesian_ik_servoj and response_error_id in (-2, -1)
         ):
             with contextlib.suppress(Exception):
                 self._log_cartesian_command_failure(response, "right ServoP")
@@ -1006,32 +934,19 @@ class DobotNova5DH(Robot):
             return
 
         original_response = response
-        self._cartesian_ik_servoj_until_s = (
-            time.perf_counter() + float(self.config.cartesian_ik_servoj_hold_s)
-        )
+        self._cartesian_ik_servoj_until_s = time.perf_counter() + float(self.config.cartesian_ik_servoj_hold_s)
         _, target_joint = self._resolve_cartesian_servo_target(target_pose)
         if target_joint is None:
             return
         try:
-            self._send_cartesian_servoj(
-                target_joint, "right ServoJ after ServoP IK fallback"
-            )
+            self._send_cartesian_servoj(target_joint, "right ServoJ after ServoP IK fallback")
         except Exception as exception:
             with contextlib.suppress(Exception):
-                self._log_cartesian_command_failure(
-                    original_response, "right ServoJ fallback"
-                )
-            self.logger.warn(
-                f"Right ServoJ fallback failed; skipping this frame: {exception}"
-            )
+                self._log_cartesian_command_failure(original_response, "right ServoJ fallback")
+            self.logger.warn(f"Right ServoJ fallback failed; skipping this frame: {exception}")
 
     def _send_gripper_action(self, action: dict[str, Any]) -> None:
-        if not (
-            self._gripper
-            and self.config.use_gripper
-            and self._gripper_connected
-            and self._gripper_key in action
-        ):
+        if not (self._gripper and self.config.use_gripper and self._gripper_connected and self._gripper_key in action):
             return
         try:
             position = self._normalize_gripper_command(action[self._gripper_key])
@@ -1040,20 +955,16 @@ class DobotNova5DH(Robot):
         except Exception as exception:
             self._gripper_connected = False
             self.logger.error(
-                "Right DH gripper command failed; disabling gripper commands for this "
-                f"session: {exception}"
+                f"Right DH gripper command failed; disabling gripper commands for this session: {exception}"
             )
 
     def _action_worker_loop(self) -> None:
-        minimum_period = 1.0 / max(
-            float(self.config.async_action_worker_frequency), 1e-6
-        )
+        minimum_period = 1.0 / max(float(self.config.async_action_worker_frequency), 1e-6)
         next_send = time.perf_counter()
         while True:
             with self._action_worker_cv:
                 while self._action_worker_running and (
-                    self._action_worker_paused
-                    or self._pending_async_action is None
+                    self._action_worker_paused or self._pending_async_action is None
                 ):
                     self._action_worker_cv.wait(timeout=0.1)
                 if not self._action_worker_running:
@@ -1088,9 +999,7 @@ class DobotNova5DH(Robot):
                         "worker_error_count": float(self._async_action_error_count),
                         "queue_drop_count": float(self._async_action_drop_count),
                     }
-                self.logger.warn(
-                    f"Async action worker skipped a failed action: {exception}"
-                )
+                self.logger.warn(f"Async action worker skipped a failed action: {exception}")
             finally:
                 with self._action_worker_cv:
                     self._action_worker_busy = False
@@ -1108,10 +1017,7 @@ class DobotNova5DH(Robot):
             daemon=True,
         )
         self._action_worker_thread.start()
-        self.logger.info(
-            "Async action worker started at "
-            f"{self.config.async_action_worker_frequency:.1f} Hz."
-        )
+        self.logger.info(f"Async action worker started at {self.config.async_action_worker_frequency:.1f} Hz.")
 
     def _stop_action_worker(self) -> None:
         with self._action_worker_cv:
@@ -1168,18 +1074,14 @@ class DobotNova5DH(Robot):
             diagnostics_start = time.perf_counter()
             with contextlib.suppress(Exception):
                 self._log_cartesian_command_failure(None, "right RobotMode=9")
-            timing["fault_diagnostics_ms"] = (
-                time.perf_counter() - diagnostics_start
-            ) * 1e3
+            timing["fault_diagnostics_ms"] = (time.perf_counter() - diagnostics_start) * 1e3
             self.logger.warn(
                 "Right robot fault detected; trying ClearError and skipping this frame. "
                 f"GetErrorID: {self._dobot_error_detail()}"
             )
             clear_start = time.perf_counter()
             self.clear_fault()
-            timing["clear_fault_ms"] = (
-                time.perf_counter() - clear_start
-            ) * 1e3
+            timing["clear_fault_ms"] = (time.perf_counter() - clear_start) * 1e3
             timing["total_ms"] = (time.perf_counter() - action_start) * 1e3
             self._last_action_timing = timing
             return action
@@ -1213,9 +1115,7 @@ class DobotNova5DH(Robot):
         if int(self._feed_data.RobotMode) != 9:
             return True
         try:
-            self._raise_if_dobot_error(
-                self._robot, self._robot.ClearError(), "right ClearError"
-            )
+            self._raise_if_dobot_error(self._robot, self._robot.ClearError(), "right ClearError")
             return True
         except Exception as exception:
             self.logger.error(f"Failed to clear the right robot fault: {exception}")
@@ -1232,9 +1132,7 @@ class DobotNova5DH(Robot):
                 try:
                     self._go_to_home()
                 except Exception as exception:
-                    self.logger.warn(
-                        f"Failed to move right arm home before disconnect: {exception}"
-                    )
+                    self.logger.warn(f"Failed to move right arm home before disconnect: {exception}")
 
             # The gripper must disconnect before the Dashboard socket because opening the
             # gripper and ModbusClose both travel over that TCP connection.

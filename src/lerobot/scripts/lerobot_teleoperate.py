@@ -138,6 +138,7 @@ from lerobot.robots import (  # noqa: F401
     bi_arx5,
     bi_elite_cs66_rt,
     bi_flexiv_rizon4_rt,
+    dobot_nova5_dh,
     elite_cs66_rt,
     flexiv_rizon4_rt,
     make_robot_from_config,
