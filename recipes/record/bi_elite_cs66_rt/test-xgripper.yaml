@@ -106,17 +106,12 @@ robot:
   left_use_gripper: true
   right_use_gripper: true
 
-  # ── Singularity / joint-overspeed guards (fixes the down-near-table trips) ──
-  # Predicted joint-velocity guard (model-based, needs NO live tuning): bounds the
-  # predicted joint step BEFORE the controller IK spikes past JOINT_IGNORE_SPEED
-  # (30 rad/s) and drops external control. Naturally directional — holds motion
-  # INTO a wrist(q5≈0)/elbow/boundary singularity, allows escape. Uses DH fetched
-  # per-arm at connect + these datasheet CS66 rates (J1/J2 150°/s, J3 180°/s,
-  # J4-6 230°/s). Watch the connect log for "Kinematic scaling enabled
-  # [joint-vel-limit]"; if it logs "...disabled" the DH fetch / FK self-check
-  # failed and the guard fail-safes off (resolve DH before relying on it).
-  joint_vel_limits_rad_s: [2.618, 2.618, 3.142, 4.014, 4.014, 4.014]
-  joint_vel_limit_margin: 0.8 # enforce at 80% of the limits; lower (e.g. 0.6) for more headroom
+  # Singularity / joint overspeed are handled by the native planner below (Pink IK
+  # Hessian damping + native joint velocity/acceleration/jerk limits). The old Python
+  # singularity_* / joint_vel_* guards protected the controller's own Cartesian IK,
+  # which the Pink path no longer uses (only joint servoJ reaches the controller),
+  # and their w-band hold locked the right arm in normal workspace (2026-10-15,
+  # w=0.048 -> s=0). They have been removed; those keys are now rejected.
   # Per-servo-tick velocity ceiling — smooths jumpy Pico4 wrist tracking at the source.
   max_lin_speed: 0.25 # m/s; the native planner uses min(this, native_max_tcp_linear_velocity)
   max_ang_speed: 1.0  # rad/s; the native planner uses min(this, native_max_tcp_angular_velocity)
@@ -157,9 +152,9 @@ robot:
   # NOTE: max_reach_radius intentionally left OFF (config default None). The 2026-07-09
   # trip was NOT a reach-boundary problem — the flange was at 0.82 m (well inside the
   # ~0.91 m reach) in a near-singular direction (w=0.051), and a base-origin sphere is
-  # the wrong model anyway (the ~194mm tool makes TCP-distance a poor reach proxy). The
-  # real fix is the model-based joint-vel guard, which is now enabled once the FK
-  # self-check passes on position (see the singularity_* / joint_vel_* handling).
+  # the wrong model anyway (the ~194mm tool makes TCP-distance a poor reach proxy).
+  # That trip came from the controller's Cartesian IK, which the native Pink path
+  # replaced.
 
 teleop:
   type: bi_pico4
