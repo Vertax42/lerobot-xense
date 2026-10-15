@@ -19,7 +19,6 @@ from lerobot.robots.bi_elite_cs66_rt.bi_elite_cs66_rt import BiEliteCS66RT
 from lerobot.robots.bi_elite_cs66_rt.config_bi_elite_cs66_rt import BiEliteCS66RTConfig
 from lerobot.robots.elite_cs66_rt.config_elite_cs66_rt import EliteCS66RTConfig
 from lerobot.robots.elite_cs66_rt.elite_cs66_rt import (
-    EliteCS66RT,
     _configure_native_driver,
     _controller_tcp_to_pose6,
     _pose6_to_matrix,
@@ -148,12 +147,6 @@ class AssemblyAdapterTests(unittest.TestCase):
                 _pose6_to_matrix(_controller_tcp_to_pose6(tcp)),
                 _pose6_to_matrix(libpyelite.controller_tcp_to_pose6(tcp)),
             )
-
-    def test_optional_guard_interpolation_survives_native_migration(self):
-        start = np.zeros(6)
-        target = np.array([1, 2, 3, 0, 0, 1.0])
-        for cls in (EliteCS66RT, BiEliteCS66RT):
-            np.testing.assert_allclose(cls._interpolate_tcp_pose(start, target, 0.5), target * 0.5)
 
     def test_cartesian_actions_use_native_targets(self):
         robot = self.make_robot("diagonal-08")

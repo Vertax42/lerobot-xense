@@ -27,7 +27,6 @@ from pathlib import Path
 from lerobot.cameras.configs import CameraConfig
 from lerobot.grippers import GripperConfig
 from lerobot.robots.config import RobotConfig
-from lerobot.robots.elite_cs66_rt.config_elite_cs66_rt import _validate_singularity_params
 
 ROBOT_TYPE = "bi_elite_cs66_rt"
 
@@ -129,33 +128,6 @@ class BiEliteCS66RTConfig(RobotConfig):
     # over-reaching DROPS external control at the boundary instead of holding. Set
     # 0.88-0.90 to re-enable. See config_elite_cs66_rt.py for rationale.
     max_reach_radius: float | None = None  # m; None disables the guard
-
-    # Singularity-aware manipulability damping (per arm). OFF by default (w_high=None); the
-    # per-arm Modified-DH is read from each controller at connect and damping disables itself
-    # on any fetch / self-check failure. See config_elite_cs66_rt.py and manipulability.py.
-    singularity_w_high: float | None = None  # disables damping when None
-    singularity_w_low: float = 0.0  # w at/below which damping is maxed (s = s_min)
-    singularity_min_scale: float = 0.05  # s_min in (0, 1]; floor so escape is always possible
-    singularity_directional: bool = False  # don't damp moves that increase w (escape); needs live tuning
-    dh_params: tuple[list[float], list[float], list[float]] | None = None  # (alpha, a, d) override
-    log_manipulability: bool = False  # throttled debug log of w for live threshold tuning
-    primary_timeout_ms: int = 1000  # one-shot DH (KinematicsInfo) fetch timeout at connect
-
-    # Predicted joint-velocity limit scaling (per arm; single shared value). Bounds the predicted
-    # joint step BEFORE the controller's internal IK spikes joint velocity past JOINT_IGNORE_SPEED
-    # (30 rad/s) and drops external control — the fix for wrist-singularity rotation trips. Naturally
-    # directional; needs only DH (fetched at connect) + datasheet joint limits, no live w-tuning.
-    # OFF by default. See config_elite_cs66_rt.py and manipulability.py.joint_velocity_scale.
-    # Official CS66 datasheet rates (J1/J2 150°/s, J3 180°/s, J4-6 230°/s)
-    # -> [2.618, 2.618, 3.142, 4.014, 4.014, 4.014] rad/s.
-    joint_vel_limits_rad_s: list[float] | None = None  # per-joint [J1..J6] rad/s; None disables
-    joint_vel_limit_margin: float = 0.8  # enforce at this fraction of the limits (headroom, (0, 1])
-    joint_vel_horizon_s: float = 0.033  # command horizon for the velocity check (~ 1/teleop fps)
-    # DLS damping of the PREDICTION pseudo-inverse; keep well below the operating sigma_min so the
-    # predicted dq tracks the controller's near-exact IK spike (~1/sigma_min) instead of capping it.
-    # 1e-2 silently under-predicts near a wrist singularity and lets the trip through — do NOT raise.
-    # See config_elite_cs66_rt.py and manipulability.py.joint_velocity_scale.
-    joint_vel_dls_lambda: float = 1e-4
 
     # Native libpyelite planner; coordinates are still converted by this adapter.
     native_model_path: str | Path | None = None
@@ -369,7 +341,6 @@ class BiEliteCS66RTConfig(RobotConfig):
         ):
             if _val is not None and _val <= 0:
                 raise ValueError(f"{_name} must be > 0 when set (None disables it), got {_val}")
-        _validate_singularity_params(self)
         if self.command_timeout_ms < 5:
             raise ValueError(f"command_timeout_ms must be >= 5 (Elite SDK lower bound), got {self.command_timeout_ms}")
         if self.command_stale_timeout_s <= 0:

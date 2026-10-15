@@ -59,17 +59,6 @@ from lerobot.robots.elite_cs66_rt.elite_cs66_rt import (
     _reach_exceeded,
     _rotvec_to_quaternion,
 )
-from lerobot.robots.elite_cs66_rt.manipulability import (
-    SELFCHECK_POS_TOL_M,
-    SELFCHECK_ROT_WARN_DEG,
-    damping_scale,
-    directional_scale,
-    geometric_jacobian,
-    joint_velocity_scale,
-    manipulability,
-    pose_delta,
-    tool_consistency,
-)
 from lerobot.robots.robot import Robot
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import (
@@ -139,11 +128,6 @@ class BiEliteCS66RT(Robot):
         self._last_submit_time: dict[str, float] = dict.fromkeys(_SIDES, 0.0)
         self._start_tcp_pose: dict[str, np.ndarray | None] = dict.fromkeys(_SIDES)
         self._reach_warn_time: dict[str, float] = dict.fromkeys(_SIDES, 0.0)  # workspace-guard warn throttle
-        # Singularity damping, per arm (set up at connect; disabled unless DH + self-check pass).
-        self._dh: dict[str, tuple[list[float], list[float], list[float]] | None] = dict.fromkeys(_SIDES)
-        self._damping_enabled: dict[str, bool] = dict.fromkeys(_SIDES, False)
-        self._w_log_time: dict[str, float] = dict.fromkeys(_SIDES, 0.0)
-        self._jv_log_time: dict[str, float] = dict.fromkeys(_SIDES, 0.0)  # joint-vel guard log throttle
 
         # Prefixed key tuples (built once).
         self._tcp_pos_keys = {s: tuple(f"{s}_{k}" for k in TCP_POSITION_KEYS) for s in _SIDES}
@@ -505,18 +489,6 @@ class BiEliteCS66RT(Robot):
         # seed/start sequentially" structure starved whichever arm finished
         # first -> intermittent "socket timed out ... reverse_socket" RST).
         def _bring_arm_online(side: str) -> None:
-            # Pre-start-move (joints, TCP) sample for the singularity-damping FK self-check.
-            premove = None
-            if (
-                self.config.singularity_w_high is not None or self.config.joint_vel_limits_rad_s is not None
-            ) and self.config.control_mode == BiEliteCS66RTControlMode.CARTESIAN_SERVO:
-                try:
-                    premove = (
-                        np.asarray(self._rtsi[side].getActualJointPositions(), dtype=np.float64),
-                        _controller_tcp_to_pose6(self._rtsi[side].getActualTCPPose()),
-                    )
-                except Exception:
-                    premove = None
             if go_to_start:
                 self._move_j_blocking(
                     side, self._arm_start_pose(side), self.config.start_move_duration_s, path_checked=True
@@ -526,10 +498,6 @@ class BiEliteCS66RT(Robot):
                 self._last_tcp_command[side] = current_tcp.copy()
                 self._start_tcp_pose[side] = current_tcp.copy()
             self._start_servo_loop(side)
-            if self.config.control_mode == BiEliteCS66RTControlMode.CARTESIAN_SERVO and (
-                self.config.singularity_w_high is not None or self.config.joint_vel_limits_rad_s is not None
-            ):
-                self._setup_singularity_damping(side, premove)
 
         try:
             if go_to_start:
@@ -772,8 +740,6 @@ class BiEliteCS66RT(Robot):
                 f"clearance={st.last.clearance.minimum_distance * 1000:.1f} mm"
             )
 
-    _interpolate_tcp_pose = staticmethod(_elite_mod.EliteCS66RT._interpolate_tcp_pose)
-
     def _start_station_layer(self) -> None:
         """Bring up the station collision layer when the recipe asks for it.
 
@@ -933,170 +899,6 @@ class BiEliteCS66RT(Robot):
     # Action
     # =========================================================================
 
-    # =========================================================================
-    # Singularity-aware manipulability damping (per arm)
-    # =========================================================================
-
-    def _fetch_dh(self, side: str) -> tuple[list[float], list[float], list[float]] | None:
-        """Return arm ``side``'s Modified-DH ``(alpha, a, d)`` from the config override or the
-        controller's primary package, or None if unavailable / unpopulated."""
-        if self.config.dh_params is not None:
-            alpha, a, d = self.config.dh_params
-            return (list(alpha), list(a), list(d))
-        assert self._cs is not None and self._driver[side] is not None
-        ki = self._cs.KinematicsInfo()
-        if not self._driver[side].getPrimaryPackage(ki, self.config.primary_timeout_ms):
-            return None
-        dh = (list(ki.dh_alpha_), list(ki.dh_a_), list(ki.dh_d_))
-        if any(len(v) != 6 for v in dh) or all(x == 0.0 for x in dh[0] + dh[1] + dh[2]):
-            return None
-        return dh
-
-    def _setup_singularity_damping(self, side: str, premove_sample) -> None:
-        """Acquire arm ``side``'s DH and validate it against the live robot. Fail-safe: any
-        problem leaves damping disabled for that arm only."""
-        self._dh[side] = None
-        self._damping_enabled[side] = False
-        try:
-            dh = self._fetch_dh(side)
-        except Exception as exc:
-            self.logger.warn(f"[{side}] singularity damping disabled: DH fetch error ({exc}).")
-            return
-        if dh is None:
-            self.logger.warn(
-                f"[{side}] singularity damping disabled: no DH (controller fetch returned nothing "
-                "and no dh_params override)."
-            )
-            return
-
-        q1 = np.asarray(self._rtsi[side].getActualJointPositions(), dtype=np.float64)
-        w1 = manipulability(*dh, q1)
-        if not np.isfinite(w1) or w1 < 1e-6:
-            self.logger.warn(
-                f"[{side}] singularity damping disabled: manipulability at the start pose is "
-                f"degenerate (w={w1:.3e}); the DH is likely wrong."
-            )
-            return
-
-        validated = False
-        if premove_sample is not None:
-            q0, t0 = premove_sample
-            q0 = np.asarray(q0, dtype=np.float64)
-            if int(np.sum(np.abs(q0 - q1) >= 0.3)) >= 3:  # well-separated configs
-                t1 = _controller_tcp_to_pose6(self._rtsi[side].getActualTCPPose())
-                pos_drift_m, rot_drift_deg = tool_consistency(dh, q0, t0, q1, t1)
-                # Gate on POSITION drift only (validates the DH for the Jacobian); a large ROTATION
-                # drift is a benign about-flange-Z TCP-convention artifact not in det(J) — log, don't
-                # disable. See manipulability.tool_consistency.
-                if pos_drift_m > SELFCHECK_POS_TOL_M:
-                    self.logger.warn(
-                        f"[{side}] singularity damping disabled: FK self-check position drift "
-                        f"{pos_drift_m * 1000:.1f}mm > {SELFCHECK_POS_TOL_M * 1000:.1f}mm "
-                        f"(DH / convention mismatch)."
-                    )
-                    return
-                if rot_drift_deg > SELFCHECK_ROT_WARN_DEG:
-                    self.logger.info(
-                        f"[{side}] FK self-check: tool-orientation drift {rot_drift_deg:.1f}deg "
-                        f"(about-flange-Z TCP convention; does NOT affect det(J)) — guard enabled on "
-                        f"the position-validated DH (pos drift {pos_drift_m * 1000:.1f}mm)."
-                    )
-                validated = True
-
-        self._dh[side] = dh
-        self._damping_enabled[side] = True
-        guards = []
-        if self.config.singularity_w_high is not None:
-            guards.append("w-damping")
-        if self.config.joint_vel_limits_rad_s is not None:
-            guards.append("joint-vel-limit")
-        guard_str = "+".join(guards)
-        if validated:
-            self.logger.info(f"[{side}] kinematic scaling enabled [{guard_str}] (FK validated; start w={w1:.4f}).")
-        else:
-            self.logger.info(
-                f"[{side}] kinematic scaling enabled [{guard_str}] (FK unvalidated by motion — "
-                f"relying on w-sanity; start w={w1:.4f})."
-            )
-
-    def _maybe_log_w(self, side: str, w: float, s: float) -> None:
-        # Log EVERY tick while damping is active (s < 1) so the fast approach into a singularity is
-        # visible; throttle to 0.5s only when there's nothing happening (s == 1). Otherwise the coarse
-        # throttle hides exactly the 0.2-0.3s window where the guard has to catch the arm.
-        now = time.monotonic()
-        if s >= 1.0 and now - self._w_log_time[side] < 0.5:
-            return
-        self._w_log_time[side] = now
-        self.logger.info(f"[{side}] manipulability w={w:.5f} -> damping scale s={s:.3f}")
-
-    def _maybe_log_jv(self, side: str, q: np.ndarray, s_jv: float, dq: np.ndarray) -> None:
-        """Throttled diagnostic of the predicted joint-velocity guard (log_manipulability only).
-        ``dq`` is the DLS-predicted joint step for the UNSCALED commanded step; peak_qdot is what the
-        controller's IK is expected to demand before scaling, so peak_qdot*s_jv should sit at budget."""
-        now = time.monotonic()
-        if now - self._jv_log_time[side] < 0.5:
-            return
-        self._jv_log_time[side] = now
-        jac = geometric_jacobian(*self._dh[side], q)
-        sigma_min = float(np.linalg.svd(jac, compute_uv=False)[-1])
-        peak_qdot = float(np.max(np.abs(dq))) / max(self.config.joint_vel_horizon_s, 1e-9)
-        self.logger.info(
-            f"[{side}] joint-vel guard: w={abs(float(np.linalg.det(jac))):.5f} sigma_min={sigma_min:.4f} "
-            f"s_jv={s_jv:.3f} peak_pred_qdot={peak_qdot:.1f} rad/s "
-            f"(argmax J{int(np.argmax(np.abs(dq))) + 1})"
-        )
-
-    def _apply_kinematic_scaling(self, side: str, target: np.ndarray, held: np.ndarray) -> np.ndarray:
-        """Slow arm ``side``'s command toward ``target`` as its config nears a singularity or as the
-        predicted joint step approaches the per-joint velocity limits. Both guards operate in the
-        base frame from the joints (det-invariant / Jacobian in base — no world conversion). The
-        final scale is the min of whichever opt-in guards are active."""
-        assert self._dh[side] is not None and self._rtsi[side] is not None
-        q = np.asarray(self._rtsi[side].getActualJointPositions(), dtype=np.float64)
-        s = 1.0
-
-        if self.config.singularity_w_high is not None:
-            if self.config.singularity_directional:
-                s_sing, w = directional_scale(
-                    *self._dh[side],
-                    q,
-                    pose_delta(held, target),
-                    self.config.singularity_w_low,
-                    self.config.singularity_w_high,
-                    self.config.singularity_min_scale,
-                )
-            else:
-                w = manipulability(*self._dh[side], q)
-                s_sing = damping_scale(
-                    w,
-                    self.config.singularity_w_low,
-                    self.config.singularity_w_high,
-                    self.config.singularity_min_scale,
-                )
-            if self.config.log_manipulability:
-                self._maybe_log_w(side, w, s_sing)
-            s = min(s, s_sing)
-
-        if self.config.joint_vel_limits_rad_s is not None:
-            qdot_limit = (
-                np.asarray(self.config.joint_vel_limits_rad_s, dtype=np.float64) * self.config.joint_vel_limit_margin
-            )
-            s_jv, dq_jv = joint_velocity_scale(
-                *self._dh[side],
-                q,
-                pose_delta(held, target),
-                self.config.joint_vel_horizon_s,
-                qdot_limit,
-                self.config.joint_vel_dls_lambda,
-            )
-            if self.config.log_manipulability:
-                self._maybe_log_jv(side, q, s_jv, dq_jv)
-            s = min(s, s_jv)
-
-        if s < 1.0:
-            return self._interpolate_tcp_pose(held, target, s)
-        return target
-
     def _warn_reach_exceeded(self, side: str, target: np.ndarray) -> None:
         now = time.monotonic()
         if now - self._reach_warn_time[side] < 1.0:
@@ -1154,13 +956,6 @@ class BiEliteCS66RT(Robot):
             target_world[3:6] = _quaternion_to_rotvec(rotation_6d_to_quaternion(r6d))
 
         target = self._world_pose6_to_base(side, target_world)
-
-        # Kinematic scaling (singularity damping and/or predicted joint-velocity limit) pulls the
-        # target toward last_base (the in-reach held pose) as this arm's config nears a singularity
-        # or its predicted joint step nears the velocity limits. Runs BEFORE the reach guard so the
-        # scaled (closer) target preserves the reach guard's in-reach invariant.
-        if self._damping_enabled[side]:
-            target = self._apply_kinematic_scaling(side, target, last_base)
 
         # Workspace guard: last_base is in-reach by construction (last commanded
         # in-reach pose, or the physical current pose), so holding it keeps the arm
