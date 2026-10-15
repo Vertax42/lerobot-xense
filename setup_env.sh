@@ -979,14 +979,18 @@ install_elite() {
     # A fresh directory prevents accidentally installing an older cached wheel.
     local elite_wheel_dir
     elite_wheel_dir="$(mktemp -d "${TMPDIR:-/tmp}/libpyelite-wheel.XXXXXX")" || return 1
-    python -m pip wheel "$elite_dir" --no-deps -w "$elite_wheel_dir" || return 1
-    local elite_wheels=("$elite_wheel_dir"/libpyelite-*.whl)
-    if [[ ${#elite_wheels[@]} -ne 1 || ! -f "${elite_wheels[0]}" ]]; then
-        echo "[elite] ERROR: expected one wheel under $elite_wheel_dir"
-        return 1
-    fi
-    # Reinstall only our wheel, not conda-owned transitive dependencies.
-    uv pip install --reinstall-package libpyelite "${elite_wheels[0]}" || return 1
+    # Subshell so the EXIT trap removes the wheel directory on every path out.
+    (
+        trap 'rm -rf "$elite_wheel_dir"' EXIT
+        python -m pip wheel "$elite_dir" --no-deps -w "$elite_wheel_dir" || exit 1
+        elite_wheels=("$elite_wheel_dir"/libpyelite-*.whl)
+        if [[ ${#elite_wheels[@]} -ne 1 || ! -f "${elite_wheels[0]}" ]]; then
+            echo "[elite] ERROR: expected one wheel under $elite_wheel_dir"
+            exit 1
+        fi
+        # Reinstall only our wheel, not conda-owned transitive dependencies.
+        uv pip install --reinstall-package libpyelite "${elite_wheels[0]}" || exit 1
+    ) || return 1
     python -c 'import libpyelite; print(libpyelite.__version__, libpyelite.IK_BACKEND)'
 }
 
