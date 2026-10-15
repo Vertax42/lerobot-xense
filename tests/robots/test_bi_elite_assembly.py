@@ -69,8 +69,9 @@ class AssemblyAdapterTests(unittest.TestCase):
             np.testing.assert_allclose(robot._base_pose6_to_world(side, pose)[:3], robot._R_wb[side] @ pose[:3])
 
     def test_conflicting_config_is_rejected(self):
+        # Assembly names are owned by libpyelite.assembly, checked when the robot is built.
         with self.assertRaises(ValueError):
-            BiEliteCS66RTConfig(native_assembly="unknown")
+            BiEliteCS66RT(BiEliteCS66RTConfig(native_assembly="unknown"))
         with self.assertRaises(ValueError):
             BiEliteCS66RTConfig(native_assembly="diagonal-08", native_model_path="custom.urdf")
 
@@ -114,7 +115,7 @@ class AssemblyAdapterTests(unittest.TestCase):
         robot = self.make_robot("diagonal-08")
         for side in ("left", "right"):
             driver = Mock()
-            driver.status.return_value = SimpleNamespace(running=True, reset_active=False)
+            driver.status.return_value = SimpleNamespace(running=True, reset_active=False, error="")
             pose = np.eye(4)
             pose[:3, 3] = [0.3, 0.0, 0.4]
             driver.commanded_pose.return_value = pose

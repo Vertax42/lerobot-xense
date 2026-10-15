@@ -108,15 +108,12 @@ class BiEliteCS66RTConfig(RobotConfig):
     # Deprecated compatibility field; no Python FIFO threads are created.
     servo_fifo_scheduling: bool = False
     reset_duration_s: float = 3.0
-    # Opt-in Cartesian velocity ceiling for the background servo loops (per arm).
-    # Both None by default -> no PC-side clamp (controller envelope only). Set when
-    # a jumpy leader (fast wrist rotation, VR tracking spike, clutch re-engage)
-    # feeds target steps that trip a protective stop: each arm's servo loop then
-    # slews its commanded TCP toward the latest target at no more than this speed,
-    # turning the step into a smooth bounded ramp. Velocity ceiling (m/s, rad/s)
-    # applied per servoj_time tick. See config_elite_cs66_rt.py for the rationale.
-    max_lin_speed: float | None = None  # m/s; None disables the linear cap
-    max_ang_speed: float | None = None  # rad/s; None disables the angular cap
+    # Recipe-level TCP speed caps, per arm (m/s, rad/s). The native planner limits its
+    # Cartesian path to min(this, native_max_tcp_*), so these only ever tighten the
+    # planner default; None leaves native_max_tcp_* as the effective cap. Set them to
+    # smooth a jumpy leader (fast wrist rotation, VR tracking spike, clutch re-engage).
+    max_lin_speed: float | None = None  # m/s; None keeps native_max_tcp_linear_velocity
+    max_ang_speed: float | None = None  # rad/s; None keeps native_max_tcp_angular_velocity
 
     # Workspace reachability guard (per arm). Distance (m) from each arm's base
     # origin beyond which a commanded TCP target is treated as unreachable: the
@@ -163,13 +160,15 @@ class BiEliteCS66RTConfig(RobotConfig):
     # Native libpyelite planner; coordinates are still converted by this adapter.
     native_model_path: str | Path | None = None
     # Packaged assembly supplies arm chains and full world<-base transforms.
-    # None retains the legacy single-arm model and rotation-only mapping.
+    # None retains the legacy single-arm model and rotation-only mapping. The name is
+    # checked by libpyelite.assembly.Assembly when the robot is built, not duplicated here.
     native_assembly: str | None = None
     native_ik_max_iterations: int = 500
-    native_max_tcp_linear_velocity: float = 1.0  # m/s, planning cap
-    native_max_tcp_angular_velocity: float = 3.14  # rad/s, planning cap
+    native_max_tcp_linear_velocity: float = 0.5  # m/s, planning cap (single-arm default)
+    native_max_tcp_angular_velocity: float = 1.0  # rad/s, planning cap
     native_joint_velocity_scale: float = 1.0  # fraction of official URDF limit
-    # Row-major tool0 <- TCP SE(3). None means identity; must match controller TCP.
+    # Row-major tool0 <- TCP SE(3). None reads the active teach-pendant TCP back at
+    # connect (FK_flange(q)^-1 @ measured TCP) and logs it; set it to pin the value.
     left_tool_transform: list[float] | None = None
     right_tool_transform: list[float] | None = None
 
@@ -181,6 +180,7 @@ class BiEliteCS66RTConfig(RobotConfig):
     # ── Shared startup / shutdown behavior ──
     connect_timeout_s: float = 10.0
     external_control_settle_s: float = 1.0
+    # See config_elite_cs66_rt.py: write failures tolerated before the native sender faults.
     servo_failure_tolerance_ticks: int = 250
 
     # ── Per-arm EliteDriver local TCP port offsets ──
@@ -297,11 +297,8 @@ class BiEliteCS66RTConfig(RobotConfig):
                 raise ValueError(f"payload_mass must be in [0, 10] kg when set, got {self.payload_mass}")
             if len(self.payload_cog) != 3:
                 raise ValueError(f"payload_cog must have 3 elements [x, y, z] (m), got {self.payload_cog}")
-        if self.native_assembly is not None:
-            if self.native_assembly not in ("diagonal-07", "diagonal-08"):
-                raise ValueError("native_assembly must be diagonal-07 or diagonal-08")
-            if self.native_model_path is not None:
-                raise ValueError("native_model_path and native_assembly are mutually exclusive")
+        if self.native_assembly is not None and self.native_model_path is not None:
+            raise ValueError("native_model_path and native_assembly are mutually exclusive")
         if self.native_ik_max_iterations < 1:
             raise ValueError("native_ik_max_iterations must be positive")
         for name in (
@@ -320,7 +317,8 @@ class BiEliteCS66RTConfig(RobotConfig):
                 raise ValueError(f"{name} must be a finite row-major 4x4 transform")
         if not 0.004 <= self.servoj_time <= 0.01:
             raise ValueError(
-                f"servoj_time must be in [0.004, 0.01] s (native migration envelope), got {self.servoj_time}"
+                f"servoj_time must be in [0.004, 0.01] s, got {self.servoj_time}: the native planner "
+                "solves one IK step per servoj_time, and below 4 ms it overruns its period"
             )
         if not 0.03 <= self.servoj_lookahead_time <= 0.2:
             raise ValueError(
