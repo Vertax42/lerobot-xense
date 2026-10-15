@@ -121,6 +121,10 @@ class BiEliteCS66RT(Robot):
 
         # Per-arm SDK handles + servo state.
         self._driver: dict[str, Any] = dict.fromkeys(_SIDES)
+        # Station collision layer (native_collision_profile): the libpyelite
+        # StationLayer and the StationCoordinator planning both arms through it.
+        self._station: Any = None
+        self._coordinator: Any = None
         self._dashboard: dict[str, Any] = dict.fromkeys(_SIDES)
         self._rtsi: dict[str, Any] = dict.fromkeys(_SIDES)
 
@@ -426,7 +430,13 @@ class BiEliteCS66RT(Robot):
         else:
             cfg.script_file_path = self._resolve_sdk_resource("external_control.script")
         tool = getattr(self.config, f"{side}_tool_transform")
-        _configure_native_driver(cfg, self.config, tool)
+        _configure_native_driver(
+            cfg,
+            self.config,
+            tool,
+            side,
+            None if self._assembly is None else self._assembly.world_from_base(side),
+        )
         if self._assembly is not None:
             cfg.model_path = self._assembly.control_model_path(side)
         if tool is None:
@@ -463,6 +473,8 @@ class BiEliteCS66RT(Robot):
                 futs = {side: ex.submit(self._connect_arm, side) for side in _SIDES}
                 for side in _SIDES:
                     futs[side].result()
+            # Before any arm is driven: the coordinator owns both arms' planning.
+            self._start_station_layer()
 
             # --- Connect bimanual cameras in parallel ---
             # Read the wrist fisheye intrinsics off each gripper's MCU while it is
@@ -506,7 +518,9 @@ class BiEliteCS66RT(Robot):
                 except Exception:
                     premove = None
             if go_to_start:
-                self._move_j_blocking(side, self._arm_start_pose(side), self.config.start_move_duration_s)
+                self._move_j_blocking(
+                    side, self._arm_start_pose(side), self.config.start_move_duration_s, path_checked=True
+                )
             if self.config.control_mode == BiEliteCS66RTControlMode.CARTESIAN_SERVO:
                 current_tcp = _controller_tcp_to_pose6(self._rtsi[side].getActualTCPPose())
                 self._last_tcp_command[side] = current_tcp.copy()
@@ -519,6 +533,7 @@ class BiEliteCS66RT(Robot):
 
         try:
             if go_to_start:
+                self._check_joint_move({side: self._arm_start_pose(side) for side in _SIDES}, "start move")
                 self.logger.info(
                     f"Bi Elite CS66 moving both arms to start_position over {self.config.start_move_duration_s:.1f}s..."
                 )
@@ -604,6 +619,9 @@ class BiEliteCS66RT(Robot):
             # failed after this one handed off; stop it before tearing down.
             with contextlib.suppress(Exception):
                 self._stop_servo_loop(side)
+        with best_effort(self.logger, "stopping the station collision layer"):
+            self._stop_station_layer()
+        for side in _SIDES:
             with best_effort(self.logger, f"stopping control ({side})"):
                 if self._driver[side] is not None:
                     self._driver[side].stopControl(1000)
@@ -644,11 +662,22 @@ class BiEliteCS66RT(Robot):
         for side in _SIDES:
             self._stop_servo_loop(side)
 
-        # Smooth return to home for both arms in parallel before teardown.
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            home_futs = {side: ex.submit(self._return_home_arm, side) for side in _SIDES}
-            for side in _SIDES:
-                home_futs[side].result()
+        # Smooth return to home for both arms in parallel before teardown,
+        # unless the collision layer finds the joint path to home blocked.
+        go_home = True
+        if self._station is not None:
+            try:
+                self._check_joint_move({side: self._arm_home_pose(side) for side in _SIDES}, "return-to-home")
+            except Exception as exc:
+                go_home = False
+                self.logger.error(f"Skipping return-to-home, arms left where they are: {exc}")
+        if go_home:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                home_futs = {side: ex.submit(self._return_home_arm, side) for side in _SIDES}
+                for side in _SIDES:
+                    home_futs[side].result()
+        with best_effort(self.logger, "stopping the station collision layer"):
+            self._stop_station_layer()
 
         for side in _SIDES:
             driver = self._driver[side]
@@ -689,7 +718,7 @@ class BiEliteCS66RT(Robot):
             return
         try:
             self.logger.info(f"{side} arm: returning to home_position over {self.config.home_move_duration_s:.1f}s...")
-            self._move_j_blocking(side, self._arm_home_pose(side), self.config.home_move_duration_s)
+            self._move_j_blocking(side, self._arm_home_pose(side), self.config.home_move_duration_s, path_checked=True)
         except Exception as exc:
             self.logger.warn(f"{side} arm: return-to-home failed; proceeding with shutdown anyway: {exc}")
         # _move_j_blocking may have restarted the servo loop in its finally block.
@@ -711,14 +740,101 @@ class BiEliteCS66RT(Robot):
         return self._driver[side] is not None and self._driver[side].status().reset_active
 
     def _raise_servo_error_if_any(self, side: str) -> None:
-        if self._driver[side] is not None:
-            self._driver[side].check_error()
+        try:
+            # A fault on either arm stops command production for the pair.
+            for selected in _SIDES:
+                if self._driver[selected] is not None:
+                    self._driver[selected].check_error()
+        except Exception:
+            with best_effort(self.logger, "logging native fault diagnostics"):
+                self._log_native_fault_diagnostics()
+            for selected in _SIDES:
+                with best_effort(self.logger, f"stopping paired arm after native fault ({selected})"):
+                    if self._driver[selected] is not None:
+                        self._driver[selected].stopServo()
+            raise
+
+    def _log_native_fault_diagnostics(self) -> None:
+        """Per-arm sender timing and the collision coordinator's state at a fault."""
+        for side in _SIDES:
+            if self._driver[side] is None:
+                continue
+            st = self._driver[side].status()
+            self.logger.error(
+                f"[{side}] native fault: error={st.error!r} max_sender_gap={st.max_sender_gap_s * 1000:.1f} ms "
+                f"max_socket_write={st.max_write_s * 1000:.1f} ms planner_overruns={st.planner_overruns}"
+            )
+        if self._coordinator is not None:
+            st = self._coordinator.status()
+            self.logger.error(
+                f"[station] ticks={st.ticks} overruns={st.overruns} max_tick={st.max_tick_s * 1000:.2f} ms "
+                f"error={st.error!r} last: held={list(st.last.held)} limited={list(st.last.limited)} "
+                f"clearance={st.last.clearance.minimum_distance * 1000:.1f} mm"
+            )
 
     _interpolate_tcp_pose = staticmethod(_elite_mod.EliteCS66RT._interpolate_tcp_pose)
 
-    def _move_j_blocking(self, side: str, target_joints: list[float], duration_s: float) -> None:
+    def _start_station_layer(self) -> None:
+        """Bring up the station collision layer when the recipe asks for it.
+
+        Both drivers switch to external planning and one StationCoordinator plans
+        them together through the same StationGuard libpyelite.sim runs. Must run
+        before any servo loop starts (nothing else feeds the senders then).
+        """
+        profile = self.config.native_collision_profile
+        if profile is None:
+            return
+        from libpyelite.collision import StationLayer
+
+        # The same tool0 <- TCP the drivers plan with (_make_driver_config).
+        tools = [
+            np.eye(4) if (tool := getattr(self.config, f"{side}_tool_transform")) is None else np.asarray(tool)
+            for side in _SIDES
+        ]
+        self._station = StationLayer(self._assembly, profile, tools)
+        native = {side: self._driver[side]._native for side in _SIDES}
+        for side in _SIDES:
+            native[side].setExternalPlanning(True)
+        self._coordinator = self._cs._native.StationCoordinator(
+            self._station.guard, native["left"], native["right"], self._rtsi["left"], self._rtsi["right"]
+        )
+        self._coordinator.start()
+        self.logger.info(f"Station collision layer active: {self._station.path}")
+
+    def _stop_station_layer(self) -> None:
+        if self._coordinator is not None:
+            self._coordinator.stop()
+        self._coordinator = None
+        self._station = None
+
+    def _measured_joints(self) -> dict[str, np.ndarray]:
+        return {side: np.asarray(self._rtsi[side].getActualJointPositions(), dtype=np.float64) for side in _SIDES}
+
+    def _check_joint_move(self, targets: dict[str, list[float]], what: str) -> None:
+        """Refuse a MoveJ whose straight joint path the collision layer finds blocked.
+
+        ``targets`` maps the moving arm(s) to their goal; any other arm stays at
+        its measured joints. Arms moved together share one duration, so their
+        joint-interpolated paths progress together along this segment.
+        """
+        if self._station is None:
+            return
+        start = self._measured_joints()
+        end = {side: np.asarray(targets.get(side, start[side]), dtype=np.float64) for side in _SIDES}
+        result = self._station.check_joint_path(start, end)
+        if not result.safe:
+            raise RuntimeError(
+                f"{what} refused by the station collision layer: the joint path reaches "
+                f"{result.minimum_distance * 1000:.1f} mm between {result.pair} (clearance {result.clearance * 1000:.1f} mm)"
+            )
+
+    def _move_j_blocking(
+        self, side: str, target_joints: list[float], duration_s: float, path_checked: bool = False
+    ) -> None:
         driver = self._driver[side]
         assert driver is not None
+        if not path_checked:
+            self._check_joint_move({side: list(target_joints)}, f"{side} MoveJ")
         was_running = driver.status().running
         self._stop_servo_loop(side)
         # The arm moves under MoveJ, so the last streamed target no longer applies.
@@ -1177,8 +1293,11 @@ class BiEliteCS66RT(Robot):
     # =========================================================================
 
     def get_native_status(self) -> dict[str, Any]:
-        """Per-arm native IK diagnostics, watchdog errors and planner overruns."""
-        return {side: self._driver[side].status() if self._driver[side] else None for side in _SIDES}
+        """Per-arm native IK diagnostics, watchdog errors and planner overruns (+ the collision layer's)."""
+        status = {side: self._driver[side].status() if self._driver[side] else None for side in _SIDES}
+        if self._coordinator is not None:
+            status["station"] = self._coordinator.status()
+        return status
 
     @property
     def rt_running(self) -> bool:

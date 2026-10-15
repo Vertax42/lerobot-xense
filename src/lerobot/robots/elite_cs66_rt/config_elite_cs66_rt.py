@@ -129,6 +129,33 @@ class EliteCS66RTConfig(RobotConfig):
     native_max_tcp_linear_velocity: float = 0.5  # m/s, planning cap
     native_max_tcp_angular_velocity: float = 1.0  # rad/s, planning cap
     native_joint_velocity_scale: float = 1.0  # fraction of official URDF limit
+    # Explicit opt-in trajectory limits; values are rad/s, rad/s², rad/s³.
+    native_joint_target_horizon: float = 0.0  # deprecated, ignored: limits now track the IK reference
+    native_joint_tracking_gain: float | None = None  # 1/s, default 20
+    # Cartesian smoothing before IK (opt-in). Limits are magnitudes of the linear /
+    # angular TCP twist; velocity comes from native_max_tcp_*_velocity.
+    native_cartesian_motion_limits: bool = False
+    native_max_linear_acceleration: float | None = None  # m/s², default 2.0
+    native_max_angular_acceleration: float | None = None  # rad/s², default 5.0
+    native_max_linear_jerk: float | None = None  # m/s³, default 1000
+    native_max_angular_jerk: float | None = None  # rad/s³, default 2500
+    native_cartesian_tracking_gain: float | None = None  # 1/s, default 20
+    native_joint_motion_limits: bool = False
+    native_max_joint_velocity: list[float] | None = None
+    native_max_joint_acceleration: list[float] | None = None
+    native_max_joint_jerk: list[float] | None = None
+    native_max_target_translation_jump: float = 0.0
+    native_max_target_rotation_jump: float = 0.0
+    native_max_target_joint_jump: float = 0.0
+    native_check_robot_safety: bool = True
+    native_max_contact_wrench: list[float] | None = None
+    native_max_start_joint_speed: float = 0.02
+    # Joint-current residual collision stop (any link), opt-in. Keys are
+    # libpyelite ComplianceConfig fields plus "enabled"; see
+    # third_party/libpyelite/examples/contact_monitor.json. gravity is required
+    # (base frame), payload to payload_mass/payload_cog.
+    native_contact_monitor: dict | None = None
+
     # Row-major tool0 <- TCP SE(3). None reads the active teach-pendant TCP back at
     # connect (FK_flange(q)^-1 @ measured TCP) and logs it; set it to pin the value.
     tool_transform: list[float] | None = None

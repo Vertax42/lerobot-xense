@@ -86,30 +86,15 @@ def _matrix_to_pose6(matrix: np.ndarray) -> np.ndarray:
     return np.concatenate((matrix[:3, 3], Rotation.from_matrix(matrix[:3, :3]).as_rotvec()))
 
 
-def _configure_native_driver(cfg, config, tool) -> None:
-    cfg.ik.max_iterations = config.native_ik_max_iterations
-    cfg.planner.stale_timeout = config.command_stale_timeout_s
-    cfg.planner.max_linear_velocity = config.native_max_tcp_linear_velocity
-    cfg.planner.max_angular_velocity = config.native_max_tcp_angular_velocity
-    # Keep existing recipe caps effective after moving the servo loop to C++.
-    if config.max_lin_speed is not None:
-        cfg.planner.max_linear_velocity = min(cfg.planner.max_linear_velocity, config.max_lin_speed)
-    if config.max_ang_speed is not None:
-        cfg.planner.max_angular_velocity = min(cfg.planner.max_angular_velocity, config.max_ang_speed)
-    cfg.planner.velocity_scale = config.native_joint_velocity_scale
-    cfg.command_timeout_ms = config.command_timeout_ms
-    # Reverse-socket writes fail transiently while the external control script comes up.
-    try:
-        cfg.max_consecutive_write_failures = config.servo_failure_tolerance_ticks
-    except AttributeError as exc:
+def _configure_native_driver(cfg, config, tool, side=None, world_from_base=None) -> None:
+    from libpyelite.control_profile import configure_native_driver
+
+    if not hasattr(cfg, "max_consecutive_write_failures"):
         raise RuntimeError(
             "Installed libpyelite predates max_consecutive_write_failures; rebuild it from "
             "third_party/libpyelite (./setup_env.sh --elite)."
-        ) from exc
-    if config.native_model_path is not None:
-        cfg.model_path = str(Path(config.native_model_path).expanduser())
-    if tool is not None:
-        cfg.tool = list(tool)
+        )
+    configure_native_driver(cfg, config, tool, side, world_from_base)
 
 
 def _rotvec_to_quaternion(rotvec: np.ndarray) -> np.ndarray:
@@ -221,6 +206,9 @@ class EliteCS66RT(Robot):
         "actual_joint_positions": _ZERO_READ,
         "actual_joint_speeds": _ZERO_READ,
         "actual_joint_torques": _ZERO_READ,
+        "robot_mode": "the native planner checks whether the robot can move",
+        "safety_status": "the native planner checks robot safety before moving",
+        "actual_TCP_force": "the native planner checks the contact wrench limit",
     }
 
     def __init__(self, config: EliteCS66RTConfig):

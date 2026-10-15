@@ -104,7 +104,7 @@ class BiEliteCS66RTConfig(RobotConfig):
     use_background_servo_loop: bool = True
     # Host-side stale threshold; validated as command_stale_timeout_s*1000 >=
     # command_timeout_ms so the host keeps feeding (idle) before the controller times out.
-    command_stale_timeout_s: float = 1.0
+    command_stale_timeout_s: float = 0.5
     # Deprecated compatibility field; no Python FIFO threads are created.
     servo_fifo_scheduling: bool = False
     reset_duration_s: float = 3.0
@@ -164,9 +164,42 @@ class BiEliteCS66RTConfig(RobotConfig):
     # checked by libpyelite.assembly.Assembly when the robot is built, not duplicated here.
     native_assembly: str | None = None
     native_ik_max_iterations: int = 500
-    native_max_tcp_linear_velocity: float = 0.5  # m/s, planning cap (single-arm default)
+    native_max_tcp_linear_velocity: float = 0.5  # m/s, planning cap (native/single-arm default)
     native_max_tcp_angular_velocity: float = 1.0  # rad/s, planning cap
     native_joint_velocity_scale: float = 1.0  # fraction of official URDF limit
+    # Explicit opt-in trajectory limits; values are rad/s, rad/s², rad/s³.
+    native_joint_target_horizon: float = 0.0  # deprecated, ignored: limits now track the IK reference
+    native_joint_tracking_gain: float | None = None  # 1/s, default 20
+    # Cartesian smoothing before IK (opt-in). Limits are magnitudes of the linear /
+    # angular TCP twist; velocity comes from native_max_tcp_*_velocity.
+    native_cartesian_motion_limits: bool = False
+    native_max_linear_acceleration: float | None = None  # m/s², default 2.0
+    native_max_angular_acceleration: float | None = None  # rad/s², default 5.0
+    native_max_linear_jerk: float | None = None  # m/s³, default 1000
+    native_max_angular_jerk: float | None = None  # rad/s³, default 2500
+    native_cartesian_tracking_gain: float | None = None  # 1/s, default 20
+    native_joint_motion_limits: bool = False
+    native_max_joint_velocity: list[float] | None = None
+    native_max_joint_acceleration: list[float] | None = None
+    native_max_joint_jerk: list[float] | None = None
+    native_max_target_translation_jump: float = 0.0
+    native_max_target_rotation_jump: float = 0.0
+    native_max_target_joint_jump: float = 0.0
+    native_check_robot_safety: bool = True
+    native_max_contact_wrench: list[float] | None = None
+    native_max_start_joint_speed: float = 0.02
+    # Joint-current residual collision stop (any link), opt-in. Keys are
+    # libpyelite ComplianceConfig fields plus "enabled"; see
+    # third_party/libpyelite/examples/contact_monitor.json. gravity defaults to
+    # the mount rotation, payload to payload_mass/payload_cog.
+    native_contact_monitor: dict | None = None
+    # Collision avoidance (table, stand, self, other arm): null, "auto" (the
+    # assembly's collision.json) or a path. Needs native_assembly; the robot then
+    # runs both arms through the same StationGuard as libpyelite.sim.
+    native_collision_profile: str | None = None
+    left_native_contact_monitor: dict | None = None  # per-arm overrides (fitted gravity, friction)
+    right_native_contact_monitor: dict | None = None
+
     # Row-major tool0 <- TCP SE(3). None reads the active teach-pendant TCP back at
     # connect (FK_flange(q)^-1 @ measured TCP) and logs it; set it to pin the value.
     left_tool_transform: list[float] | None = None
@@ -299,6 +332,8 @@ class BiEliteCS66RTConfig(RobotConfig):
                 raise ValueError(f"payload_cog must have 3 elements [x, y, z] (m), got {self.payload_cog}")
         if self.native_assembly is not None and self.native_model_path is not None:
             raise ValueError("native_model_path and native_assembly are mutually exclusive")
+        if self.native_collision_profile is not None and self.native_assembly is None:
+            raise ValueError("native_collision_profile needs native_assembly (the station the profile models)")
         if self.native_ik_max_iterations < 1:
             raise ValueError("native_ik_max_iterations must be positive")
         for name in (

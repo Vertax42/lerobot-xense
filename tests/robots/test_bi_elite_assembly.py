@@ -98,6 +98,50 @@ class AssemblyAdapterTests(unittest.TestCase):
         self.assertEqual(native.planner.max_linear_velocity, 0.1)
         self.assertEqual(native.planner.max_angular_velocity, 0.2)
 
+    def test_bimanual_tcp_cap_defaults_to_the_native_default(self):
+        robot = self.make_robot("diagonal-08")
+        planner = robot._make_driver_config("left").planner
+        self.assertEqual((planner.max_linear_velocity, planner.max_angular_velocity), (0.5, 1.0))
+
+    def test_collision_profile_needs_an_assembly(self):
+        with self.assertRaises(ValueError):
+            BiEliteCS66RTConfig(native_collision_profile="auto")
+
+    def test_collision_profile_puts_both_arms_under_one_coordinator(self):
+        robot = self.make_robot("diagonal-08")
+        robot.config.native_collision_profile = "auto"
+        native = {side: Mock() for side in ("left", "right")}
+        for side in ("left", "right"):
+            robot._driver[side] = SimpleNamespace(_native=native[side])
+            robot._rtsi[side] = Mock()
+        coordinator = Mock()
+        robot._cs = SimpleNamespace(_native=SimpleNamespace(StationCoordinator=Mock(return_value=coordinator)))
+        robot._start_station_layer()
+        for side in ("left", "right"):
+            native[side].setExternalPlanning.assert_called_once_with(True)
+        args = robot._cs._native.StationCoordinator.call_args.args
+        self.assertIs(args[0], robot._station.guard)
+        self.assertEqual(args[1:], (native["left"], native["right"], robot._rtsi["left"], robot._rtsi["right"]))
+        coordinator.start.assert_called_once()
+        robot._stop_station_layer()
+        coordinator.stop.assert_called_once()
+        self.assertIsNone(robot._station)
+
+    def test_movej_through_the_table_is_refused(self):
+        from libpyelite.collision import StationLayer
+
+        robot = self.make_robot("diagonal-08")
+        assembly = Assembly("diagonal-08")
+        robot._station = StationLayer(assembly, "auto", [np.eye(4)] * 2)
+        start = {side: assembly.initial_pose(side) for side in ("left", "right")}
+        for side in ("left", "right"):
+            robot._rtsi[side] = Mock(getActualJointPositions=Mock(return_value=start[side].tolist()))
+        robot._check_joint_move({"left": start["left"]}, "no-op move")  # staying put is fine
+        down = start["left"].copy()
+        down[1] += 1.5  # shoulder well down into the table
+        with self.assertRaisesRegex(RuntimeError, "refused by the station collision layer"):
+            robot._check_joint_move({"left": down}, "left MoveJ")
+
     def test_rpy_feedback_matches_native_conversion(self):
         for tcp in ([0.2, 0.3, 0.4, 0.7, -0.4, 1.2], [0, 0, 0, 2.1, 1.0, -2.0]):
             np.testing.assert_allclose(
