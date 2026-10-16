@@ -277,7 +277,19 @@ class RebotB601RT(Robot):
             self._raise_control_fault(state.fault_reason)
         now = time.monotonic()
         if self.config.interpolate_cartesian_targets and state.cartesian_ik_valid:
-            self._log_ik_status(state.cartesian_ik_success, state.cartesian_ik_error, state.q)
+            if hasattr(state, "cartesian_tracking_limited"):
+                # Partial tracking can mean a speed-limited or unreachable pose;
+                # it is not an IK rejection. Report it in the tracking trace.
+                if state.cartesian_tracking_limited != self._ik_failed and now - self._last_ik_warning >= 1.0:
+                    self.logger.info(
+                        "B601 Cartesian tracking limited; approaching the target within joint limits"
+                        if state.cartesian_tracking_limited
+                        else "B601 Cartesian tracking reached the sampled target"
+                    )
+                    self._last_ik_warning = now
+                self._ik_failed = state.cartesian_tracking_limited
+            else:
+                self._log_ik_status(state.cartesian_ik_success, state.cartesian_ik_error, state.q)
         if (
             self.config.trace_joint_tracking
             and now - self._last_tracking_log >= 1 / self.config.trace_joint_tracking_hz
@@ -290,6 +302,8 @@ class RebotB601RT(Robot):
             interpolation = (
                 f" cartesian_dt_ms={state.cartesian_duration_sec * 1000:.1f} "
                 f"ik_solves={state.cartesian_ik_solves} overruns={state.overruns}"
+                f" tracking_limited={getattr(state, 'cartesian_tracking_limited', False)}"
+                f" tracking_progress={getattr(state, 'cartesian_tracking_progress', False)}"
                 if self.config.interpolate_cartesian_targets
                 else ""
             )

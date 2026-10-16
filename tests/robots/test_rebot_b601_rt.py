@@ -96,6 +96,32 @@ class TestRebotB601RT(unittest.TestCase):
                 robot.logger.info.assert_called_once()
                 robot.disconnect()
 
+    def test_partial_tracking_is_not_reported_as_an_ik_rejection(self):
+        robot = self.make_robot(has_gripper=False, interpolate_cartesian_targets=True)
+        robot.connect()
+        robot.logger = Mock()
+        state = self.native.get_state.return_value
+        state.cartesian_ik_valid = True
+        state.cartesian_ik_success = False
+        state.cartesian_tracking_limited = True
+        state.cartesian_tracking_progress = True
+        with patch.object(driver.time, "monotonic", return_value=10.0):
+            robot.get_observation()
+        robot.logger.warn.assert_not_called()
+        self.assertIn("approaching", robot.logger.info.call_args.args[0])
+        # Limit transitions can occur at every producer update. Do not flood
+        # the terminal when tracking alternates between partial and complete.
+        with patch.object(driver.time, "monotonic", return_value=10.1):
+            state.cartesian_tracking_limited = False
+            robot.get_observation()
+            state.cartesian_tracking_limited = True
+            robot.get_observation()
+        self.assertEqual(robot.logger.info.call_count, 1)
+        with patch.object(driver.time, "monotonic", return_value=11.1):
+            state.cartesian_tracking_limited = False
+            robot.get_observation()
+        self.assertIn("reached", robot.logger.info.call_args.args[0])
+
     def test_motor_family_and_gripper_select_models_independently(self):
         for family in ("dm", "RS"):
             for taccap in (False, True):
