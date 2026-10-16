@@ -94,6 +94,17 @@ class TestRebotB601RT(unittest.TestCase):
                 robot.logger.info.assert_called_once()
                 robot.disconnect()
 
+    def test_outdated_native_api_reports_loaded_package_before_connecting(self):
+        robot = self.make_robot(has_gripper=False)
+        old_state = SimpleNamespace(mit_command_velocity=None)
+        with patch.object(driver.rebot_rt, "State", old_state):
+            with self.assertRaises(RuntimeError) as caught:
+                robot.connect()
+        self.assertIn(str(driver.rebot_rt.__file__), str(caught.exception))
+        self.assertIn("PYTHONPATH", str(caught.exception))
+        self.assertIn("per-joint limits", str(caught.exception))
+        self.native_factory.assert_not_called()
+
     def test_partial_tracking_is_not_reported_as_an_ik_rejection(self):
         robot = self.make_robot(has_gripper=False, interpolate_cartesian_targets=True)
         robot.connect()

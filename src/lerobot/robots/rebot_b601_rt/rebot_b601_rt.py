@@ -180,7 +180,10 @@ class RebotB601RT(Robot):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support mit_velocity_feedforward")
         if not hasattr(rebot_rt.State, "cartesian_step_scale"):
             raise RuntimeError(
-                "libpyrebot must be rebuilt/updated to support per-joint limits and coordinated TCP tracking"
+                "libpyrebot must be rebuilt/updated to support per-joint limits and coordinated TCP tracking. "
+                f"Loaded rebot_rt from {rebot_rt.__file__}. "
+                "Check PYTHONPATH for an older checkout overriding the installed package, "
+                "then build/install the intended libpyrebot repository."
             )
         native = rebot_rt.Robot(
             family,
