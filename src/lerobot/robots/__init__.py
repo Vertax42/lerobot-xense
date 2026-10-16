@@ -17,3 +17,8 @@
 from .config import RobotConfig
 from .robot import Robot
 from .utils import make_robot_from_config
+
+# Optional native hardware adapters. Importing these modules registers their
+# RobotConfig choices; a clean LeRobot install can still use other robots when
+# the separately installed C++ extension is absent.
+from . import bi_rebot_b601_rt, rebot_b601_rt  # noqa: F401,E402

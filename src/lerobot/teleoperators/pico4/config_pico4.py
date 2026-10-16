@@ -62,3 +62,4 @@ class Pico4Config(TeleoperatorConfig):
     )
     max_pos_velocity: float = 1.0  # Max allowed position velocity (m/s) for output rate limiter. 0 = disabled.
     max_rot_velocity: float = 6.28  # Max allowed angular velocity (rad/s) for output rate limiter. 0 = disabled.
+    trace_input: bool = False  # Log raw SDK pose/timestamp update statistics twice a second.

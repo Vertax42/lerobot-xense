@@ -1,0 +1,42 @@
+# Two RS B601 arms + TacCap, Bi-Pico4 teleoperation.
+#   lerobot-teleoperate --config_path=recipes/teleop/bi_rebot_b601_rt/rs-taccap.yaml
+# Each TCP is expressed in that arm's own base frame; no shared-world mount transform.
+# Set each channel to the corresponding arm's SocketCAN interface.
+robot:
+  type: bi_rebot_b601_rt
+  reset_on_exit: true # return both arms before disconnecting on Ctrl+C / normal completion
+  id: bi_rebot_rs_taccap
+  left_arm_config:
+    motor_family: rs
+    control_mode: pos_vel
+    interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
+    mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
+    channel: can0
+    max_joint_speed: 1.5 # rad/s per joint during teleoperation
+    reset_joint_speed: 0.5 # rad/s for A-button reset
+    reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
+    gripper:
+      type: taccap_follower
+      side: left
+      auto_discover_cameras: true
+      enable_tactile: true
+  right_arm_config:
+    motor_family: rs
+    control_mode: pos_vel
+    interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
+    mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
+    channel: can1
+    max_joint_speed: 1.5 # rad/s per joint during teleoperation
+    reset_joint_speed: 0.5 # rad/s for A-button reset
+    reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
+    gripper:
+      type: taccap_follower
+      side: right
+      auto_discover_cameras: true
+      enable_tactile: true
+
+teleop:
+  type: bi_pico4
+
+fps: 30
+display_data: true

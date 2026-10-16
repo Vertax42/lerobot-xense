@@ -3,7 +3,7 @@
 🤗 This repository is a fork of [`lerobot`](https://github.com/huggingface/lerobot)
 by XenseRobotics, used for Xense's multimodal tactile data acquisition system.
 This branch tracks **upstream lerobot v5.1**, with Xense-specific robots
-(Flexiv Rizon4 RT, Elite CS66 RT, and ARX5 — each single-arm and bimanual;
+(Flexiv Rizon4 RT, Elite CS66 RT, reBot B601 RT, and ARX5 — each single-arm and bimanual;
 plus TacCap tactile grippers), teleoperators (Pico4 VR,
 dual SpaceMouse, TRLC leader, gamepad) and tactile cameras
 layered on top. For generic lerobot usage (datasets, policies, training
@@ -45,7 +45,8 @@ cd lerobot-xense
 > developers can instead point the submodules at the internal GitLab server;
 > the internal URLs live in [`.gitmodules.gitlab`](.gitmodules.gitlab) and a
 > helper repoints your **local** remotes without touching the committed
-> `.gitmodules` (every submodule pin exists on both remotes):
+> `.gitmodules` (the submodules listed in `.gitmodules.gitlab` have matching pins
+> on both remotes; `libpyrebot` currently stays on GitHub):
 >
 > ```bash
 > XENSE_GITLAB_HOST=<host> scripts/submodule-remote.sh gitlab   # `github` switches back
@@ -62,10 +63,27 @@ This repository uses `third_party/` git submodules to manage hardware SDK depend
 | ---------------------------------------- | ----------------------------------------------- |
 | `third_party/ARX5_SDK`                   | `pyarx`                                         |
 | `third_party/libpyflexiv`                | `flexiv_rt`                                     |
+| `third_party/libpyrebot`                 | `rebot_rt`                                      |
 | `third_party/XGripper`                   | `xgripper`                                      |
 | `third_party/elite-robots-cs-sdk`        | Elite CS C++ SDK (builds `elite_cs_sdk`)        |
 | `third_party/elite-robots-cs-sdk-python` | `elite_cs_sdk` (Elite CS Python bindings)       |
 | `third_party/taccap-gripper`             | `xense.taccap` (TacCap UMI tactile gripper SDK) |
+
+The [`libpyrebot`](https://github.com/xensedyl/libpyrebot) submodule provides C++ 100 Hz Cartesian control and IK for reBot B601 DM and RS arms. Build its pybind11 extension for the active Python environment before using the `rebot_b601_rt` or `bi_rebot_b601_rt` robot types (see the build steps below and its [README](third_party/libpyrebot/README.md)). It supports DM serial bridges and SocketCAN, and RS over SocketCAN. Complete DM, RS, and RS Taccap model assets are bundled. Each motor family uses its original model by default; configuring `gripper.type: taccap_follower` selects `RS_Taccap` and its `taccap_eef_link` tool frame for either family, with the TacCap gripper controlled by its separate driver.
+
+Both control modes use native timed Cartesian interpolation by default (`interpolate_cartesian_targets: true`): translation is linear, orientation uses SLERP, and each 100 Hz substep runs IK from the last limited command. The single- and dual-arm RS TacCap recipes select `pos_vel`; overriding `control_mode` to `mit` retains the same interpolation. Teleoperation remains limited to 1.5 rad/s and A reset to 0.5 rad/s in these recipes.
+
+These recipes enable `robot.reset_on_exit: true`: after Ctrl+C or the teleoperation duration ends, the arm(s) return to `reset_position_rad` (six zeros) at `reset_joint_speed` (0.5 rad/s), then disconnect. MIT and position/velocity modes use the same reset path. Feedback must settle within `reset_tolerance_rad`; `reset_timeout_sec` bounds the wait. A second Ctrl+C aborts the return and disconnects immediately. Startup failures, teleoperation errors and dry runs skip the exit reset; a fault during reset stops it. Use `--robot.reset_on_exit=false` to disable this behavior. Plain `disconnect()` never starts a reset.
+
+The RS TacCap recipes set `mit_velocity_feedforward: false`: MIT tracks the interpolated position with desired velocity `dq=0`, retaining its configured stiffness and damping. This follows `libtron2rt`'s Cartesian command behavior and avoids sending waypoint-boundary finite-difference velocity pulses into MIT's velocity term. `--robot.mit_velocity_feedforward=true` restores the previous behavior for comparison. This option does not affect `pos_vel`; native API and general robot-config defaults remain `true` for compatibility. Tracking logs distinguish `velocity` (position-ramp slope) from `mit_dq` (MIT desired velocity before encoding). Physical smoothness and load tracking still require a hardware check.
+
+For intermittent Pico input, add `--teleop.trace_input=true` to single-arm teleoperation, or inspect input alone without connecting any robot:
+
+```bash
+python -m lerobot.teleoperators.pico4.examples.pico4_input_timing --side=right --seconds=20
+```
+
+Move the selected controller continuously during this check. `[PICO_INPUT]` reports polling frequency, exact raw pose changes, and SDK stream timestamp changes every 0.5 seconds. `pose_repeat_ms` measures local time without a pose change; `sdk_stamp_repeat_ms` measures local time without a stream timestamp change (`-1` means unavailable). A stationary controller can legitimately repeat its pose, and a changing stream timestamp does not guarantee fresh tracking for that controller. `max_poll_gap_ms` separates slow application polling from repeated input. These fields do not measure network latency. Native `cartesian_dt_ms` measures submitted waypoint intervals, so 33 ms there can still mean the same stale Pico pose is being submitted at 30 Hz.
 
 > `xensesdk` is **not** a submodule — it is installed from PyPI (`xensesdk==2.1.2`,
 > the published cp312 manylinux wheel, which bundles the patched `libxense_c.so`
@@ -94,7 +112,7 @@ mamba activate lerobot-xense
 > but the rest of this README and the openpi project assume
 > `lerobot-xense-py312`.
 
-**Step 3:** 📦 Install LeRobot-Xense and all hardware SDK bindings:
+**Step 3:** 📦 Install LeRobot-Xense and hardware SDK bindings:
 
 ```bash
 bash ./setup_env.sh --install
@@ -109,14 +127,35 @@ This step will:
   [v0.2.1 release](https://github.com/XenseRobotics-AI/XenseVR-PC-Service/releases/tag/v0.2.1)
   into `/opt/apps/roboticsservice`; override with `XENSEVR_DEB_URL`, or point
   `XENSEVR_DEB` at a local file for offline installs) — only with `--pico4` / `--bi_pico4` or a full install
-- Build and install all `third_party` SDK packages: `pyarx`, `flexiv_rt`, `xensevr_pc_service_sdk` (built against the `.deb`'s client SDK), `xgripper`, `elite_cs_sdk` (Elite CS — built from the C++ + Python submodules), and `xense.taccap` (TacCap UMI gripper)
+- Build and install the SDK packages supported by `setup_env.sh`: `pyarx`, `flexiv_rt`, `xensevr_pc_service_sdk` (built against the `.deb`'s client SDK), `xgripper`, `elite_cs_sdk` (Elite CS — built from the C++ + Python submodules), and `xense.taccap` (TacCap UMI gripper)
 - Configure SpaceMouse udev rules and HID permissions automatically
 
 > You will be prompted for `sudo` password during installation (for ARX5 real-time capability and udev rules).
 
+For **reBot B601**, build and install `rebot_rt` separately; `setup_env.sh` does
+not build it yet. Activate the environment used for LeRobot first. It must have
+CMake, a C++17 compiler, pybind11, Eigen, and Pinocchio's C++ headers and libraries
+(`pinocchio_default` and `pinocchio_parsers`). From this repository's root:
+
+```bash
+git submodule update --init --recursive third_party/libpyrebot
+cmake -S third_party/libpyrebot -B third_party/libpyrebot/build \
+  -DPython3_EXECUTABLE="$(command -v python)"
+cmake --build third_party/libpyrebot/build -j2
+python -m pip install -e third_party/libpyrebot --no-build-isolation
+```
+
+CMake looks for Pinocchio in the active Python environment by default; pass
+`-DPINOCCHIO_PREFIX=/path/to/pinocchio/environment` if it is installed elsewhere.
+Rebuild the extension when the pinned submodule commit or Python minor version
+changes. `pip install` alone does not compile it. For RS + TacCap + Pico4, also
+install the gripper and teleoperator bindings with
+`bash ./setup_env.sh --install --taccap --pico4`.
+
 #### 🎛️ Selective hardware install (build only the SDKs you need)
 
-By default `--install` builds **every** hardware SDK. On a station that only uses one
+By default `--install` builds every hardware SDK supported by the script (the
+separate reBot build above is still required). On a station that only uses one
 or two devices, pass per-hardware-family selectors after `--install` to build
 **core + only those** SDKs — faster, and it skips SDKs you can't (or don't want to)
 build on that host:

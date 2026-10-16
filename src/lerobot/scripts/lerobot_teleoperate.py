@@ -221,6 +221,28 @@ def _cleanup(robot, teleop, display_data: bool) -> None:
     _safe_disconnect(robot, robot.__class__.__name__ if robot else "robot")
 
 
+def _reset_b601_on_exit(robot) -> None:
+    """Finish an explicitly configured exit reset before closing the arm.
+
+    Called only after normal loop completion or the first Ctrl+C, never from
+    generic cleanup (which also handles faults and partial startup failures).
+    """
+    try:
+        logger.info("B601 exit reset: returning to the configured pose; press Ctrl+C again to abort")
+        robot.reset_to_initial_position()
+        # rt_moving checks feedback/faults/timeout and refreshes the reset goal
+        # for both arms. Do not read cameras or wait for the VR SDK here.
+        while robot.rt_moving:
+            time.sleep(0.01)
+        logger.info("B601 exit reset complete; disconnecting")
+    except KeyboardInterrupt:
+        logger.warn("B601 exit reset interrupted; disconnecting immediately")
+    finally:
+        # Close the native controller before the slower camera/VR teardown,
+        # including when reset faults, times out, or is interrupted again.
+        _safe_disconnect(robot, robot.__class__.__name__)
+
+
 def _obs_ms(timing: dict, key: str) -> str:
     """One field of a robot's ``_last_obs_timing`` breakdown, as milliseconds.
 
@@ -929,6 +951,43 @@ def teleoperate(cfg: TeleoperateConfig):
                     duration=cfg.teleop_time_s,
                     debug_timing=cfg.debug_timing,
                 )
+
+        # --- B601 RT + Cartesian teleoperators ---
+        elif cfg.robot.type in ("rebot_b601_rt", "bi_rebot_b601_rt"):
+            bimanual = cfg.robot.type == "bi_rebot_b601_rt"
+            supported = ("bi_pico4",) if bimanual else ("pico4", "spacemouse")
+            if cfg.teleop.type not in supported:
+                raise ValueError(f"{cfg.robot.type} supports teleop types {supported}, got {cfg.teleop.type!r}")
+            logger.info(f"Detected {cfg.robot.type} + {cfg.teleop.type}")
+            teleop = make_teleoperator_from_config(cfg.teleop)
+            if bimanual:
+                teleop.pre_init()
+            robot = make_robot_from_config(cfg.robot)
+            robot.connect()
+            if bimanual:
+                left_pose, right_pose = robot.get_current_tcp_pose_quat()
+                teleop.connect(left_tcp_pose_quat=left_pose, right_tcp_pose_quat=right_pose)
+                policy = BiPico4Policy()
+            elif cfg.teleop.type == "pico4":
+                teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
+                policy = Pico4Policy()
+            else:
+                teleop.connect(current_tcp_pose_euler=robot.get_current_tcp_pose_euler())
+                policy = SpaceMousePolicy()
+            with contextlib.suppress(KeyboardInterrupt):
+                run_cartesian_teleop_loop(
+                    teleop=teleop,
+                    robot=robot,
+                    fps=cfg.fps,
+                    policy=policy,
+                    display_data=cfg.display_data,
+                    duration=cfg.teleop_time_s,
+                    dryrun=cfg.dryrun,
+                    debug_timing=cfg.debug_timing,
+                )
+
+            if cfg.robot.reset_on_exit and not cfg.dryrun:
+                _reset_b601_on_exit(robot)
 
         # --- flexiv_rizon4_rt + spacemouse ---
         elif cfg.robot.type == "flexiv_rizon4_rt" and cfg.teleop.type == "spacemouse":
