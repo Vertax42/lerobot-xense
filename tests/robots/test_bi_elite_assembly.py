@@ -99,12 +99,42 @@ class AssemblyAdapterTests(unittest.TestCase):
 
     def test_bimanual_tcp_cap_defaults_to_the_native_default(self):
         robot = self.make_robot("diagonal-08")
+        robot.config.left_tool_transform = np.eye(4).ravel().tolist()
         planner = robot._make_driver_config("left").planner
         self.assertEqual((planner.max_linear_velocity, planner.max_angular_velocity), (0.5, 1.0))
 
     def test_collision_profile_needs_an_assembly(self):
         with self.assertRaises(ValueError):
             BiEliteCS66RTConfig(native_collision_profile="auto")
+
+    def test_collision_layer_uses_the_effective_controller_tools(self):
+        robot = self.make_robot("diagonal-08")
+        robot.config.native_collision_profile = "auto"
+        expected = []
+        for side, offset in (("left", 0.12), ("right", 0.21)):
+            tool = np.eye(4)
+            tool[2, 3] = offset
+            expected.append(tool.ravel().tolist())
+            robot._rtsi[side] = Mock()
+            with patch(
+                "lerobot.robots.bi_elite_cs66_rt.bi_elite_cs66_rt._derive_controller_tool",
+                return_value=expected[-1],
+            ):
+                cfg = robot._make_driver_config(side)
+            np.testing.assert_allclose(cfg.tool, expected[-1])
+            robot._driver[side] = SimpleNamespace(_native=Mock())
+        coordinator = Mock()
+        robot._cs = SimpleNamespace(_native=SimpleNamespace(StationCoordinator=Mock(return_value=coordinator)))
+        with patch("libpyelite.collision.StationLayer") as layer:
+            robot._start_station_layer()
+            np.testing.assert_allclose(layer.call_args.args[2], expected)
+        robot._stop_station_layer()
+
+    def test_collision_layer_rejects_unconfigured_tools(self):
+        robot = self.make_robot("diagonal-08")
+        robot.config.native_collision_profile = "auto"
+        with self.assertRaisesRegex(RuntimeError, "TCP transforms must be configured"):
+            robot._start_station_layer()
 
     def test_collision_profile_puts_both_arms_under_one_coordinator(self):
         robot = self.make_robot("diagonal-08")
@@ -113,6 +143,7 @@ class AssemblyAdapterTests(unittest.TestCase):
         for side in ("left", "right"):
             robot._driver[side] = SimpleNamespace(_native=native[side])
             robot._rtsi[side] = Mock()
+            robot._native_tools[side] = np.eye(4).ravel().tolist()
         coordinator = Mock()
         robot._cs = SimpleNamespace(_native=SimpleNamespace(StationCoordinator=Mock(return_value=coordinator)))
         robot._start_station_layer()

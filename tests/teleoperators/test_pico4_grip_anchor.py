@@ -22,10 +22,10 @@ class _FakeXrt:
     def get_right_trigger(self):
         return 0.0
 
-    def get_A_button(self):
+    def get_A_button(self):  # noqa: N802 - Pico4 SDK method name
         return False
 
-    def get_B_button(self):
+    def get_B_button(self):  # noqa: N802 - Pico4 SDK method name
         return False
 
     def close(self):

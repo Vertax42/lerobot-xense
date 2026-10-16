@@ -1,16 +1,20 @@
 """Adapter behaviour around the native libpyelite driver, with the driver mocked.
 
-No libpyelite needed: the adapters only import it in connect(), so these run on
-every host and cover the review fixes for PR #30.
+Most tests need no libpyelite and cover the review fixes for PR #30 on every
+host. Native configuration mapping tests require the optional SDK.
 """
 
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import draccus
 import numpy as np
 import pytest
+import yaml
 
+from lerobot.cameras.realsense.configuration_realsense import RealSenseCameraConfig  # noqa: F401
 from lerobot.robots.bi_elite_cs66_rt.bi_elite_cs66_rt import BiEliteCS66RT
 from lerobot.robots.bi_elite_cs66_rt.config_bi_elite_cs66_rt import BiEliteCS66RTConfig
 from lerobot.robots.elite_cs66_rt.config_elite_cs66_rt import EliteCS66RTConfig
@@ -239,7 +243,7 @@ def test_derivation_needs_a_live_rtsi_stream():
 
 
 def _native_cfg():
-    return SimpleNamespace(ik=SimpleNamespace(), planner=SimpleNamespace(), tool=None, model_path="")
+    return pytest.importorskip("libpyelite").EliteDriverConfig()
 
 
 def test_write_failure_tolerance_reaches_the_native_sender():
@@ -259,6 +263,22 @@ def test_single_and_bimanual_planner_defaults_agree():
     single, bi = EliteCS66RTConfig(), BiEliteCS66RTConfig()
     assert single.native_max_tcp_linear_velocity == bi.native_max_tcp_linear_velocity
     assert single.native_max_tcp_angular_velocity == bi.native_max_tcp_angular_velocity
+
+
+@pytest.mark.parametrize(
+    "path", sorted((Path(__file__).resolve().parents[2] / "recipes").glob("*/bi_elite_cs66_rt/*.yaml"))
+)
+def test_bimanual_recipes_decode_with_native_safety(path):
+    values = yaml.safe_load(path.read_text())["robot"]
+    values.pop("type")
+    config = draccus.decode(BiEliteCS66RTConfig, values)
+    assert (config.max_lin_speed, config.max_ang_speed) == (0.25, 1.0)
+    assert config.native_cartesian_motion_limits
+    assert config.native_joint_motion_limits
+    if config.native_assembly is None:
+        assert config.native_collision_profile is None
+    else:
+        assert config.native_collision_profile == "auto"
 
 
 def test_servoj_time_error_says_why():

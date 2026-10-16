@@ -114,6 +114,7 @@ class BiEliteCS66RT(Robot):
         # StationLayer and the StationCoordinator planning both arms through it.
         self._station: Any = None
         self._coordinator: Any = None
+        self._native_tools: dict[str, list[float] | None] = dict.fromkeys(_SIDES)
         self._dashboard: dict[str, Any] = dict.fromkeys(_SIDES)
         self._rtsi: dict[str, Any] = dict.fromkeys(_SIDES)
 
@@ -435,6 +436,7 @@ class BiEliteCS66RT(Robot):
             f"{side} native planner TCP caps: {cfg.planner.max_linear_velocity:g} m/s, "
             f"{cfg.planner.max_angular_velocity:g} rad/s (min of max_*_speed and native_max_tcp_*)"
         )
+        self._native_tools[side] = list(cfg.tool)
         return cfg
 
     # =========================================================================
@@ -753,10 +755,9 @@ class BiEliteCS66RT(Robot):
         from libpyelite.collision import StationLayer
 
         # The same tool0 <- TCP the drivers plan with (_make_driver_config).
-        tools = [
-            np.eye(4) if (tool := getattr(self.config, f"{side}_tool_transform")) is None else np.asarray(tool)
-            for side in _SIDES
-        ]
+        if any(self._native_tools[side] is None for side in _SIDES):
+            raise RuntimeError("Both native driver TCP transforms must be configured before the station layer")
+        tools = [self._native_tools[side] for side in _SIDES]
         self._station = StationLayer(self._assembly, profile, tools)
         native = {side: self._driver[side]._native for side in _SIDES}
         for side in _SIDES:

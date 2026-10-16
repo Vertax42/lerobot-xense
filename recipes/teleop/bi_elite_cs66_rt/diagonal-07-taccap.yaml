@@ -156,7 +156,7 @@ robot:
   # refused when their joint path is blocked. Not yet validated on hardware.
   # This recipe sets no native_assembly; the simulator would load diagonal-08.
   # Set native_assembly before using `auto`.
-  native_collision_profile: auto
+  native_collision_profile: null
   # Joint-current contact stop (any link). Off until its thresholds are tuned on
   # the bench; see third_party/libpyelite/examples/contact_monitor.json.
   native_contact_monitor: null

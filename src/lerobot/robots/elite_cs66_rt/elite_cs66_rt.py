@@ -77,13 +77,13 @@ def _matrix_to_pose6(matrix: np.ndarray) -> np.ndarray:
 
 
 def _configure_native_driver(cfg, config, tool, side=None, world_from_base=None) -> None:
-    from libpyelite.control_profile import configure_native_driver
-
     if not hasattr(cfg, "max_consecutive_write_failures"):
         raise RuntimeError(
             "Installed libpyelite predates max_consecutive_write_failures; rebuild it from "
             "third_party/libpyelite (./setup_env.sh --elite)."
         )
+    from libpyelite.control_profile import configure_native_driver
+
     configure_native_driver(cfg, config, tool, side, world_from_base)
 
 
