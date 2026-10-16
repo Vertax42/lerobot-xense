@@ -76,9 +76,7 @@ class TestRebotB601RT(unittest.TestCase):
         self.assertTrue(RebotB601RTConfig().interpolate_cartesian_targets)
         for mode in ("mit", "pos_vel"):
             with self.subTest(mode=mode):
-                robot = self.make_robot(
-                    control_mode=mode, has_gripper=False, interpolate_cartesian_targets=True
-                )
+                robot = self.make_robot(control_mode=mode, has_gripper=False, interpolate_cartesian_targets=True)
                 robot.connect()
                 robot.logger = Mock()
                 action = driver._action_from_pose(np.eye(4))
@@ -171,8 +169,9 @@ class TestRebotB601RT(unittest.TestCase):
                 self.assertFalse(config.has_gripper)
 
     def test_control_mode_and_position_gains_can_be_overridden(self):
-        robot = self.make_robot(control_mode="MIT", mit_velocity_feedforward=False,
-                                motor_configs=[{"vel_kp": 7.0}, {}, {}, {}, {}, {}, {}])
+        robot = self.make_robot(
+            control_mode="MIT", mit_velocity_feedforward=False, motor_configs=[{"vel_kp": 7.0}, {}, {}, {}, {}, {}, {}]
+        )
         robot.connect()
         args = self.native_factory.call_args.args
         self.assertEqual(args[9], "mit")
@@ -308,6 +307,46 @@ class TestRebotB601RT(unittest.TestCase):
             for speed in (0, -0.1, float("nan"), float("inf")):
                 with self.subTest(field=field, speed=speed), self.assertRaisesRegex(ValueError, "positive"):
                     RebotB601RTConfig(**{field: speed})
+        for limits in ([], [1.0] * 5, [1.0] * 7, [0.0] * 6, [-1.0] * 6, [float("nan")] * 6):
+            with self.subTest(limits=limits), self.assertRaisesRegex(ValueError, "max_joint_speeds"):
+                RebotB601RTConfig(max_joint_speeds=limits)
+
+    def test_joint_limits_and_cartesian_coordination_reach_native_in_both_modes(self):
+        limits = [0.2, 0.8, 1.1, 0.9, 0.7, 0.6]
+        for mode in ("mit", "pos_vel"):
+            with self.subTest(mode=mode):
+                robot = self.make_robot(control_mode=mode, max_joint_speeds=limits)
+                robot.connect()
+                self.assertEqual(
+                    self.native_factory.call_args.kwargs,
+                    {
+                        "max_joint_speeds": limits,
+                        "coordinate_cartesian_speed": True,
+                    },
+                )
+                robot.disconnect()
+
+    def test_reset_caps_using_per_joint_limits_instead_of_unused_scalar(self):
+        robot = self.make_robot(reset_position_rad=[0.0] * 6, max_joint_speed=1.5, max_joint_speeds=[0.25] * 6)
+        robot.connect()
+        robot.reset_to_initial_position()
+        self.native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.25)
+        self.assertTrue(robot.rt_moving)
+        self.native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.25)
+
+    def test_dual_arm_decoding_keeps_independent_speed_limits(self):
+        left, right = [0.2, 0.8, 1.1, 0.9, 0.7, 0.6], [0.4] * 6
+        config = draccus.decode(
+            BiRebotB601RTConfig,
+            {
+                "left_arm_config": {"max_joint_speeds": left, "coordinate_cartesian_speed": True},
+                "right_arm_config": {"channel": "can1", "max_joint_speeds": right, "coordinate_cartesian_speed": False},
+            },
+        )
+        self.assertEqual(config.left_arm_config.max_joint_speeds, left)
+        self.assertEqual(config.right_arm_config.max_joint_speeds, right)
+        self.assertTrue(config.left_arm_config.coordinate_cartesian_speed)
+        self.assertFalse(config.right_arm_config.coordinate_cartesian_speed)
 
     def test_reset_timeout_holds_current_command(self):
         robot = self.make_robot(reset_position_rad=[0.0] * 6, reset_timeout_sec=1.0)

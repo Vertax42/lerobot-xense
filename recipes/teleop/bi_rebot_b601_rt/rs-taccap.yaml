@@ -13,6 +13,9 @@ robot:
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
     channel: can0
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
+    # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
+    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+    coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
     reset_joint_speed: 0.5 # rad/s for A-button reset
     reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
     gripper:
@@ -27,6 +30,9 @@ robot:
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
     channel: can1
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
+    # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
+    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
+    coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
     reset_joint_speed: 0.5 # rad/s for A-button reset
     reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
     gripper:

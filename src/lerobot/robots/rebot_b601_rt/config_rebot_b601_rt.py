@@ -30,11 +30,13 @@ class RebotB601RTConfig(RobotConfig):
     gripper: GripperConfig | None = None
     # Whether the native arm controller drives a seventh CAN motor.
     has_gripper: bool | None = None
-    max_joint_speed: float = 0.5  # rad/s, per joint
+    max_joint_speed: float = 0.5  # rad/s, fallback for all joints and native gripper speed
+    max_joint_speeds: list[float] | None = None  # optional [J1, ..., J6], replaces arm scalar limit
+    coordinate_cartesian_speed: bool = True  # scale TCP translation/rotation together before bounded IK
     command_timeout_sec: float = 0.5
     reset_position_rad: list[float] | None = None  # six arm joints; A-button target
     reset_on_exit: bool = False  # teleoperate: return to reset pose on Ctrl+C/normal loop completion
-    reset_joint_speed: float = 0.5  # rad/s, capped by max_joint_speed
+    reset_joint_speed: float = 0.5  # rad/s, additionally capped by each joint's configured limit
     reset_timeout_sec: float = 30.0
     reset_tolerance_rad: float = 0.03
     trace_joint_tracking: bool = False
@@ -73,6 +75,10 @@ class RebotB601RTConfig(RobotConfig):
             raise ValueError("motor_configs must contain seven entries")
         if any(not math.isfinite(v) or v <= 0 for v in (self.max_joint_speed, self.command_timeout_sec)):
             raise ValueError("speed and timeout must be positive and finite")
+        if self.max_joint_speeds is not None and (
+            len(self.max_joint_speeds) != 6 or any(not math.isfinite(v) or v <= 0 for v in self.max_joint_speeds)
+        ):
+            raise ValueError("max_joint_speeds must contain six finite positive speeds in rad/s")
         if not math.isfinite(self.reset_joint_speed) or self.reset_joint_speed <= 0:
             raise ValueError("reset_joint_speed must be positive and finite")
         if self.reset_position_rad is not None and (

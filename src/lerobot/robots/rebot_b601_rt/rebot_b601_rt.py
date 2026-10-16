@@ -178,6 +178,10 @@ class RebotB601RT(Robot):
                 motor_configs.append(native_motor)
         if not hasattr(rebot_rt.State, "mit_command_velocity"):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support mit_velocity_feedforward")
+        if not hasattr(rebot_rt.State, "cartesian_step_scale"):
+            raise RuntimeError(
+                "libpyrebot must be rebuilt/updated to support per-joint limits and coordinated TCP tracking"
+            )
         native = rebot_rt.Robot(
             family,
             self.config.channel,
@@ -190,6 +194,8 @@ class RebotB601RT(Robot):
             motor_configs,
             self.config.control_mode,
             self.config.mit_velocity_feedforward,
+            max_joint_speeds=self.config.max_joint_speeds or [],
+            coordinate_cartesian_speed=self.config.coordinate_cartesian_speed,
         )
         if self.config.interpolate_cartesian_targets and not hasattr(native, "queue_target_pose"):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support native Cartesian interpolation")
@@ -212,6 +218,8 @@ class RebotB601RT(Robot):
             f"B601 control_mode={self.config.control_mode}, max_joint_speed={self.config.max_joint_speed} rad/s, "
             f"cartesian_interpolation={self.config.interpolate_cartesian_targets} (100 Hz), "
             f"mit_velocity_feedforward={self.config.mit_velocity_feedforward}"
+            f", max_joint_speeds={self.config.max_joint_speeds or [self.config.max_joint_speed] * 6} rad/s"
+            f", coordinate_cartesian_speed={self.config.coordinate_cartesian_speed}"
         )
 
     @check_if_not_connected
@@ -219,7 +227,7 @@ class RebotB601RT(Robot):
         """Start a joint-space return to the configured A-button pose."""
         self._validate_reset()
         target = [*self.config.reset_position_rad, self._native.get_target_joints()[6]]
-        speed = min(self.config.reset_joint_speed, self.config.max_joint_speed)
+        speed = min(self.config.reset_joint_speed, max(self.config.max_joint_speeds or [self.config.max_joint_speed]))
         self._native.set_target_joints(target, max_joint_speed=speed)
         self._reset_target = target
         self._reset_started_at = time.monotonic()
@@ -261,7 +269,10 @@ class RebotB601RT(Robot):
         # Reset lasts longer than the teleop watchdog. Keep its goal alive while
         # the shared loop stands aside, until measured feedback settles.
         self._native.set_target_joints(
-            self._reset_target, max_joint_speed=min(self.config.reset_joint_speed, self.config.max_joint_speed)
+            self._reset_target,
+            max_joint_speed=min(
+                self.config.reset_joint_speed, max(self.config.max_joint_speeds or [self.config.max_joint_speed])
+            ),
         )
         return True
 
@@ -299,11 +310,18 @@ class RebotB601RT(Robot):
                 return [round(float(v), 4) for v in values[:6]]
 
             tracking_error = np.asarray(state.command) - np.asarray(state.q)
+            limits = getattr(state, "joint_speed_limits", [self.config.max_joint_speed] * 7)
+            utilization = getattr(state, "joint_speed_utilization", [0.0] * 7)
+            limiting_joint = getattr(state, "cartesian_limiting_joint", -1)
+            near_speed_limit = [f"J{i + 1}" for i, value in enumerate(utilization[:6]) if value >= 0.95]
             interpolation = (
                 f" cartesian_dt_ms={state.cartesian_duration_sec * 1000:.1f} "
                 f"ik_solves={state.cartesian_ik_solves} overruns={state.overruns}"
                 f" tracking_limited={getattr(state, 'cartesian_tracking_limited', False)}"
                 f" tracking_progress={getattr(state, 'cartesian_tracking_progress', False)}"
+                f" tcp_coordinated={getattr(state, 'cartesian_coordinated', False)}"
+                f" tcp_step_scale={getattr(state, 'cartesian_step_scale', 0.0):.3f}"
+                f" tcp_bound_joint={'J' + str(limiting_joint + 1) if limiting_joint >= 0 else 'none'}"
                 if self.config.interpolate_cartesian_targets
                 else ""
             )
@@ -312,6 +330,9 @@ class RebotB601RT(Robot):
                 f"measured={fmt(state.q)} error={fmt(tracking_error)} velocity={fmt(state.command_velocity)}"
                 + (f" mit_dq={fmt(state.mit_command_velocity)}" if self.config.control_mode == "mit" else "")
                 + interpolation
+                + f" speed_limits={fmt(limits)} speed_utilization={fmt(utilization)}"
+                + f" near_speed_limit={near_speed_limit}"
+                + f" measured_velocity={fmt(getattr(state, 'dq', [0.0] * 7))}"
             )
             self._last_tracking_log = now
         if self.config.use_joint_observation:
