@@ -1,4 +1,4 @@
-"""Recover from UVC re-enumeration after the SDK's first ISP calibration read."""
+"""B601 camera extensions must not change the shared Xense camera driver."""
 
 import itertools
 import sys
@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from lerobot.cameras.xense import XenseOutputType, XenseTactileCamera, XenseTactileCameraConfig, camera_xense as driver
+from lerobot.robots.rebot_b601_rt.tactile_camera import RebotTactileCamera, make_rebot_cameras
 from lerobot.utils.errors import DeviceNotConnectedError
 
 SERIAL = "GSPS01A34Z0021"
@@ -31,7 +32,7 @@ class TestXenseCameraConnect(unittest.TestCase):
             scanSerialNumber=Mock(return_value={SERIAL: 8}),
         )
         self.enterContext(patch.dict(sys.modules, xensesdk=SimpleNamespace(Sensor=self.sdk)))
-        self.camera = XenseTactileCamera(
+        self.camera = RebotTactileCamera(
             XenseTactileCameraConfig(
                 serial_number=SERIAL,
                 output_types=[XenseOutputType.RECTIFY],
@@ -108,8 +109,7 @@ class TestXenseCameraConnect(unittest.TestCase):
     def test_read_latest_returns_the_formatted_sample_without_another_read(self):
         self.camera.connect(warmup=False)
         frame = np.zeros((4, 7, 3), dtype=np.uint8)
-        self.camera.latest_data = frame
-        self.camera.latest_timestamp = 9.9
+        self.camera._latest_sample = (frame, 9.9)
         with patch.object(driver.time, "monotonic", return_value=10.0):
             self.assertIs(self.camera.read_latest(), frame)
         self.sensor.selectSensorInfo.assert_not_called()
@@ -119,8 +119,7 @@ class TestXenseCameraConnect(unittest.TestCase):
         frame = np.zeros((4, 7, 3), dtype=np.uint8)
 
         def first_sample(timeout_ms):
-            self.camera.latest_data = frame
-            self.camera.latest_timestamp = 10.0
+            self.camera._latest_sample = (frame, 10.0)
             return frame
 
         with (
@@ -132,8 +131,7 @@ class TestXenseCameraConnect(unittest.TestCase):
 
     def test_read_latest_rejects_stale_samples(self):
         self.camera.connect(warmup=False)
-        self.camera.latest_data = np.zeros((4, 7, 3), dtype=np.uint8)
-        self.camera.latest_timestamp = 9.0
+        self.camera._latest_sample = (np.zeros((4, 7, 3), dtype=np.uint8), 9.0)
         with (
             patch.object(driver.time, "monotonic", return_value=10.0),
             self.assertRaisesRegex(TimeoutError, "too old"),
@@ -142,15 +140,54 @@ class TestXenseCameraConnect(unittest.TestCase):
 
     def test_disconnect_clears_the_previous_stream_sample(self):
         self.camera.connect(warmup=False)
-        self.camera.latest_data = np.zeros((4, 7, 3), dtype=np.uint8)
-        self.camera.latest_timestamp = 10.0
+        self.camera._latest_sample = (np.zeros((4, 7, 3), dtype=np.uint8), 10.0)
         self.camera.new_frame_event.set()
         self.camera.disconnect()
         self.assertIsNone(self.camera.latest_data)
-        self.assertIsNone(self.camera.latest_timestamp)
+        self.assertIsNone(self.camera._latest_sample)
         self.assertFalse(self.camera.new_frame_event.is_set())
         with self.assertRaises(DeviceNotConnectedError):
             self.camera.read_latest()
+
+    def test_background_and_warmup_reads_cache_formatted_frames(self):
+        self.camera.connect(warmup=False)
+        frame = np.zeros((4, 7, 3), dtype=np.uint8)
+        with patch.object(XenseTactileCamera, "read", return_value=frame) as read:
+            self.assertIs(self.camera.read(), frame)
+            self.assertIs(self.camera.read_latest(), frame)
+        read.assert_called_once_with(color_mode=None)
+
+    def test_shared_camera_does_not_retry_or_use_b601_cached_reads(self):
+        self.save_cache()
+        self.sdk.create.side_effect = RuntimeError("Cannot open camera 8")
+        shared = XenseTactileCamera(self.camera.config)
+        with self.assertRaises(ConnectionError):
+            shared.connect(warmup=False)
+        self.sdk.create.assert_called_once()
+        self.sdk.scanSerialNumber.assert_not_called()
+        frame = np.zeros((4, 7, 3), dtype=np.uint8)
+        with patch.object(shared, "async_read", return_value=frame) as read, self.assertWarns(FutureWarning):
+            self.assertIs(shared.read_latest(), frame)
+        read.assert_called_once_with()
+
+    def test_only_b601_factory_uses_specialized_tactile_camera(self):
+        from lerobot.cameras import make_cameras_from_configs
+
+        config = {"pad": self.camera.config}
+        self.assertIs(type(make_cameras_from_configs(config)["pad"]), XenseTactileCamera)
+        self.assertIs(type(make_rebot_cameras(config)["pad"]), RebotTactileCamera)
+
+    def test_b601_factory_preserves_camera_order_and_other_camera_types(self):
+        from lerobot.robots.rebot_b601_rt import tactile_camera
+
+        scene_config = SimpleNamespace(type="opencv")
+        scene = object()
+        config = {"pad": self.camera.config, "scene": scene_config}
+        with patch.object(tactile_camera, "make_cameras_from_configs", return_value={"scene": scene}) as factory:
+            cameras = make_rebot_cameras(config)
+        self.assertEqual(list(cameras), ["pad", "scene"])
+        self.assertIs(cameras["scene"], scene)
+        factory.assert_called_once_with({"scene": scene_config})
 
 
 if __name__ == "__main__":

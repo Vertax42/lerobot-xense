@@ -79,7 +79,12 @@ These recipes enable `robot.reset_on_exit: true`: after Ctrl+C or the teleoperat
 
 The RS TacCap recipes set `mit_velocity_feedforward: false`: MIT tracks the interpolated position with desired velocity `dq=0`, retaining its configured stiffness and damping. This follows `libtron2rt`'s Cartesian command behavior and avoids sending waypoint-boundary finite-difference velocity pulses into MIT's velocity term. `--robot.mit_velocity_feedforward=true` restores the previous behavior for comparison. This option does not affect `pos_vel`; native API and general robot-config defaults remain `true` for compatibility. Tracking logs distinguish `velocity` (position-ramp slope) from `mit_dq` (MIT desired velocity before encoding). Physical smoothness and load tracking still require a hardware check.
 
-For intermittent Pico input, add `--teleop.trace_input=true` to single-arm teleoperation, or inspect input alone without connecting any robot:
+B601 uses local tactile-camera adapters for cached observations and bounded USB
+reopen retries, plus local TacCap discovery for gripper hubs sharing an upstream
+USB hub. Other robots retain the original shared camera and USB grouping behavior.
+The B601 native SDK is loaded only when its driver is requested.
+
+For intermittent Pico input, inspect input alone without connecting any robot:
 
 ```bash
 python -m lerobot.teleoperators.pico4.examples.pico4_input_timing --side=right --seconds=20

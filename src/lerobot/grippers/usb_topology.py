@@ -38,10 +38,11 @@ from lerobot.utils.robot_utils import get_logger
 
 logger = get_logger("UsbTopology")
 
-# Match physical USB device directories, excluding interface suffixes (:1.2).
-# The last device token identifies the endpoint. Its immediate parent groups
-# one gripper even when several gripper hubs share an upstream desktop hub.
-_USB_DEVICE_RE = re.compile(r"\d+-\d+(?:\.\d+)*")
+# sysfs path like ".../usb1/1-3/1-3.1/1-3.1:1.2/tty/ttyACM1" — the top hub token
+# ("1-3") groups every device physically behind one hub, and the full port token
+# ("1-3.1") orders devices within that hub.
+_HUB_RE = re.compile(r"/usb\d+/(\d+-\d+)/")
+_PORT_RE = re.compile(r"/(\d+-\d+(?:\.\d+)+)/")
 
 
 def sysfs_device_dir(dev_class: str, node: str) -> str:
@@ -50,15 +51,11 @@ def sysfs_device_dir(dev_class: str, node: str) -> str:
 
 
 def usb_hub_and_port(sysfs_dir: str) -> tuple[str | None, str | None]:
-    """Return the nearest parent hub and the endpoint's full USB port token."""
-    devices = [part for part in sysfs_dir.split("/") if _USB_DEVICE_RE.fullmatch(part)]
-    if not devices:
-        return None, None
-    port = devices[-1]
-    if "." not in port:
-        # A device on a root port has no intervening hub or sub-port.
-        return port, None
-    return port.rsplit(".", 1)[0], port
+    """Extract the USB hub token (e.g. '1-3') and full port token (e.g. '1-3.2')."""
+    padded = sysfs_dir + "/"
+    hub = _HUB_RE.search(padded)
+    port = _PORT_RE.search(padded)
+    return (hub.group(1) if hub else None, port.group(1) if port else None)
 
 
 def video_node(cam) -> str:

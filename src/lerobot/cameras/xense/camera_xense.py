@@ -35,8 +35,6 @@ logger = get_logger("XenseCam")
 _CTYPES_FIND_LIBRARY_UDEV_PATCHED = False
 _XENSE_SENSOR_CREATE_LOCK = RLock()
 _XENSE_CONFIG_CACHE_DIR = Path("~/.xensesdk/config").expanduser()
-_XENSE_CAMERA_REOPEN_TIMEOUT_S = 3.0
-_XENSE_CAMERA_REOPEN_POLL_S = 0.2
 
 
 def _patch_ctypes_find_library_for_udev() -> None:
@@ -165,8 +163,7 @@ class XenseTactileCamera(Camera):
         self.thread: Thread | None = None
         self.stop_event: Event | None = None
         self.frame_lock: Lock = Lock()
-        self.latest_data: np.ndarray | dict[str, np.ndarray] | None = None
-        self.latest_timestamp: float | None = None
+        self.latest_data: dict[str, np.ndarray] | None = None
         self.new_frame_event: Event = Event()
 
         # Import xensesdk here to avoid import errors if not installed
@@ -233,34 +230,7 @@ class XenseTactileCamera(Camera):
                 os_key = "win" if platform.system().lower().startswith("win") else "linux"
                 create_kwargs["overrides"] = {f"camera.{os_key}": dict(self.camera_properties)}
             with _XENSE_SENSOR_CREATE_LOCK:
-                try:
-                    self.sensor = self._Sensor.create(self.serial_number, **create_kwargs)
-                except RuntimeError as open_error:
-                    # First-time ISP flash reads can temporarily remove the UVC
-                    # node. The SDK saves calibration before trying to open the
-                    # old camera index, so wait for enumeration and then reopen
-                    # by serial using that cache, without another flash read.
-                    cache_file = _XENSE_CONFIG_CACHE_DIR / self.serial_number
-                    if not str(open_error).startswith("Cannot open camera") or not cache_file.is_file():
-                        raise
-                    logger.warn(f"{self}: camera open failed; waiting for USB enumeration before reopening from cache")
-                    cached_config_path = _XENSE_CONFIG_CACHE_DIR
-                    create_kwargs["config_path"] = cached_config_path
-                    deadline = time.monotonic() + _XENSE_CAMERA_REOPEN_TIMEOUT_S
-                    last_error = open_error
-                    while time.monotonic() < deadline:
-                        time.sleep(_XENSE_CAMERA_REOPEN_POLL_S)
-                        if self.serial_number not in self._Sensor.scanSerialNumber():
-                            continue
-                        try:
-                            self.sensor = self._Sensor.create(self.serial_number, **create_kwargs)
-                            break
-                        except RuntimeError as retry_error:
-                            if not str(retry_error).startswith("Cannot open camera"):
-                                raise
-                            last_error = retry_error
-                    else:
-                        raise last_error
+                self.sensor = self._Sensor.create(self.serial_number, **create_kwargs)
         except Exception as e:
             raise ConnectionError(
                 f"Failed to connect to {self}. Error: {e}. "
@@ -276,10 +246,7 @@ class XenseTactileCamera(Camera):
                 # Failures here are the point of warming up: the sensor is not
                 # streaming yet, and read() is what makes it start.
                 with contextlib.suppress(Exception):
-                    data = self.read()
-                    with self.frame_lock:
-                        self.latest_data = data
-                        self.latest_timestamp = time.monotonic()
+                    self.read()
                 time.sleep(0.1)
             self._start_read_thread()
 
@@ -506,7 +473,6 @@ class XenseTactileCamera(Camera):
 
                 with self.frame_lock:
                     self.latest_data = data
-                    self.latest_timestamp = time.monotonic()
                 self.new_frame_event.set()
 
             except DeviceNotConnectedError:
@@ -598,23 +564,6 @@ class XenseTactileCamera(Camera):
         # Do NOT call _format_read_result() again, as it would double-convert BGR<->RGB.
         return data
 
-    def read_latest(self, max_age_ms: int = 500) -> np.ndarray | dict[str, np.ndarray]:
-        """Return the latest formatted sample; wait only for the first sample."""
-        if not self.is_connected:
-            raise DeviceNotConnectedError(f"{self} is not connected.")
-        with self.frame_lock:
-            data, timestamp = self.latest_data, self.latest_timestamp
-        if data is None or timestamp is None:
-            self.async_read(timeout_ms=max_age_ms)
-            with self.frame_lock:
-                data, timestamp = self.latest_data, self.latest_timestamp
-        if data is None or timestamp is None:
-            raise RuntimeError(f"{self} has not captured any frames yet.")
-        age_ms = (time.monotonic() - timestamp) * 1000
-        if age_ms > max_age_ms:
-            raise TimeoutError(f"{self} latest frame is too old: {age_ms:.1f} ms (max allowed: {max_age_ms} ms).")
-        return data
-
     def disconnect(self):
         """
         Disconnects from the sensor and cleans up resources.
@@ -636,10 +585,5 @@ class XenseTactileCamera(Camera):
             except Exception as e:
                 logger.warn(f"Error releasing {self}: {e}")
             self.sensor = None
-
-        with self.frame_lock:
-            self.latest_data = None
-            self.latest_timestamp = None
-        self.new_frame_event.clear()
 
         logger.info(f"{self} disconnected.")

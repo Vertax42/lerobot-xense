@@ -38,7 +38,6 @@ from typing import Any
 import numpy as np
 
 from lerobot.teleoperators.pico4.config_pico4 import Pico4Config
-from lerobot.teleoperators.pico4.input_timing import InputTiming
 from lerobot.teleoperators.teleoperator import Teleoperator
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import (
@@ -145,7 +144,6 @@ class Pico4(Teleoperator):
         self._last_action_time: float | None = None  # Timestamp of last get_action call
         self._prev_target_pos: np.ndarray | None = None  # Previous frame target position
         self._prev_target_quat: np.ndarray | None = None  # Previous frame target quaternion
-        self._input_timing = InputTiming()
 
     @property
     def is_connected(self) -> bool:
@@ -273,7 +271,6 @@ class Pico4(Teleoperator):
             self._orientation_control_active = True
 
             self._is_connected = True
-            self._input_timing = InputTiming()
             self.logger.info(f"{self} connected successfully.")
         except RuntimeError as e:
             self._xrt = None
@@ -556,15 +553,6 @@ class Pico4(Teleoperator):
             self._last_y_button = bool(self._xrt.get_Y_button())
         else:
             raise RuntimeError("No controller configured")
-        if self.config.trace_input:
-            get_stamp = getattr(self._xrt, "get_time_stamp_ns", None)
-            stamp = int(get_stamp()) if get_stamp is not None else None
-            report = self._input_timing.observe(time.monotonic(), pose, stamp)
-            if report is not None:
-                self.logger.info(
-                    f"[PICO_INPUT] {InputTiming.format_report(report)} grip={controller_grip:.3f} "
-                    f"raw_pose={[round(float(v), 7) for v in pose]}"
-                )
         controller_pose_raw = np.array(pose, dtype=np.float32)  # [x, y, z, qx, qy, qz, qw] in Pico4 frame
         self._last_grip = controller_grip
 

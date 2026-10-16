@@ -8,13 +8,11 @@ from typing import Any
 import numpy as np
 import rebot_rt
 
-from lerobot.cameras import make_cameras_from_configs
 from lerobot.grippers import make_gripper_from_config
 from lerobot.grippers.camera_injection import (
     adopt_taccap_mcu_device,
     attach_wrist_fisheye_calibration,
     inject_serial_gripper_cameras,
-    inject_taccap_cameras,
 )
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.robot_utils import best_effort, get_logger, quaternion_to_euler
@@ -23,6 +21,8 @@ from lerobot.utils.rotation import Rotation
 from ..robot import Robot
 from .can_diagnostics import can_error_hint
 from .config_rebot_b601_rt import RebotB601RTConfig
+from .taccap_discovery import inject_taccap_cameras
+from .tactile_camera import make_rebot_cameras as make_cameras_from_configs
 
 RobotAction = dict[str, Any]
 RobotObservation = dict[str, Any]
