@@ -138,10 +138,12 @@ from lerobot.robots import (  # noqa: F401
     bi_arx5,
     bi_elite_cs66_rt,
     bi_flexiv_rizon4_rt,
+    bi_rebot_b601_rt,
     elite_cs66_rt,
     flexiv_rizon4_rt,
     make_robot_from_config,
     mock_robot,
+    rebot_b601_rt,
 )
 from lerobot.scripts.teleop_device_loops import (
     BiPico4Policy,

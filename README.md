@@ -84,14 +84,6 @@ reopen retries, plus local TacCap discovery for gripper hubs sharing an upstream
 USB hub. Other robots retain the original shared camera and USB grouping behavior.
 The B601 native SDK is loaded only when its driver is requested.
 
-For intermittent Pico input, inspect input alone without connecting any robot:
-
-```bash
-python -m lerobot.teleoperators.pico4.examples.pico4_input_timing --side=right --seconds=20
-```
-
-Move the selected controller continuously during this check. `[PICO_INPUT]` reports polling frequency, exact raw pose changes, and SDK stream timestamp changes every 0.5 seconds. `pose_repeat_ms` measures local time without a pose change; `sdk_stamp_repeat_ms` measures local time without a stream timestamp change (`-1` means unavailable). A stationary controller can legitimately repeat its pose, and a changing stream timestamp does not guarantee fresh tracking for that controller. `max_poll_gap_ms` separates slow application polling from repeated input. These fields do not measure network latency. Native `cartesian_dt_ms` measures submitted waypoint intervals, so 33 ms there can still mean the same stale Pico pose is being submitted at 30 Hz.
-
 > `xensesdk` is **not** a submodule — it is installed from PyPI (`xensesdk==2.1.2`,
 > the published cp312 manylinux wheel, which bundles the patched `libxense_c.so`
 > flash reader). The Elite Python SDK is built against the local
