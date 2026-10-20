@@ -253,7 +253,12 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         cfg = draccus.parse(
             cli.RecordConfig,
             config_path=ROOT / f"recipes/record/{recipe}/rs-taccap.yaml",
-            args=["--display_data=false", "--play_sounds=false", f"--dataset.num_episodes={episodes}"],
+            args=[
+                "--display_data=false",
+                "--play_sounds=false",
+                "--resume=false",
+                f"--dataset.num_episodes={episodes}",
+            ],
         )
         robot.config = cfg.robot
         self.assertEqual(cfg.robot.reset_on_exit, True)

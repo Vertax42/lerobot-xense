@@ -71,6 +71,7 @@ class RebotB601RT(Robot):
         self._reset_target: list[float] | None = None
         self._reset_started_at = 0.0
         self._reset_settled_since: float | None = None
+        self._last_reset_log = 0.0
         self._gripper = make_gripper_from_config(config.gripper)
         if config.gripper is not None and config.gripper.auto_discover_cameras:
             side = config.gripper.side
@@ -219,10 +220,12 @@ class RebotB601RT(Robot):
                 while self.rt_moving:
                     time.sleep(0.01)
         except BaseException as exc:
-            self._close_devices(native)
-            self._native = None
-            self._reset_target = None
-            self._reset_settled_since = None
+            if self._native is None:
+                self._close_devices(native)
+            else:
+                # Once startup motion has begun, Ctrl+C or a settling timeout
+                # must take the normal exit path before disabling the motors.
+                self.disconnect(reset=go_to_start and isinstance(exc, (KeyboardInterrupt, TimeoutError)))
             self._log_can_error_hint(str(exc))
             raise
         self.logger.info(
@@ -248,7 +251,8 @@ class RebotB601RT(Robot):
         self._reset_target = target
         self._reset_started_at = time.monotonic()
         self._reset_settled_since = None
-        self.logger.info(f"Returning to joint position={position_rad} at {speed} rad/s")
+        self._last_reset_log = self._reset_started_at
+        self.logger.info(f"Returning on {self.config.channel} to joint position={position_rad} at {speed} rad/s")
 
     def _validate_reset(self) -> None:
         state = self._native.get_state()
@@ -265,12 +269,29 @@ class RebotB601RT(Robot):
         if self._reset_target is None:
             return False
         now = time.monotonic()
-        if now - self._reset_started_at > self.config.reset_timeout_sec:
-            self._cancel_reset()
-            raise TimeoutError("B601 reset did not reach the configured pose before reset_timeout_sec")
         target = np.asarray(self._reset_target[:6])
-        command_arrived = np.max(np.abs(np.asarray(state.command[:6]) - target)) < 1e-6
-        feedback_arrived = np.max(np.abs(np.asarray(state.q[:6]) - target)) <= self.config.reset_tolerance_rad
+        command_error = target - np.asarray(state.command[:6])
+        feedback_error = target - np.asarray(state.q[:6])
+        command_arrived = np.max(np.abs(command_error)) < 1e-6
+        feedback_arrived = np.max(np.abs(feedback_error)) <= self.config.reset_tolerance_rad
+        elapsed = now - self._reset_started_at
+        timed_out = elapsed > self.config.reset_timeout_sec
+        if timed_out or now - self._last_reset_log >= 2.0:
+            waiting_for = [
+                f"J{i + 1}" for i, error in enumerate(feedback_error) if abs(error) > self.config.reset_tolerance_rad
+            ]
+            status = (
+                f"B601 reset on {self.config.channel}: elapsed={elapsed:.1f}s, mode={self.config.control_mode}, "
+                f"command_arrived={command_arrived}, "
+                f"measured={[round(float(q), 4) for q in state.q[:6]]}, "
+                f"error_rad={feedback_error.round(4).tolist()}, "
+                f"tolerance_rad={self.config.reset_tolerance_rad}, waiting_for={waiting_for}"
+            )
+            if timed_out:
+                self._cancel_reset()
+                raise TimeoutError(f"{status}; exceeded reset_timeout_sec={self.config.reset_timeout_sec}")
+            self.logger.info(status)
+            self._last_reset_log = now
         if command_arrived and feedback_arrived:
             if self._reset_settled_since is None:
                 self._reset_settled_since = now

@@ -86,8 +86,10 @@ class BiRebotB601RT(Robot):
                 self.reset_to_initial_position()
                 while self.rt_moving:
                     time.sleep(0.01)
-        except BaseException:
-            self.disconnect(reset=False)
+        except BaseException as exc:
+            # A user interrupt or settling timeout after both arms connected
+            # still requires the configured return to zero.
+            self.disconnect(reset=go_to_start and isinstance(exc, (KeyboardInterrupt, TimeoutError)))
             raise
 
     @check_if_not_connected

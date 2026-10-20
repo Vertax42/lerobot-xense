@@ -370,6 +370,30 @@ class TestRebotB601RT(unittest.TestCase):
         self.native.hold_position.assert_called_once()
         self.assertIsNone(robot._reset_target)
 
+    def test_reset_reports_measured_error_without_accepting_command_only(self):
+        robot = self.make_robot(control_mode="mit", channel="can1", reset_position_rad=INITIAL_POSE)
+        robot.connect(go_to_start=False)
+        robot.logger = Mock()
+        state = self.native.get_state.return_value
+        state.command = INITIAL_POSE + [-1.2]
+        state.q = [0.0, 0.8, 0.75, -0.55, 0.0, 0.0, -1.2]
+        with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+            robot.reset_to_initial_position()
+            robot.logger.info.reset_mock()
+            clock.return_value = 2.0
+            self.assertTrue(robot.rt_moving)
+            message = robot.logger.info.call_args.args[0]
+            self.assertIn("can1", message)
+            self.assertIn("command_arrived=True", message)
+            self.assertIn("error_rad=[0.0, 0.0, 0.05, 0.05, 0.0, 0.0]", message)
+            self.assertIn("waiting_for=['J3', 'J4']", message)
+            clock.return_value = 2.1
+            self.assertTrue(robot.rt_moving)
+            robot.logger.info.assert_called_once()
+            clock.return_value = 30.1
+            with self.assertRaisesRegex(TimeoutError, "waiting_for=.*J3.*J4.*reset_timeout_sec"):
+                _ = robot.rt_moving
+
     def test_reset_needs_a_configured_six_joint_pose(self):
         robot = self.make_robot()
         robot.connect()
@@ -841,6 +865,92 @@ class TestRebotB601RT(unittest.TestCase):
                 robot.disconnect(reset=False)
                 left.close.assert_called_once()
                 right.close.assert_called_once()
+
+    def test_startup_interrupt_and_timeout_return_to_zero_before_disabling(self):
+        for bimanual in (False, True):
+            for outcome in ("interrupt", "timeout", "second_interrupt", "fault"):
+                with self.subTest(bimanual=bimanual, outcome=outcome):
+                    natives = [fake_native() for _ in range(2 if bimanual else 1)]
+                    self.native_factory.side_effect = natives
+                    if bimanual:
+                        robot = BiRebotB601RT(
+                            BiRebotB601RTConfig(
+                                calibration_dir=self.calibration_dir,
+                                reset_on_exit=True,
+                                left_arm_config=RebotB601RTConfig(
+                                    channel="can1",
+                                    control_mode="mit",
+                                    reset_position_rad=INITIAL_POSE,
+                                    reset_timeout_sec=1.0,
+                                ),
+                                right_arm_config=RebotB601RTConfig(
+                                    channel="can0",
+                                    control_mode="mit",
+                                    reset_position_rad=INITIAL_POSE,
+                                    reset_timeout_sec=1.0,
+                                ),
+                            )
+                        )
+                    else:
+                        robot = self.make_robot(
+                            control_mode="mit",
+                            reset_on_exit=True,
+                            reset_position_rad=INITIAL_POSE,
+                            reset_timeout_sec=1.0,
+                        )
+                    # A stationary MIT offset keeps startup waiting, even after
+                    # the command has reached the requested initial pose.
+                    for native in natives:
+                        state = native.get_state.return_value
+                        state.command = INITIAL_POSE + [-1.2]
+                        state.q = [0.0, 0.8, 0.75, -0.55, 0.0, 0.0, -1.2]
+                    interrupted = False
+                    with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                        def advance(_, natives=natives, outcome=outcome):
+                            nonlocal interrupted
+                            clock.return_value += 0.05
+                            for native in natives:
+                                native.stop.assert_not_called()
+                                native.close.assert_not_called()
+                            returning_to_zero = natives[0].set_target_joints.call_args.args[0][:6] == [0.0] * 6
+                            if returning_to_zero:
+                                for native in natives:
+                                    native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.5)
+                                if outcome == "second_interrupt":
+                                    raise KeyboardInterrupt
+                                # Delay actual feedback after the zero command:
+                                # motors must stay enabled until both settle.
+                                for native in natives:
+                                    state = native.get_state.return_value
+                                    if state.command[:6] == [0.0] * 6:
+                                        state.q = [0.0] * 6 + [-1.2]
+                                    state.command = [0.0] * 6 + [-1.2]
+                            elif outcome == "fault":
+                                natives[-1].get_state.return_value.fault = True
+                                natives[-1].get_state.return_value.fault_reason = "motor fault"
+                            elif outcome != "timeout" and not interrupted:
+                                interrupted = True
+                                raise KeyboardInterrupt
+
+                        error = (
+                            TimeoutError
+                            if outcome == "timeout"
+                            else (RuntimeError if outcome == "fault" else KeyboardInterrupt)
+                        )
+                        with patch.object(driver.time, "sleep", side_effect=advance), self.assertRaises(error):
+                            robot.connect()
+                    self.assertFalse(robot.is_connected)
+                    for native in natives:
+                        native.close.assert_called_once()
+                        targets = [request.args[0][:6] for request in native.set_target_joints.call_args_list]
+                        self.assertIn(INITIAL_POSE, targets)
+                        if outcome == "fault":
+                            self.assertNotIn([0.0] * 6, targets)
+                        else:
+                            self.assertIn([0.0] * 6, targets)
+                            if outcome != "second_interrupt":
+                                self.assertEqual(native.get_state.return_value.q[:6], [0.0] * 6)
 
 
 if __name__ == "__main__":
