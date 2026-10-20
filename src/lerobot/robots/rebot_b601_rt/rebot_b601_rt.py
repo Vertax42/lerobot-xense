@@ -72,6 +72,7 @@ class RebotB601RT(Robot):
         self._reset_started_at = 0.0
         self._reset_settled_since: float | None = None
         self._last_reset_log = 0.0
+        self._reset_tolerance_rad = config.reset_tolerance_rad
         self._gripper = make_gripper_from_config(config.gripper)
         if config.gripper is not None and config.gripper.auto_discover_cameras:
             side = config.gripper.side
@@ -243,12 +244,13 @@ class RebotB601RT(Robot):
             raise ValueError("Set reset_position_rad to six joint angles before requesting a reset")
         self._reset_to_position(self.config.reset_position_rad)
 
-    def _reset_to_position(self, position_rad: list[float]) -> None:
+    def _reset_to_position(self, position_rad: list[float], *, tolerance_rad: float | None = None) -> None:
         self._validate_reset()
         target = [*position_rad, self._native.get_target_joints()[6]]
         speed = min(self.config.reset_joint_speed, max(self.config.max_joint_speeds or [self.config.max_joint_speed]))
         self._native.set_target_joints(target, max_joint_speed=speed)
         self._reset_target = target
+        self._reset_tolerance_rad = self.config.reset_tolerance_rad if tolerance_rad is None else tolerance_rad
         self._reset_started_at = time.monotonic()
         self._reset_settled_since = None
         self._last_reset_log = self._reset_started_at
@@ -273,19 +275,19 @@ class RebotB601RT(Robot):
         command_error = target - np.asarray(state.command[:6])
         feedback_error = target - np.asarray(state.q[:6])
         command_arrived = np.max(np.abs(command_error)) < 1e-6
-        feedback_arrived = np.max(np.abs(feedback_error)) <= self.config.reset_tolerance_rad
+        feedback_arrived = np.max(np.abs(feedback_error)) <= self._reset_tolerance_rad
         elapsed = now - self._reset_started_at
         timed_out = elapsed > self.config.reset_timeout_sec
         if timed_out or now - self._last_reset_log >= 2.0:
             waiting_for = [
-                f"J{i + 1}" for i, error in enumerate(feedback_error) if abs(error) > self.config.reset_tolerance_rad
+                f"J{i + 1}" for i, error in enumerate(feedback_error) if abs(error) > self._reset_tolerance_rad
             ]
             status = (
                 f"B601 reset on {self.config.channel}: elapsed={elapsed:.1f}s, mode={self.config.control_mode}, "
                 f"command_arrived={command_arrived}, "
                 f"measured={[round(float(q), 4) for q in state.q[:6]]}, "
                 f"error_rad={feedback_error.round(4).tolist()}, "
-                f"tolerance_rad={self.config.reset_tolerance_rad}, waiting_for={waiting_for}"
+                f"tolerance_rad={self._reset_tolerance_rad}, waiting_for={waiting_for}"
             )
             if timed_out:
                 self._cancel_reset()
@@ -466,7 +468,7 @@ class RebotB601RT(Robot):
         try:
             if reset and self.config.reset_on_exit and self.is_connected:
                 self.logger.info("B601 exit reset: returning to zero; press Ctrl+C again to abort")
-                self._reset_to_position([0.0] * 6)
+                self._reset_to_position([0.0] * 6, tolerance_rad=self.config.exit_reset_tolerance_rad)
                 while self.rt_moving:
                     time.sleep(0.01)
                 self.logger.info("B601 exit reset complete; disconnecting")

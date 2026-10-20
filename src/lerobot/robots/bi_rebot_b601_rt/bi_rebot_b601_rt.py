@@ -111,13 +111,21 @@ class BiRebotB601RT(Robot):
             raise ValueError("Both arms need reset_position_rad before using the reset button")
         self._reset_to_positions(self.left_arm.config.reset_position_rad, self.right_arm.config.reset_position_rad)
 
-    def _reset_to_positions(self, left_position: list[float], right_position: list[float]) -> None:
+    def _reset_to_positions(
+        self, left_position: list[float], right_position: list[float], *, exit_reset: bool = False
+    ) -> None:
         # Check both controllers before either arm starts moving.
         self.left_arm._validate_reset()
         self.right_arm._validate_reset()
-        self.left_arm._reset_to_position(left_position)
+        self.left_arm._reset_to_position(
+            left_position,
+            tolerance_rad=self.left_arm.config.exit_reset_tolerance_rad if exit_reset else None,
+        )
         try:
-            self.right_arm._reset_to_position(right_position)
+            self.right_arm._reset_to_position(
+                right_position,
+                tolerance_rad=self.right_arm.config.exit_reset_tolerance_rad if exit_reset else None,
+            )
         except BaseException:
             with best_effort(self.left_arm.logger, "cancelling the left arm reset"):
                 self.left_arm._cancel_reset()
@@ -146,7 +154,7 @@ class BiRebotB601RT(Robot):
         try:
             if reset and self.config.reset_on_exit and self.is_connected:
                 self.logger.info("B601 exit reset: returning both arms to zero; press Ctrl+C again to abort")
-                self._reset_to_positions([0.0] * 6, [0.0] * 6)
+                self._reset_to_positions([0.0] * 6, [0.0] * 6, exit_reset=True)
                 while self.rt_moving:
                     time.sleep(0.01)
                 self.logger.info("B601 exit reset complete; disconnecting both arms")

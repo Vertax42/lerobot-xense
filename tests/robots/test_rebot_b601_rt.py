@@ -394,6 +394,70 @@ class TestRebotB601RT(unittest.TestCase):
             with self.assertRaisesRegex(TimeoutError, "waiting_for=.*J3.*J4.*reset_timeout_sec"):
                 _ = robot.rt_moving
 
+    def test_startup_and_button_reset_accept_observed_mit_offsets_within_configured_tolerance(self):
+        measured = (
+            [0.0006, 0.8055, 0.7534, -0.5375, -0.0063, -0.0075],
+            [0.0036, 0.8067, 0.7522, -0.5367, -0.0006, -0.0021],
+        )
+        for bimanual in (False, True):
+            with self.subTest(bimanual=bimanual):
+                natives = [fake_native() for _ in range(2 if bimanual else 1)]
+                self.native_factory.side_effect = natives
+                configs = [
+                    RebotB601RTConfig(
+                        motor_family="rs",
+                        control_mode="mit",
+                        channel=f"can{i}",
+                        calibration_dir=self.calibration_dir,
+                        reset_position_rad=INITIAL_POSE,
+                        reset_tolerance_rad=0.06,
+                    )
+                    for i in range(len(natives))
+                ]
+                robot = (
+                    BiRebotB601RT(
+                        BiRebotB601RTConfig(
+                            calibration_dir=self.calibration_dir,
+                            left_arm_config=configs[0],
+                            right_arm_config=configs[1],
+                        )
+                    )
+                    if bimanual
+                    else RebotB601RT(configs[0])
+                )
+                for native, feedback in zip(natives, measured, strict=False):
+                    native.get_state.return_value.command = INITIAL_POSE + [-1.2]
+                    native.get_state.return_value.q = feedback + [-1.2]
+                with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                    def advance(_):
+                        clock.return_value += 0.02
+                        self.assertLess(clock.return_value, 1.0, "Startup did not accept the measured pose")
+
+                    try:
+                        with patch.object(driver.time, "sleep", side_effect=advance):
+                            robot.connect()
+                        self.assertTrue(robot.is_connected)
+                        self.assertGreaterEqual(clock.return_value, 0.1)
+                        # A reset still waits if any joint exceeds 0.06 rad.
+                        robot.reset_to_initial_position()
+                        natives[-1].get_state.return_value.q[2] = 0.73
+                        self.assertTrue(robot.rt_moving)
+                        clock.return_value += 0.2
+                        self.assertTrue(robot.rt_moving)
+                        natives[-1].get_state.return_value.q[2] = 0.7522
+                        self.assertTrue(robot.rt_moving)
+                        clock.return_value += 0.11
+                        self.assertFalse(robot.rt_moving)
+                    finally:
+                        robot.disconnect(reset=False)
+
+    def test_reset_tolerances_must_be_positive_and_finite(self):
+        for field in ("reset_tolerance_rad", "exit_reset_tolerance_rad"):
+            for value in (0, -0.01, float("nan"), float("inf")):
+                with self.subTest(field=field, value=value), self.assertRaisesRegex(ValueError, "reset tolerance"):
+                    RebotB601RTConfig(**{field: value})
+
     def test_reset_needs_a_configured_six_joint_pose(self):
         robot = self.make_robot()
         robot.connect()
@@ -437,7 +501,9 @@ class TestRebotB601RT(unittest.TestCase):
             with self.subTest(mode=mode):
                 native = fake_native()
                 self.native_factory.return_value = native
-                robot = self.make_robot(control_mode=mode, reset_on_exit=True, reset_position_rad=INITIAL_POSE)
+                robot = self.make_robot(
+                    control_mode=mode, reset_on_exit=True, reset_position_rad=INITIAL_POSE, reset_tolerance_rad=0.06
+                )
                 robot.connect(go_to_start=False)
                 camera = SimpleNamespace(is_connected=True, disconnect=Mock(), read_latest=Mock())
                 robot.cameras["wrist"] = camera
@@ -450,12 +516,13 @@ class TestRebotB601RT(unittest.TestCase):
                         clock.return_value += 0.05
                         if clock.return_value >= 0.15:
                             state.command = [0.0] * 6
-                        if clock.return_value >= 0.25:
-                            state.q = [0.0] * 6
+                            state.q = [0.05] * 6  # Within startup tolerance, outside exit tolerance.
+                        if clock.return_value >= 0.4:
+                            state.q = [0.02] * 6
 
                     with patch.object(driver.time, "sleep", side_effect=advance):
                         robot.disconnect()
-                    self.assertGreaterEqual(clock.return_value, 0.35)
+                    self.assertGreaterEqual(clock.return_value, 0.5)
                 self.assertGreater(native.set_target_joints.call_count, 1)
                 for request in native.set_target_joints.call_args_list:
                     self.assertEqual(request, call([0.0] * 6 + [-1.2], max_joint_speed=0.5))
@@ -614,10 +681,17 @@ class TestRebotB601RT(unittest.TestCase):
                         calibration_dir=self.calibration_dir,
                         reset_on_exit=True,
                         left_arm_config=RebotB601RTConfig(
-                            channel="can1", reset_on_exit=True, reset_position_rad=INITIAL_POSE
+                            channel="can1",
+                            reset_on_exit=True,
+                            reset_position_rad=INITIAL_POSE,
+                            reset_tolerance_rad=0.06,
+                            exit_reset_tolerance_rad=0.02,
                         ),
                         right_arm_config=RebotB601RTConfig(
-                            channel="can0", reset_on_exit=True, reset_position_rad=INITIAL_POSE
+                            channel="can0",
+                            reset_on_exit=True,
+                            reset_position_rad=INITIAL_POSE,
+                            reset_tolerance_rad=0.06,
                         ),
                     )
                 )
@@ -625,7 +699,8 @@ class TestRebotB601RT(unittest.TestCase):
                 if outcome == "fault":
                     right.get_state.return_value.fault = True
                     right.get_state.return_value.fault_reason = "right motor fault"
-                right.get_state.return_value.q = [0.4] * 6
+                left.get_state.return_value.q = [0.025] * 6
+                right.get_state.return_value.q = [0.05] * 6
                 order = Mock()
                 for side, native in (("left", left), ("right", right)):
                     order.attach_mock(native.stop, f"{side}_stop")
@@ -642,14 +717,15 @@ class TestRebotB601RT(unittest.TestCase):
 
                     def advance(_, left=left, right=right, outcome=outcome):
                         # Both goals are submitted before waiting for either arm.
-                        left_reset.assert_called_once_with([0.0] * 6)
-                        right_reset.assert_called_once_with([0.0] * 6)
+                        left_reset.assert_called_once_with([0.0] * 6, tolerance_rad=0.02)
+                        right_reset.assert_called_once_with([0.0] * 6, tolerance_rad=0.03)
                         left.close.assert_not_called()
                         right.close.assert_not_called()
                         if outcome == "interrupt":
                             raise KeyboardInterrupt
                         clock.return_value += 0.05
                         if clock.return_value >= 0.2:
+                            left.get_state.return_value.q = [0.0] * 6
                             right.get_state.return_value.q = [0.0] * 6
 
                     with patch.object(driver.time, "sleep", side_effect=advance):

@@ -20,6 +20,8 @@ robot:
   # Space/Pico A during recording and the configured exit return use this pose and speed.
   reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return; capped by each joint's limit
   reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
+  reset_tolerance_rad: 0.06 # Startup/A-button tolerance; allows the observed MIT steady-state offset
+  exit_reset_tolerance_rad: 0.03 # Stricter feedback tolerance before disabling at zero
   reset_on_exit: true # The driver returns all six joints to zero before disconnecting
 
   # TacCap uses a separate gripper driver and discovers cameras on its USB hub.

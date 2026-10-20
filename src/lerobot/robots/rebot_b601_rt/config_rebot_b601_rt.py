@@ -38,7 +38,8 @@ class RebotB601RTConfig(RobotConfig):
     reset_on_exit: bool = False  # disconnect: return all six arm joints to zero unless reset=False
     reset_joint_speed: float = 0.5  # rad/s, additionally capped by each joint's configured limit
     reset_timeout_sec: float = 30.0
-    reset_tolerance_rad: float = 0.03
+    reset_tolerance_rad: float = 0.03  # startup and A-button measured joint tolerance
+    exit_reset_tolerance_rad: float = 0.03  # measured joint tolerance before disabling at zero
     trace_joint_tracking: bool = False
     trace_joint_tracking_hz: float = 2.0
     use_joint_observation: bool = False
@@ -90,6 +91,7 @@ class RebotB601RTConfig(RobotConfig):
             for v in (
                 self.reset_timeout_sec,
                 self.reset_tolerance_rad,
+                self.exit_reset_tolerance_rad,
                 self.trace_joint_tracking_hz,
             )
         ):

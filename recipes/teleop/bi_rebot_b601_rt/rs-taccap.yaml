@@ -18,6 +18,8 @@ robot:
     coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
     reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
     reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
+    reset_tolerance_rad: 0.06 # Startup/A-button tolerance; also accommodates MIT when selected
+    exit_reset_tolerance_rad: 0.03 # Stricter feedback tolerance before disabling at zero
     gripper:
       type: taccap_follower
       side: left
@@ -35,6 +37,8 @@ robot:
     coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
     reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
     reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
+    reset_tolerance_rad: 0.06
+    exit_reset_tolerance_rad: 0.03
     gripper:
       type: taccap_follower
       side: right
