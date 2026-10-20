@@ -204,6 +204,18 @@ class RebotB601RT(Robot):
         )
         if self.config.interpolate_cartesian_targets and not hasattr(native, "queue_target_pose"):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support native Cartesian interpolation")
+        if self.config.gravity_compensation_scale > 0:
+            if not hasattr(native, "configure_gravity_compensation"):
+                raise RuntimeError(
+                    "Rebuild/install libpyrebot with gravity compensation support. "
+                    f"Loaded rebot_rt from {rebot_rt.__file__}; check PYTHONPATH for an older checkout."
+                )
+            native.configure_gravity_compensation(
+                scale=self.config.gravity_compensation_scale,
+                torque_limits_nm=self.config.gravity_torque_limits_nm,
+                slew_rate_nm_s=self.config.gravity_slew_rate_nm_s,
+                gravity=self.config.gravity_vector,
+            )
         try:
             native.connect()
             native.start()
@@ -235,6 +247,7 @@ class RebotB601RT(Robot):
             f"mit_velocity_feedforward={self.config.mit_velocity_feedforward}"
             f", max_joint_speeds={self.config.max_joint_speeds or [self.config.max_joint_speed] * 6} rad/s"
             f", coordinate_cartesian_speed={self.config.coordinate_cartesian_speed}"
+            f", gravity_compensation_scale={self.config.gravity_compensation_scale}"
         )
 
     @check_if_not_connected
@@ -366,6 +379,12 @@ class RebotB601RT(Robot):
                 f"Joint tracking: goal={fmt(state.target)} command={fmt(state.command)} "
                 f"measured={fmt(state.q)} error={fmt(tracking_error)} velocity={fmt(state.command_velocity)}"
                 + (f" mit_dq={fmt(state.mit_command_velocity)}" if self.config.control_mode == "mit" else "")
+                + (
+                    f" gravity_nm={fmt(state.gravity_torque)} mit_tau_ff_nm={fmt(state.mit_command_torque)}"
+                    f" gravity_limited={list(state.gravity_torque_limited[:6])}"
+                    if self.config.gravity_compensation_scale > 0
+                    else ""
+                )
                 + interpolation
                 + f" speed_limits={fmt(limits)} speed_utilization={fmt(utilization)}"
                 + f" near_speed_limit={near_speed_limit}"

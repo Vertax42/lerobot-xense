@@ -73,6 +73,53 @@ class TestRebotB601RT(unittest.TestCase):
         self.addCleanup(lambda: robot.disconnect() if robot.is_connected else None)
         return robot
 
+    def test_gravity_configuration_is_validated_before_connect(self):
+        for kwargs in (
+            {"gravity_compensation_scale": -0.1},
+            {"gravity_compensation_scale": float("nan")},
+            {"gravity_compensation_scale": 1.1},
+            {"control_mode": "pos_vel", "gravity_compensation_scale": 0.5, "gravity_torque_limits_nm": [1] * 6},
+            {"control_mode": "mit", "gravity_compensation_scale": 0.5},
+            {"gravity_torque_limits_nm": [1] * 5},
+            {"gravity_torque_limits_nm": [-1] * 6},
+            {"gravity_torque_limits_nm": [float("nan")] * 6},
+            {"gravity_slew_rate_nm_s": 0},
+            {"gravity_vector": [0, 0]},
+            {"gravity_vector": [0, 0, float("nan")]},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                self.make_robot(**kwargs)
+        self.native.connect.assert_not_called()
+
+    def test_gravity_is_opt_in_and_configured_before_native_connect(self):
+        self.native.configure_gravity_compensation = Mock()
+        robot = self.make_robot()
+        robot.connect()
+        self.native.configure_gravity_compensation.assert_not_called()
+        robot.disconnect()
+        robot = self.make_robot(
+            control_mode="mit", gravity_compensation_scale=0.5, gravity_torque_limits_nm=[1, 8, 8, 3, 1, 1]
+        )
+        parent = Mock()
+        parent.attach_mock(self.native.configure_gravity_compensation, "configure")
+        parent.attach_mock(self.native.connect, "connect")
+        robot.connect()
+        self.assertEqual(
+            parent.mock_calls[:2],
+            [
+                call.configure(
+                    scale=0.5, torque_limits_nm=[1, 8, 8, 3, 1, 1], slew_rate_nm_s=5.0, gravity=[0.0, 0.0, -9.81]
+                ),
+                call.connect(),
+            ],
+        )
+
+    def test_enabled_gravity_requires_updated_native_before_hardware_access(self):
+        robot = self.make_robot(control_mode="mit", gravity_compensation_scale=0.5, gravity_torque_limits_nm=[1] * 6)
+        with self.assertRaisesRegex(RuntimeError, "gravity compensation"):
+            robot.connect()
+        self.native.connect.assert_not_called()
+
     def test_native_cartesian_queue_in_both_control_modes(self):
         self.assertTrue(RebotB601RTConfig().interpolate_cartesian_targets)
         for mode in ("mit", "pos_vel"):

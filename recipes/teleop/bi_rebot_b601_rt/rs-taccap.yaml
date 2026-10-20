@@ -8,9 +8,13 @@ robot:
   id: bi_rebot_rs_taccap
   left_arm_config:
     motor_family: rs
-    control_mode: pos_vel
+    control_mode: mit
     interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
+    # Upright base + stock TacCap: its mass is already included in the selected URDF.
+    gravity_compensation_scale: 1.0 # Start at half model gravity; validate tracking before increasing to 1.0
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # J1..J6 feedforward caps, not total PD+FF torque limits
+    gravity_slew_rate_nm_s: 5.0 # Ramp feedforward from zero and limit changes during motion
     channel: can1
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
@@ -27,9 +31,12 @@ robot:
       enable_tactile: true
   right_arm_config:
     motor_family: rs
-    control_mode: pos_vel
+    control_mode: mit
     interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
+    gravity_compensation_scale: 1.0
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1]
+    gravity_slew_rate_nm_s: 5.0
     channel: can0
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.

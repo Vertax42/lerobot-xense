@@ -60,7 +60,8 @@ class TestRebotTeleoperate(unittest.TestCase):
         self.assertTrue(config.robot.reset_on_exit)
         for arm in (config.robot.left_arm_config, config.robot.right_arm_config):
             self.assertEqual(arm.motor_family, "rs")
-            self.assertEqual(arm.control_mode, "pos_vel")
+            self.assertEqual(arm.control_mode, "mit")
+            self.assertEqual(arm.gravity_compensation_scale, 0.5)
             self.assertTrue(arm.interpolate_cartesian_targets)
             self.assertFalse(arm.mit_velocity_feedforward)
             self.assertEqual(arm.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
