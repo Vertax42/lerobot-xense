@@ -53,6 +53,10 @@ class EliteCS66RTConfig(RobotConfig):
     observe_tcp: bool = True
     observe_joints: bool = False
 
+    # Elite Pico4 adapter: each grip press starts from the measured TCP, so
+    # re-gripping after a collision hold discards the target behind the obstacle.
+    grip_anchor_to_robot: bool = True
+
     # Elite external control script. When unset, connect() resolves
     # libpyelite/external_control.script from the installed SDK package.
     script_file_path: str | Path | None = None

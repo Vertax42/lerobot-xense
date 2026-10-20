@@ -762,7 +762,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         cfg.teleop.ori_sensitivity = 0.5
 
     robot = make_robot_from_config(cfg.robot)
-    teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
+    if cfg.teleop is not None and (cfg.robot.type, cfg.teleop.type) in (
+        ("elite_cs66_rt", "pico4"),
+        ("bi_elite_cs66_rt", "bi_pico4"),
+    ):
+        from lerobot.robots.bi_elite_cs66_rt.pico4 import make_elite_pico4_teleoperator
+
+        teleop = make_elite_pico4_teleoperator(cfg.teleop, robot)
+    else:
+        teleop = make_teleoperator_from_config(cfg.teleop) if cfg.teleop is not None else None
 
     teleop_type = cfg.teleop.type if cfg.teleop is not None else None
     use_raw_passthrough = _use_raw_passthrough_record(cfg.robot.type, teleop_type)
@@ -856,15 +864,12 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             ):
                 left_pose, right_pose = robot.get_current_tcp_pose_quat()
                 teleop.connect(left_tcp_pose_quat=left_pose, right_tcp_pose_quat=right_pose)
-                if cfg.robot.type == "bi_elite_cs66_rt":
-                    teleop.set_grip_anchor_source(robot.get_current_tcp_pose_quat)
                 logger.info("BiPico4 initialized with both robot EEF poses.")
             elif cfg.robot.type == "elite_cs66_rt" and teleop_type == "spacemouse":
                 teleop.connect(current_tcp_pose_euler=robot.get_current_tcp_pose_euler())
                 logger.info("Elite CS66 + SpaceMouse: teleop seeded from current TCP pose")
             elif cfg.robot.type == "elite_cs66_rt" and teleop_type == "pico4":
                 teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
-                teleop.set_grip_anchor_source(robot.get_current_tcp_pose_quat)
                 logger.info("Elite CS66 + Pico4: teleop seeded from current TCP pose")
             else:
                 teleop.connect()
