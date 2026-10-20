@@ -11,7 +11,7 @@ robot:
     control_mode: pos_vel
     interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
-    channel: can0
+    channel: can1
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
@@ -28,7 +28,7 @@ robot:
     control_mode: pos_vel
     interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
     mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
-    channel: can1
+    channel: can0
     max_joint_speed: 1.5 # rad/s per joint during teleoperation
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]

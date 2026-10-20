@@ -53,11 +53,11 @@ dataset:
   repo_id: Xense/bi_rebot_b601_rt_test
   single_task: "Pick up the cube and place it in the box" # Task description stored with the data
   fps: 30 # Recording/sample rate, independent of the native 100 Hz interpolation
-  episode_time_s: 60 # Seconds per episode; right arrow ends the phase early
-  reset_time_s: 15 # Seconds to manually prepare the scene between episodes, not arm reset duration
+  episode_time_s: 600 # Seconds per episode; right arrow ends the phase early
+  reset_time_s: 120 # Seconds to manually prepare the scene between episodes, not arm reset duration
   num_episodes: 10 # Episodes to record in this run; additional episodes when resuming
   video: true # Store camera images as videos
   push_to_hub: false # Save locally; set true to upload to Hugging Face Hub
 
-display_data: true # Show camera images and observation/action data in Rerun
+display_data: false # Show camera images and observation/action data in Rerun
 resume: false # true appends to the existing repo_id; hardware and dataset features must be compatible
