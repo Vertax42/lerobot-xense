@@ -20,6 +20,7 @@ from lerobot.robots.rebot_b601_rt import RebotB601RT, RebotB601RTConfig, rebot_b
 
 ASSETS = Path(rebot_rt.__file__).parent / "assets"
 TACCAP_URDF = "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
+INITIAL_POSE = [0.0, 0.8, 0.8, -0.5, 0.0, 0.0]
 
 
 def fake_gripper():
@@ -277,11 +278,11 @@ class TestRebotB601RT(unittest.TestCase):
         self.native.get_target_joints.assert_not_called()
 
     def test_reset_returns_to_configured_joints_and_waits_for_measured_settling(self):
-        robot = self.make_robot(reset_position_rad=[0.0] * 6, max_joint_speed=1.5, reset_joint_speed=0.5)
-        robot.connect()
+        robot = self.make_robot(reset_position_rad=INITIAL_POSE, max_joint_speed=1.5, reset_joint_speed=0.5)
+        robot.connect(go_to_start=False)
         with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
             robot.reset_to_initial_position()
-            self.native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.5)
+            self.native.set_target_joints.assert_called_with(INITIAL_POSE + [-1.2], max_joint_speed=0.5)
             self.native.get_state.return_value = SimpleNamespace(
                 fault=False,
                 q=[0.2] * 6 + [-1.2],
@@ -291,9 +292,9 @@ class TestRebotB601RT(unittest.TestCase):
             self.assertTrue(robot.rt_moving)
             with self.assertRaisesRegex(RuntimeError, "reset is in progress"):
                 robot.send_action(driver._action_from_pose(np.eye(4)))
-            self.native.get_state.return_value.command = [0.0] * 6 + [-1.2]
+            self.native.get_state.return_value.command = INITIAL_POSE + [-1.2]
             self.assertTrue(robot.rt_moving)  # Command arrived; measured arm has not.
-            self.native.get_state.return_value.q = [0.001] * 6 + [-1.2]
+            self.native.get_state.return_value.q = [q + 0.001 for q in INITIAL_POSE] + [-1.2]
             clock.return_value = 0.3
             self.assertTrue(robot.rt_moving)
             clock.return_value = 0.41
@@ -306,7 +307,7 @@ class TestRebotB601RT(unittest.TestCase):
 
     def test_reset_speed_never_exceeds_the_arm_limit(self):
         robot = self.make_robot(reset_position_rad=[0.0] * 6, max_joint_speed=0.25)
-        robot.connect()
+        robot.connect(go_to_start=False)
         robot.reset_to_initial_position()
         self.native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.25)
         self.assertTrue(robot.rt_moving)
@@ -338,7 +339,7 @@ class TestRebotB601RT(unittest.TestCase):
 
     def test_reset_caps_using_per_joint_limits_instead_of_unused_scalar(self):
         robot = self.make_robot(reset_position_rad=[0.0] * 6, max_joint_speed=1.5, max_joint_speeds=[0.25] * 6)
-        robot.connect()
+        robot.connect(go_to_start=False)
         robot.reset_to_initial_position()
         self.native.set_target_joints.assert_called_with([0.0] * 6 + [-1.2], max_joint_speed=0.25)
         self.assertTrue(robot.rt_moving)
@@ -360,7 +361,7 @@ class TestRebotB601RT(unittest.TestCase):
 
     def test_reset_timeout_holds_current_command(self):
         robot = self.make_robot(reset_position_rad=[0.0] * 6, reset_timeout_sec=1.0)
-        robot.connect()
+        robot.connect(go_to_start=False)
         with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
             robot.reset_to_initial_position()
             clock.return_value = 1.1
@@ -379,12 +380,11 @@ class TestRebotB601RT(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "six finite"):
                 RebotB601RTConfig(reset_position_rad=angles)
 
-    def test_exit_reset_config_requires_explicit_poses(self):
+    def test_exit_reset_is_independent_of_the_initial_pose(self):
         self.assertFalse(RebotB601RTConfig().reset_on_exit)
-        with self.assertRaisesRegex(ValueError, "reset_on_exit"):
-            RebotB601RTConfig(reset_on_exit=True)
+        self.assertIsNone(RebotB601RTConfig(reset_on_exit=True).reset_position_rad)
         for missing_side in ("left", "right"):
-            with self.subTest(side=missing_side), self.assertRaisesRegex(ValueError, "both arms"):
+            with self.subTest(side=missing_side):
                 BiRebotB601RTConfig(
                     reset_on_exit=True,
                     left_arm_config=RebotB601RTConfig(
@@ -397,7 +397,7 @@ class TestRebotB601RT(unittest.TestCase):
 
     def test_reset_checks_native_fault_before_sending_goal(self):
         robot = self.make_robot(reset_position_rad=[0.0] * 6)
-        robot.connect()
+        robot.connect(go_to_start=False)
         self.native.get_state.return_value.fault = True
         self.native.get_state.return_value.fault_reason = "motor fault"
         with self.assertRaisesRegex(RuntimeError, "motor fault"):
@@ -413,8 +413,8 @@ class TestRebotB601RT(unittest.TestCase):
             with self.subTest(mode=mode):
                 native = fake_native()
                 self.native_factory.return_value = native
-                robot = self.make_robot(control_mode=mode, reset_on_exit=True, reset_position_rad=[0.0] * 6)
-                robot.connect()
+                robot = self.make_robot(control_mode=mode, reset_on_exit=True, reset_position_rad=INITIAL_POSE)
+                robot.connect(go_to_start=False)
                 camera = SimpleNamespace(is_connected=True, disconnect=Mock(), read_latest=Mock())
                 robot.cameras["wrist"] = camera
                 state = native.get_state.return_value
@@ -448,7 +448,7 @@ class TestRebotB601RT(unittest.TestCase):
                 native = fake_native()
                 self.native_factory.return_value = native
                 robot = self.make_robot(reset_on_exit=enabled, reset_position_rad=[0.0] * 6)
-                robot.connect()
+                robot.connect(go_to_start=False)
                 native.get_state.return_value.fault = fault
                 native.get_state.return_value.fault_reason = "motor fault"
                 robot.disconnect(reset=reset)
@@ -461,7 +461,7 @@ class TestRebotB601RT(unittest.TestCase):
                 native = fake_native()
                 self.native_factory.return_value = native
                 robot = self.make_robot(reset_on_exit=True, reset_position_rad=[0.0] * 6, reset_timeout_sec=0.1)
-                robot.connect()
+                robot.connect(go_to_start=False)
                 robot.logger = Mock()
                 camera = SimpleNamespace(is_connected=True, disconnect=Mock())
                 robot.cameras["wrist"] = camera
@@ -590,14 +590,14 @@ class TestRebotB601RT(unittest.TestCase):
                         calibration_dir=self.calibration_dir,
                         reset_on_exit=True,
                         left_arm_config=RebotB601RTConfig(
-                            channel="can1", reset_on_exit=True, reset_position_rad=[0] * 6
+                            channel="can1", reset_on_exit=True, reset_position_rad=INITIAL_POSE
                         ),
                         right_arm_config=RebotB601RTConfig(
-                            channel="can0", reset_on_exit=True, reset_position_rad=[0] * 6
+                            channel="can0", reset_on_exit=True, reset_position_rad=INITIAL_POSE
                         ),
                     )
                 )
-                robot.connect()
+                robot.connect(go_to_start=False)
                 if outcome == "fault":
                     right.get_state.return_value.fault = True
                     right.get_state.return_value.fault_reason = "right motor fault"
@@ -609,17 +609,17 @@ class TestRebotB601RT(unittest.TestCase):
                 with (
                     patch.object(driver.time, "monotonic", return_value=0.0) as clock,
                     patch.object(
-                        robot.left_arm, "reset_to_initial_position", wraps=robot.left_arm.reset_to_initial_position
+                        robot.left_arm, "_reset_to_position", wraps=robot.left_arm._reset_to_position
                     ) as left_reset,
                     patch.object(
-                        robot.right_arm, "reset_to_initial_position", wraps=robot.right_arm.reset_to_initial_position
+                        robot.right_arm, "_reset_to_position", wraps=robot.right_arm._reset_to_position
                     ) as right_reset,
                 ):
 
                     def advance(_, left=left, right=right, outcome=outcome):
                         # Both goals are submitted before waiting for either arm.
-                        left_reset.assert_called_once()
-                        right_reset.assert_called_once()
+                        left_reset.assert_called_once_with([0.0] * 6)
+                        right_reset.assert_called_once_with([0.0] * 6)
                         left.close.assert_not_called()
                         right.close.assert_not_called()
                         if outcome == "interrupt":
@@ -711,7 +711,7 @@ class TestRebotB601RT(unittest.TestCase):
         )
         robot = BiRebotB601RT(config)
         try:
-            robot.connect()
+            robot.connect(go_to_start=False)
             with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
                 robot.reset_to_initial_position()
                 self.assertTrue(robot.rt_moving)
@@ -738,7 +738,7 @@ class TestRebotB601RT(unittest.TestCase):
                 right_arm_config=RebotB601RTConfig(channel="can1", reset_position_rad=[0] * 6),
             )
         )
-        robot.connect()
+        robot.connect(go_to_start=False)
         try:
             right.get_state.return_value.fault = True
             right.get_state.return_value.fault_reason = "right arm fault"
@@ -753,6 +753,94 @@ class TestRebotB601RT(unittest.TestCase):
         self.assertEqual(
             shutdown.mock_calls, [call.left_stop(), call.right_stop(), call.right_close(), call.left_close()]
         )
+
+    def test_startup_waits_for_the_initial_pose_in_both_control_modes(self):
+        for mode in ("mit", "pos_vel"):
+            for go_to_start in (True, False):
+                with self.subTest(mode=mode, go_to_start=go_to_start):
+                    native = fake_native()
+                    self.native_factory.return_value = native
+                    robot = self.make_robot(control_mode=mode, reset_position_rad=INITIAL_POSE)
+                    state = native.get_state.return_value
+                    with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                        def advance(_, state=state):
+                            clock.return_value += 0.05
+                            state.command = INITIAL_POSE + [-1.2]
+                            if clock.return_value >= 0.15:
+                                state.q = INITIAL_POSE + [-1.2]
+
+                        with patch.object(driver.time, "sleep", side_effect=advance):
+                            if go_to_start:
+                                robot.connect()  # Startup movement is the default.
+                            else:
+                                robot.connect(go_to_start=False)
+                        self.assertFalse(robot.rt_moving)
+                        if go_to_start:
+                            self.assertGreaterEqual(clock.return_value, 0.25)
+                            native.set_target_joints.assert_called_with(INITIAL_POSE + [-1.2], max_joint_speed=0.5)
+                        else:
+                            native.set_target_joints.assert_not_called()
+                    robot.disconnect()
+
+    def test_bimanual_startup_moves_together_and_cleans_up_on_failure(self):
+        for outcome in ("complete", "interrupt", "timeout", "fault", "skip"):
+            with self.subTest(outcome=outcome):
+                left, right = fake_native(), fake_native()
+                self.native_factory.side_effect = [left, right]
+                robot = BiRebotB601RT(
+                    BiRebotB601RTConfig(
+                        calibration_dir=self.calibration_dir,
+                        left_arm_config=RebotB601RTConfig(
+                            channel="can1", reset_position_rad=INITIAL_POSE, reset_timeout_sec=1.0
+                        ),
+                        right_arm_config=RebotB601RTConfig(
+                            channel="can0", reset_position_rad=INITIAL_POSE, reset_timeout_sec=1.0
+                        ),
+                    )
+                )
+
+                def check_connected(*args, left=left, right=right, **kwargs):
+                    self.assertTrue(left.connected)
+                    self.assertTrue(right.connected)
+
+                left.set_target_joints.side_effect = check_connected
+                with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                    def advance(_, left=left, right=right, outcome=outcome):
+                        for native in (left, right):
+                            native.set_target_joints.assert_called_with(INITIAL_POSE + [-1.2], max_joint_speed=0.5)
+                            native.close.assert_not_called()
+                        if outcome == "interrupt":
+                            raise KeyboardInterrupt
+                        clock.return_value += 0.05
+                        if outcome == "fault":
+                            right.get_state.return_value.fault = True
+                            right.get_state.return_value.fault_reason = "right motor fault"
+                        elif outcome != "timeout":
+                            left.get_state.return_value.q = left.get_state.return_value.command = INITIAL_POSE
+                            if clock.return_value >= 0.25:
+                                right.get_state.return_value.q = right.get_state.return_value.command = INITIAL_POSE
+
+                    with patch.object(driver.time, "sleep", side_effect=advance):
+                        if outcome in ("complete", "skip"):
+                            robot.connect(go_to_start=outcome != "skip")
+                            self.assertFalse(robot.rt_moving)
+                            if outcome == "complete":
+                                self.assertGreaterEqual(clock.return_value, 0.35)
+                            else:
+                                left.set_target_joints.assert_not_called()
+                                right.set_target_joints.assert_not_called()
+                        else:
+                            error = {"interrupt": KeyboardInterrupt, "timeout": TimeoutError, "fault": RuntimeError}
+                            with self.assertRaises(error[outcome]):
+                                robot.connect()
+                            self.assertFalse(robot.is_connected)
+                            self.assertIsNone(robot.left_arm._reset_target)
+                            self.assertIsNone(robot.right_arm._reset_target)
+                robot.disconnect(reset=False)
+                left.close.assert_called_once()
+                right.close.assert_called_once()
 
 
 if __name__ == "__main__":

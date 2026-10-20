@@ -945,7 +945,7 @@ def teleoperate(cfg: TeleoperateConfig):
                 teleop.pre_init()
             robot = make_robot_from_config(cfg.robot)
             try:
-                robot.connect()
+                robot.connect(go_to_start=not cfg.dryrun)
                 if bimanual:
                     left_pose, right_pose = robot.get_current_tcp_pose_quat()
                     teleop.connect(left_tcp_pose_quat=left_pose, right_tcp_pose_quat=right_pose)

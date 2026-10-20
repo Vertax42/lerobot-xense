@@ -261,6 +261,7 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         for arm in arms:
             self.assertEqual(arm.control_mode, "mit")
             self.assertFalse(arm.mit_velocity_feedforward)
+            self.assertEqual(arm.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
         if dual:
             self.assertEqual([arm.channel for arm in arms], ["can1", "can0"])
         dataset = Mock(fps=30, num_episodes=0, episode_buffer={"size": 0})

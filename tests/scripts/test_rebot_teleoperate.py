@@ -28,7 +28,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         self.assertTrue(config.robot.interpolate_cartesian_targets)
         self.assertFalse(config.robot.mit_velocity_feedforward)
         self.assertTrue(config.robot.reset_on_exit)
-        self.assertEqual(config.robot.reset_position_rad, [0] * 6)
+        self.assertEqual(config.robot.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
         self.assertEqual(config.robot.max_joint_speed, 1.5)
         self.assertEqual(config.robot.reset_joint_speed, 0.5)
         self.assertTrue(config.robot.uses_taccap_model)
@@ -43,7 +43,7 @@ class TestRebotTeleoperate(unittest.TestCase):
             patch.object(cli, "_cleanup"),
         ):
             cli.teleoperate(config)
-        robot.connect.assert_called_once_with()
+        robot.connect.assert_called_once_with(go_to_start=False)
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["current_tcp_pose_quat"], pose)
         self.assertIsInstance(loop.call_args.kwargs["policy"], cli.Pico4Policy)
         self.assertTrue(loop.call_args.kwargs["dryrun"])
@@ -55,15 +55,15 @@ class TestRebotTeleoperate(unittest.TestCase):
             config_path=ROOT / "recipes/teleop/bi_rebot_b601_rt/rs-taccap.yaml",
             args=["--display_data=false"],
         )
-        self.assertEqual(config.robot.left_arm_config.channel, "can0")
-        self.assertEqual(config.robot.right_arm_config.channel, "can1")
+        self.assertEqual(config.robot.left_arm_config.channel, "can1")
+        self.assertEqual(config.robot.right_arm_config.channel, "can0")
         self.assertTrue(config.robot.reset_on_exit)
         for arm in (config.robot.left_arm_config, config.robot.right_arm_config):
             self.assertEqual(arm.motor_family, "rs")
             self.assertEqual(arm.control_mode, "pos_vel")
             self.assertTrue(arm.interpolate_cartesian_targets)
             self.assertFalse(arm.mit_velocity_feedforward)
-            self.assertEqual(arm.reset_position_rad, [0] * 6)
+            self.assertEqual(arm.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
             self.assertEqual(arm.max_joint_speed, 1.5)
             self.assertEqual(arm.reset_joint_speed, 0.5)
             self.assertTrue(arm.uses_taccap_model)
@@ -72,7 +72,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         right = np.array([0.4, 0.5, 0.6, 1, 0, 0, 0, 0.3])
         events = []
         robot = Mock(get_current_tcp_pose_quat=Mock(return_value=(left, right)))
-        robot.connect.side_effect = lambda: events.append("arm")
+        robot.connect.side_effect = lambda **kwargs: events.append("arm")
         teleop = Mock()
         teleop.pre_init.side_effect = lambda: events.append("vr")
         with (
@@ -83,6 +83,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         ):
             cli.teleoperate(config)
         self.assertEqual(events, ["vr", "arm"])
+        robot.connect.assert_called_once_with(go_to_start=True)
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["left_tcp_pose_quat"], left)
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["right_tcp_pose_quat"], right)
         self.assertIsInstance(loop.call_args.kwargs["policy"], cli.BiPico4Policy)

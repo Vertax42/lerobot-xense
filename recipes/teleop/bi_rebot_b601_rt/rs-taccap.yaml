@@ -4,7 +4,7 @@
 # Set each channel to the corresponding arm's SocketCAN interface.
 robot:
   type: bi_rebot_b601_rt
-  reset_on_exit: true # return both arms before disconnecting on Ctrl+C / normal completion
+  reset_on_exit: true # Return both arms to zero before disconnecting on Ctrl+C / normal completion
   id: bi_rebot_rs_taccap
   left_arm_config:
     motor_family: rs
@@ -16,8 +16,8 @@ robot:
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
     coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
-    reset_joint_speed: 0.5 # rad/s for A-button reset
-    reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
+    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
     gripper:
       type: taccap_follower
       side: left
@@ -33,8 +33,8 @@ robot:
     # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
     coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
-    reset_joint_speed: 0.5 # rad/s for A-button reset
-    reset_position_rad: [0, 0, 0, 0, 0, 0] # A button
+    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
     gripper:
       type: taccap_follower
       side: right

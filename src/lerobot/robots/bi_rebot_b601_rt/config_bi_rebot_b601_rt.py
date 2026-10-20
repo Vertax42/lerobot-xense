@@ -13,17 +13,13 @@ from ..rebot_b601_rt.config_rebot_b601_rt import RebotB601RTConfig
 class BiRebotB601RTConfig(RobotConfig):
     left_arm_config: RebotB601RTConfig
     right_arm_config: RebotB601RTConfig
-    reset_on_exit: bool = False  # disconnect: return both arms unless reset=False
+    reset_on_exit: bool = False  # disconnect: return both arms to zero unless reset=False
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self):
         super().__post_init__()
         if self.left_arm_config.channel == self.right_arm_config.channel:
             raise ValueError("Each arm needs its own SocketCAN interface")
-        if self.reset_on_exit and any(
-            arm.reset_position_rad is None for arm in (self.left_arm_config, self.right_arm_config)
-        ):
-            raise ValueError("reset_on_exit requires reset_position_rad on both arms")
         names = set(self.cameras) & (set(self.left_arm_config.cameras) | set(self.right_arm_config.cameras))
         if names:
             raise ValueError(f"Camera names collide: {sorted(names)}")

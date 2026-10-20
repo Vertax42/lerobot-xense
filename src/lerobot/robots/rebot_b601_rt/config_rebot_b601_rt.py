@@ -34,8 +34,8 @@ class RebotB601RTConfig(RobotConfig):
     max_joint_speeds: list[float] | None = None  # optional [J1, ..., J6], replaces arm scalar limit
     coordinate_cartesian_speed: bool = True  # scale TCP translation/rotation together before bounded IK
     command_timeout_sec: float = 0.5
-    reset_position_rad: list[float] | None = None  # six arm joints; A-button target
-    reset_on_exit: bool = False  # disconnect: return to reset pose unless reset=False
+    reset_position_rad: list[float] | None = None  # six arm joints; startup and A-button target
+    reset_on_exit: bool = False  # disconnect: return all six arm joints to zero unless reset=False
     reset_joint_speed: float = 0.5  # rad/s, additionally capped by each joint's configured limit
     reset_timeout_sec: float = 30.0
     reset_tolerance_rad: float = 0.03
@@ -85,8 +85,6 @@ class RebotB601RTConfig(RobotConfig):
             len(self.reset_position_rad) != 6 or not all(math.isfinite(q) for q in self.reset_position_rad)
         ):
             raise ValueError("reset_position_rad must contain six finite joint angles in radians")
-        if self.reset_on_exit and self.reset_position_rad is None:
-            raise ValueError("reset_on_exit requires reset_position_rad")
         if any(
             not math.isfinite(v) or v <= 0
             for v in (

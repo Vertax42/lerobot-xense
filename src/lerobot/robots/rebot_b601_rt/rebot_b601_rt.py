@@ -138,7 +138,7 @@ class RebotB601RT(Robot):
             raise RuntimeError("connect() must be called before configure()")
 
     @check_if_already_connected
-    def connect(self, calibrate: bool = True) -> None:
+    def connect(self, calibrate: bool = True, go_to_start: bool = True) -> None:
         assets = Path(rebot_rt.__file__).parent / "assets"
         urdf = self.config.urdf_path or str(assets / self.config.default_urdf)
         end_frame = self.config.end_frame or ("taccap_eef_link" if self.config.uses_taccap_model else "")
@@ -212,11 +212,19 @@ class RebotB601RT(Robot):
             )
             for cam in self.cameras.values():
                 cam.connect()
+            self._native = native
+            if go_to_start and self.config.reset_position_rad is not None:
+                self.logger.info("B601 startup reset: moving to the configured initial pose")
+                self.reset_to_initial_position()
+                while self.rt_moving:
+                    time.sleep(0.01)
         except BaseException as exc:
             self._close_devices(native)
+            self._native = None
+            self._reset_target = None
+            self._reset_settled_since = None
             self._log_can_error_hint(str(exc))
             raise
-        self._native = native
         self.logger.info(
             f"B601 control_mode={self.config.control_mode}, max_joint_speed={self.config.max_joint_speed} rad/s, "
             f"cartesian_interpolation={self.config.interpolate_cartesian_targets} (100 Hz), "
@@ -227,19 +235,22 @@ class RebotB601RT(Robot):
 
     @check_if_not_connected
     def reset_to_initial_position(self) -> None:
-        """Start a joint-space return to the configured A-button pose."""
+        """Start a joint-space return to the configured startup/A-button pose."""
+        if self.config.reset_position_rad is None:
+            raise ValueError("Set reset_position_rad to six joint angles before requesting a reset")
+        self._reset_to_position(self.config.reset_position_rad)
+
+    def _reset_to_position(self, position_rad: list[float]) -> None:
         self._validate_reset()
-        target = [*self.config.reset_position_rad, self._native.get_target_joints()[6]]
+        target = [*position_rad, self._native.get_target_joints()[6]]
         speed = min(self.config.reset_joint_speed, max(self.config.max_joint_speeds or [self.config.max_joint_speed]))
         self._native.set_target_joints(target, max_joint_speed=speed)
         self._reset_target = target
         self._reset_started_at = time.monotonic()
         self._reset_settled_since = None
-        self.logger.info(f"Returning to reset_position_rad={self.config.reset_position_rad} at {speed} rad/s")
+        self.logger.info(f"Returning to joint position={position_rad} at {speed} rad/s")
 
     def _validate_reset(self) -> None:
-        if self.config.reset_position_rad is None:
-            raise ValueError("Set reset_position_rad to six joint angles before requesting a reset")
         state = self._native.get_state()
         if state.fault:
             self._raise_control_fault(state.fault_reason)
@@ -430,11 +441,11 @@ class RebotB601RT(Robot):
             self._ik_failed = True
 
     def disconnect(self, *, reset: bool = True) -> None:
-        """Return to the configured pose, then close; use reset=False after an error."""
+        """Return all six arm joints to zero, then close; use reset=False after an error."""
         try:
             if reset and self.config.reset_on_exit and self.is_connected:
-                self.logger.info("B601 exit reset: returning to the configured pose; press Ctrl+C again to abort")
-                self.reset_to_initial_position()
+                self.logger.info("B601 exit reset: returning to zero; press Ctrl+C again to abort")
+                self._reset_to_position([0.0] * 6)
                 while self.rt_moving:
                     time.sleep(0.01)
                 self.logger.info("B601 exit reset complete; disconnecting")
