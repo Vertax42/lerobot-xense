@@ -1,7 +1,8 @@
 """Elite grip anchoring must leave ordinary Pico4 readers and other arms alone."""
 
+import sys
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import draccus
 import numpy as np
@@ -64,7 +65,10 @@ def connect_fake(teleop):
     if isinstance(teleop, BiPico4):
         # Exercise BiPico4's inherited connect path with a pre-initialized SDK.
         teleop._xrt = xrt
-        teleop.connect(left_tcp_pose_quat=START.copy(), right_tcp_pose_quat=START.copy())
+        # connect() imports the SDK even when reusing _xrt. Stub that import too
+        # so this test never depends on the real VR SDK being installed.
+        with patch.dict(sys.modules, {"xensevr_pc_service_sdk": xrt}):
+            teleop.connect(left_tcp_pose_quat=START.copy(), right_tcp_pose_quat=START.copy())
     else:
         teleop._xrt = xrt
         teleop._is_connected = True
