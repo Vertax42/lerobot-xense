@@ -97,9 +97,8 @@ class TestRebotB601RT(unittest.TestCase):
     def test_outdated_native_api_reports_loaded_package_before_connecting(self):
         robot = self.make_robot(has_gripper=False)
         old_state = SimpleNamespace(mit_command_velocity=None)
-        with patch.object(driver.rebot_rt, "State", old_state):
-            with self.assertRaises(RuntimeError) as caught:
-                robot.connect()
+        with patch.object(driver.rebot_rt, "State", old_state), self.assertRaises(RuntimeError) as caught:
+            robot.connect()
         self.assertIn(str(driver.rebot_rt.__file__), str(caught.exception))
         self.assertIn("PYTHONPATH", str(caught.exception))
         self.assertIn("per-joint limits", str(caught.exception))
@@ -409,6 +408,88 @@ class TestRebotB601RT(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "motor fault"):
             _ = robot.rt_moving
 
+    def test_disconnect_waits_for_reset_feedback_in_both_control_modes(self):
+        for mode in ("mit", "pos_vel"):
+            with self.subTest(mode=mode):
+                native = fake_native()
+                self.native_factory.return_value = native
+                robot = self.make_robot(control_mode=mode, reset_on_exit=True, reset_position_rad=[0.0] * 6)
+                robot.connect()
+                camera = SimpleNamespace(is_connected=True, disconnect=Mock(), read_latest=Mock())
+                robot.cameras["wrist"] = camera
+                state = native.get_state.return_value
+                state.command = state.q = [0.4] * 6
+                with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                    def advance(_, native=native, state=state):
+                        native.close.assert_not_called()
+                        clock.return_value += 0.05
+                        if clock.return_value >= 0.15:
+                            state.command = [0.0] * 6
+                        if clock.return_value >= 0.25:
+                            state.q = [0.0] * 6
+
+                    with patch.object(driver.time, "sleep", side_effect=advance):
+                        robot.disconnect()
+                    self.assertGreaterEqual(clock.return_value, 0.35)
+                self.assertGreater(native.set_target_joints.call_count, 1)
+                for request in native.set_target_joints.call_args_list:
+                    self.assertEqual(request, call([0.0] * 6 + [-1.2], max_joint_speed=0.5))
+                native.close.assert_called_once()
+                camera.disconnect.assert_called_once()
+                camera.read_latest.assert_not_called()
+                self.assertIsNone(robot._reset_target)
+                robot.disconnect()
+                native.close.assert_called_once()
+
+    def test_disconnect_skips_homing_when_disabled_or_faulted(self):
+        for enabled, reset, fault in ((False, True, False), (True, False, False), (True, True, True)):
+            with self.subTest(enabled=enabled, reset=reset, fault=fault):
+                native = fake_native()
+                self.native_factory.return_value = native
+                robot = self.make_robot(reset_on_exit=enabled, reset_position_rad=[0.0] * 6)
+                robot.connect()
+                native.get_state.return_value.fault = fault
+                native.get_state.return_value.fault_reason = "motor fault"
+                robot.disconnect(reset=reset)
+                native.set_target_joints.assert_not_called()
+                native.close.assert_called_once()
+
+    def test_disconnect_releases_devices_if_exit_return_is_interrupted_or_fails(self):
+        for failure in ("interrupt", "timeout", "fault", "write"):
+            with self.subTest(failure=failure):
+                native = fake_native()
+                self.native_factory.return_value = native
+                robot = self.make_robot(reset_on_exit=True, reset_position_rad=[0.0] * 6, reset_timeout_sec=0.1)
+                robot.connect()
+                robot.logger = Mock()
+                camera = SimpleNamespace(is_connected=True, disconnect=Mock())
+                robot.cameras["wrist"] = camera
+                native.get_state.return_value.command = [0.4] * 6
+                if failure == "write":
+                    native.set_target_joints.side_effect = RuntimeError("CAN write failed")
+                with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+
+                    def advance(_, failure=failure, native=native):
+                        if failure == "interrupt":
+                            raise KeyboardInterrupt
+                        if failure == "fault":
+                            native.get_state.return_value.fault = True
+                            native.get_state.return_value.fault_reason = "motor fault"
+                        clock.return_value += 0.2
+
+                    with patch.object(driver.time, "sleep", side_effect=advance):
+                        robot.disconnect()
+                native.close.assert_called_once()
+                camera.disconnect.assert_called_once()
+                self.assertFalse(robot.is_connected)
+                if failure == "interrupt":
+                    robot.logger.warn.assert_called_once()
+                else:
+                    robot.logger.error.assert_called()
+                if failure == "timeout":
+                    native.hold_position.assert_called_once()
+
     def test_tracking_trace_separates_limiting_from_motor_tracking_error(self):
         robot = self.make_robot(trace_joint_tracking=True, control_mode="mit", mit_velocity_feedforward=False)
         robot.connect()
@@ -455,6 +536,134 @@ class TestRebotB601RT(unittest.TestCase):
         self.native.close.assert_called_once()
         gripper.disconnect.assert_called_once()
         self.assertFalse(robot.is_connected)
+
+    def test_startup_interrupt_releases_native_and_gripper(self):
+        gripper = fake_gripper()
+        self.gripper_factory.return_value = gripper
+        camera = SimpleNamespace(is_connected=False, connect=Mock(side_effect=KeyboardInterrupt))
+        self.enterContext(patch.object(driver, "make_cameras_from_configs", return_value={"wrist": camera}))
+        robot = self.make_robot(gripper=TaccapFollowerConfig(auto_discover_cameras=False))
+        with self.assertRaises(KeyboardInterrupt):
+            robot.connect()
+        self.native.close.assert_called_once()
+        gripper.disconnect.assert_called_once()
+
+    def test_disconnect_closes_native_after_peripheral_loss_and_is_idempotent(self):
+        gripper = fake_gripper()
+        self.gripper_factory.return_value = gripper
+        robot = self.make_robot(gripper=TaccapFollowerConfig(auto_discover_cameras=False))
+        robot.connect()
+        gripper.is_connected = False
+        self.assertFalse(robot.is_connected)
+        robot.disconnect()
+        robot.disconnect()
+        self.native.close.assert_called_once()
+        self.assertIsNone(robot._native)
+
+    def test_bimanual_startup_interrupt_closes_both_native_controllers(self):
+        left, right = fake_native(), fake_native()
+        right.start.side_effect = KeyboardInterrupt
+        self.native_factory.side_effect = [left, right]
+        robot = BiRebotB601RT(
+            BiRebotB601RTConfig(
+                calibration_dir=self.calibration_dir,
+                reset_on_exit=True,
+                left_arm_config=RebotB601RTConfig(channel="can1", reset_on_exit=True, reset_position_rad=[0] * 6),
+                right_arm_config=RebotB601RTConfig(channel="can0", reset_on_exit=True, reset_position_rad=[0] * 6),
+            )
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            robot.connect()
+        left.close.assert_called_once()
+        right.close.assert_called_once()
+        left.set_target_joints.assert_not_called()
+        right.set_target_joints.assert_not_called()
+        robot.disconnect()
+
+    def test_bimanual_exit_reset_is_coordinated_and_closes_both_on_failure(self):
+        for outcome in ("complete", "fault", "interrupt", "skip"):
+            with self.subTest(outcome=outcome):
+                left, right = fake_native(), fake_native()
+                self.native_factory.side_effect = [left, right]
+                robot = BiRebotB601RT(
+                    BiRebotB601RTConfig(
+                        calibration_dir=self.calibration_dir,
+                        reset_on_exit=True,
+                        left_arm_config=RebotB601RTConfig(
+                            channel="can1", reset_on_exit=True, reset_position_rad=[0] * 6
+                        ),
+                        right_arm_config=RebotB601RTConfig(
+                            channel="can0", reset_on_exit=True, reset_position_rad=[0] * 6
+                        ),
+                    )
+                )
+                robot.connect()
+                if outcome == "fault":
+                    right.get_state.return_value.fault = True
+                    right.get_state.return_value.fault_reason = "right motor fault"
+                right.get_state.return_value.q = [0.4] * 6
+                order = Mock()
+                for side, native in (("left", left), ("right", right)):
+                    order.attach_mock(native.stop, f"{side}_stop")
+                    order.attach_mock(native.close, f"{side}_close")
+                with (
+                    patch.object(driver.time, "monotonic", return_value=0.0) as clock,
+                    patch.object(
+                        robot.left_arm, "reset_to_initial_position", wraps=robot.left_arm.reset_to_initial_position
+                    ) as left_reset,
+                    patch.object(
+                        robot.right_arm, "reset_to_initial_position", wraps=robot.right_arm.reset_to_initial_position
+                    ) as right_reset,
+                ):
+
+                    def advance(_, left=left, right=right, outcome=outcome):
+                        # Both goals are submitted before waiting for either arm.
+                        left_reset.assert_called_once()
+                        right_reset.assert_called_once()
+                        left.close.assert_not_called()
+                        right.close.assert_not_called()
+                        if outcome == "interrupt":
+                            raise KeyboardInterrupt
+                        clock.return_value += 0.05
+                        if clock.return_value >= 0.2:
+                            right.get_state.return_value.q = [0.0] * 6
+
+                    with patch.object(driver.time, "sleep", side_effect=advance):
+                        robot.disconnect(reset=outcome != "skip")
+                    if outcome in ("fault", "skip"):
+                        left.set_target_joints.assert_not_called()
+                        right.set_target_joints.assert_not_called()
+                    else:
+                        left_reset.assert_called_once()
+                        right_reset.assert_called_once()
+                    if outcome == "complete":
+                        self.assertGreaterEqual(clock.return_value, 0.3)
+                self.assertEqual(
+                    order.mock_calls, [call.left_stop(), call.right_stop(), call.right_close(), call.left_close()]
+                )
+                self.assertFalse(robot.is_connected)
+                robot.disconnect()
+                left.close.assert_called_once()
+                right.close.assert_called_once()
+
+    def test_bimanual_disconnect_stops_both_even_when_one_peripheral_disappears(self):
+        left, right = fake_native(), fake_native()
+        self.native_factory.side_effect = [left, right]
+        robot = BiRebotB601RT(
+            BiRebotB601RTConfig(
+                calibration_dir=self.calibration_dir,
+                left_arm_config=RebotB601RTConfig(channel="can1"),
+                right_arm_config=RebotB601RTConfig(channel="can0"),
+            )
+        )
+        robot.connect()
+        robot.right_arm.cameras["lost"] = SimpleNamespace(is_connected=False)
+        self.assertFalse(robot.is_connected)
+        robot.disconnect()
+        robot.disconnect()
+        for native in (left, right):
+            native.stop.assert_called_once()
+            native.close.assert_called_once()
 
     def test_taccap_camera_discovery_pins_the_separate_gripper(self):
         gripper = fake_gripper()

@@ -1,11 +1,12 @@
 """Bimanual LeRobot facade over two native 100 Hz controllers."""
 
+import time
 from dataclasses import replace
 from functools import cached_property
 from typing import Any
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
-from lerobot.utils.robot_utils import best_effort
+from lerobot.utils.robot_utils import best_effort, get_logger
 
 from ..rebot_b601_rt import RebotB601RT
 from ..robot import Robot
@@ -23,6 +24,7 @@ class BiRebotB601RT(Robot):
     def __init__(self, config: BiRebotB601RTConfig):
         super().__init__(config)
         self.config = config
+        self.logger = get_logger(self.__class__.__name__)
         self._top_camera_names = set(config.cameras)
         left_config = replace(
             config.left_arm_config,
@@ -76,8 +78,8 @@ class BiRebotB601RT(Robot):
         self.left_arm.connect(calibrate=calibrate)
         try:
             self.right_arm.connect(calibrate=calibrate)
-        except Exception:
-            self.left_arm.disconnect()
+        except BaseException:
+            self.left_arm.disconnect(reset=False)
             raise
 
     @check_if_not_connected
@@ -126,14 +128,28 @@ class BiRebotB601RT(Robot):
             **{f"right_{k}": v for k, v in right_sent.items()},
         }
 
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        # Stop both controllers before either arm's slower camera/gripper
-        # teardown, especially when a second Ctrl+C aborts an exit reset.
-        for arm in (self.left_arm, self.right_arm):
-            with best_effort(arm.logger, "stopping the native arm"):
-                arm._native.stop()
+    def disconnect(self, *, reset: bool = True) -> None:
+        """Return both arms together, then stop both controllers before peripheral cleanup."""
         try:
-            self.right_arm.disconnect()
+            if reset and self.config.reset_on_exit and self.is_connected:
+                self.logger.info(
+                    "B601 exit reset: returning both arms to the configured poses; press Ctrl+C again to abort"
+                )
+                self.reset_to_initial_position()
+                while self.rt_moving:
+                    time.sleep(0.01)
+                self.logger.info("B601 exit reset complete; disconnecting both arms")
+        except KeyboardInterrupt:
+            self.logger.warn("B601 exit reset interrupted; disconnecting both arms immediately")
+        except Exception as error:
+            self.logger.error(f"B601 exit reset failed; disconnecting both arms: {error}")
         finally:
-            self.left_arm.disconnect()
+            # Stop both controllers before either arm's slower camera/gripper teardown.
+            for arm in (self.left_arm, self.right_arm):
+                with best_effort(arm.logger, "stopping the native arm"):
+                    if arm._native is not None:
+                        arm._native.stop()
+            try:
+                self.right_arm.disconnect(reset=False)
+            finally:
+                self.left_arm.disconnect(reset=False)

@@ -1,0 +1,63 @@
+# Dual RS B601 + TacCap + Bi-Pico4 recording.
+#     lerobot-record --config_path=recipes/record/bi_rebot_b601_rt/rs-taccap.yaml
+
+# Set dataset.repo_id and single_task for each task, or override them on the CLI.
+# Omitted fields use defaults. Keep use_joint_observation=false on each arm:
+# the shared RT recording loop requires TCP observations during reset.
+robot:
+  type: bi_rebot_b601_rt
+  id: bi_rebot_rs_taccap # Identifier for this dual-arm setup
+  reset_on_exit: true # The dual-arm driver returns both arms before disconnecting
+
+  # Each arm needs a separate CAN interface. Set channel to match the wiring.
+  left_arm_config:
+    motor_family: rs # RS series joint motors
+    control_mode: mit # mit or pos_vel (position/velocity control)
+    channel: can1 # Left arm; configure SocketCAN at 1 Mbps and bring it UP before running
+    interpolate_cartesian_targets: true # Native C++ TCP position/orientation interpolation at 100 Hz
+    mit_velocity_feedforward: false # MIT desired velocity dq=0; retain position tracking and damping
+    max_joint_speed: 1.5 # Joint command speed limit in rad/s, not TCP linear speed
+    coordinate_cartesian_speed: true # Scale TCP translation/rotation together when joint speed is limited
+    reset_joint_speed: 0.5 # Reset speed limit in rad/s, also subject to each joint's speed limit
+    reset_position_rad: [0, 0, 0, 0, 0, 0] # Reset target for J1..J6 in radians
+
+    # TacCap uses a separate gripper driver and discovers cameras on its USB hub.
+    gripper:
+      type: taccap_follower
+      side: left # Match the left-side TacCap device
+      auto_discover_cameras: true # Discover the wrist camera and enabled tactile cameras
+      enable_tactile: true # Capture images from both tactile sensors on this gripper
+
+  # Same fields as the left arm; mode, speed limits and reset pose can be set independently.
+  right_arm_config:
+    motor_family: rs
+    control_mode: mit
+    channel: can0 # Right arm; also configure at 1 Mbps and bring UP before running
+    interpolate_cartesian_targets: true
+    mit_velocity_feedforward: false
+    max_joint_speed: 1.5 # rad/s
+    coordinate_cartesian_speed: true
+    reset_joint_speed: 0.5 # rad/s
+    reset_position_rad: [0, 0, 0, 0, 0, 0] # J1..J6, radians
+    gripper:
+      type: taccap_follower
+      side: right # Match the right-side TacCap device
+      auto_discover_cameras: true
+      enable_tactile: true
+
+teleop:
+  type: bi_pico4 # Left/right Pico controllers drive their respective arms
+
+dataset:
+  # Format: namespace/name. Use a new name for a new dataset, or resume=true to append.
+  repo_id: Xense/bi_rebot_b601_rt_test
+  single_task: "Pick up the cube and place it in the box" # Task description stored with the data
+  fps: 30 # Recording/sample rate, independent of the native 100 Hz interpolation
+  episode_time_s: 60 # Seconds per episode; right arrow ends the phase early
+  reset_time_s: 15 # Seconds to manually prepare the scene between episodes, not arm reset duration
+  num_episodes: 10 # Episodes to record in this run; additional episodes when resuming
+  video: true # Store camera images as videos
+  push_to_hub: false # Save locally; set true to upload to Hugging Face Hub
+
+display_data: true # Show camera images and observation/action data in Rerun
+resume: false # true appends to the existing repo_id; hardware and dataset features must be compatible

@@ -35,7 +35,7 @@ class RebotB601RTConfig(RobotConfig):
     coordinate_cartesian_speed: bool = True  # scale TCP translation/rotation together before bounded IK
     command_timeout_sec: float = 0.5
     reset_position_rad: list[float] | None = None  # six arm joints; A-button target
-    reset_on_exit: bool = False  # teleoperate: return to reset pose on Ctrl+C/normal loop completion
+    reset_on_exit: bool = False  # disconnect: return to reset pose unless reset=False
     reset_joint_speed: float = 0.5  # rad/s, additionally capped by each joint's configured limit
     reset_timeout_sec: float = 30.0
     reset_tolerance_rad: float = 0.03

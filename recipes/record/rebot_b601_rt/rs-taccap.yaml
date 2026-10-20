@@ -1,0 +1,47 @@
+# Single RS B601 + right TacCap + Pico4 recording.
+#     lerobot-record --config_path=recipes/record/rebot_b601_rt/rs-taccap.yaml
+
+# Set dataset.repo_id and single_task for each task, or override them on the CLI.
+# Omitted fields use defaults. Keep use_joint_observation=false:
+# the shared RT recording loop requires TCP observations during reset.
+robot:
+  type: rebot_b601_rt
+  id: rebot_rs_taccap # Identifier for this single-arm setup
+  motor_family: rs # RS series joint motors
+  control_mode: mit # mit or pos_vel (position/velocity control)
+  channel: can0 # Match the wiring; configure at 1 Mbps and bring UP before running
+
+  # The recording loop sends TCP targets; native control interpolates and limits joint speed.
+  interpolate_cartesian_targets: true # Native C++ TCP position/orientation interpolation at 100 Hz
+  mit_velocity_feedforward: false # MIT desired velocity dq=0; retain position tracking and damping
+  max_joint_speed: 1.5 # Joint command speed limit in rad/s, not TCP linear speed
+  coordinate_cartesian_speed: true # Scale TCP translation/rotation together when joint speed is limited
+
+  # Space/Pico A during recording and the configured exit return use this pose and speed.
+  reset_joint_speed: 0.5 # Reset speed limit in rad/s, also subject to each joint's speed limit
+  reset_position_rad: [0, 0, 0, 0, 0, 0] # Reset target for J1..J6 in radians
+  reset_on_exit: true # The driver returns to the configured pose before disconnecting
+
+  # TacCap uses a separate gripper driver and discovers cameras on its USB hub.
+  gripper:
+    type: taccap_follower
+    side: right # Match the right-side TacCap device
+    auto_discover_cameras: true # Discover the wrist camera and enabled tactile cameras
+    enable_tactile: true # Capture images from both tactile sensors on this gripper
+
+teleop:
+  type: pico4 # Uses the right controller by default; --teleop.type=spacemouse is also supported
+
+dataset:
+  # Format: namespace/name. Use a new name for a new dataset, or resume=true to append.
+  repo_id: Xense/rebot_b601_rt_test
+  single_task: "Pick up the cube and place it in the box" # Task description stored with the data
+  fps: 30 # Recording/sample rate, independent of the native 100 Hz interpolation
+  episode_time_s: 60 # Seconds per episode; right arrow ends the phase early
+  reset_time_s: 15 # Seconds to manually prepare the scene between episodes, not arm reset duration
+  num_episodes: 10 # Episodes to record in this run; additional episodes when resuming
+  video: true # Store camera images as videos
+  push_to_hub: false # Save locally; set true to upload to Hugging Face Hub
+
+display_data: true # Show camera images and observation/action data in Rerun
+resume: false # true appends to the existing repo_id; hardware and dataset features must be compatible

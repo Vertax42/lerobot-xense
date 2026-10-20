@@ -2,7 +2,7 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, PropertyMock, call, patch
+from unittest.mock import Mock, call, patch
 
 import draccus
 import numpy as np
@@ -16,7 +16,6 @@ ROOT = Path(__file__).resolve().parents[2]
 class TestRebotTeleoperate(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.object(cli, "logger"))
-        self.exit_reset = self.enterContext(patch.object(cli, "_reset_b601_on_exit"))
 
     def test_single_arm_recipe_and_pico4_startup(self):
         config = draccus.parse(
@@ -48,7 +47,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["current_tcp_pose_quat"], pose)
         self.assertIsInstance(loop.call_args.kwargs["policy"], cli.Pico4Policy)
         self.assertTrue(loop.call_args.kwargs["dryrun"])
-        self.exit_reset.assert_not_called()
+        robot.disconnect.assert_called_once_with(reset=False)
 
     def test_bimanual_recipe_waits_for_vr_then_seeds_each_arm(self):
         config = draccus.parse(
@@ -87,19 +86,18 @@ class TestRebotTeleoperate(unittest.TestCase):
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["left_tcp_pose_quat"], left)
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["right_tcp_pose_quat"], right)
         self.assertIsInstance(loop.call_args.kwargs["policy"], cli.BiPico4Policy)
-        self.exit_reset.assert_called_once_with(robot)
+        robot.disconnect.assert_called_once_with(reset=True)
 
-    def test_exit_reset_only_after_normal_or_interrupted_loop(self):
+    def test_disconnect_requests_return_only_after_normal_or_interrupted_loop(self):
         for mode in ("mit", "pos_vel"):
             for outcome, enabled, dryrun, expected in (
                 (None, True, False, True),
                 (KeyboardInterrupt(), True, False, True),
                 (RuntimeError("motor fault"), True, False, False),
-                (KeyboardInterrupt(), False, False, False),
+                (KeyboardInterrupt(), False, False, True),
                 (KeyboardInterrupt(), True, True, False),
             ):
                 with self.subTest(mode=mode, outcome=outcome, enabled=enabled, dryrun=dryrun):
-                    self.exit_reset.reset_mock()
                     config = draccus.parse(
                         cli.TeleoperateConfig,
                         config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
@@ -109,7 +107,7 @@ class TestRebotTeleoperate(unittest.TestCase):
                     config.dryrun = dryrun
                     robot, teleop = Mock(), Mock()
                     events = Mock()
-                    events.attach_mock(self.exit_reset, "reset")
+                    events.attach_mock(robot.disconnect, "disconnect")
                     with (
                         patch.object(cli, "make_robot_from_config", return_value=robot),
                         patch.object(cli, "make_teleoperator_from_config", return_value=teleop),
@@ -117,8 +115,9 @@ class TestRebotTeleoperate(unittest.TestCase):
                         patch.object(cli, "_cleanup", new=events.cleanup),
                     ):
                         cli.teleoperate(config)
-                    expected_calls = [call.reset(robot)] if expected else []
-                    self.assertEqual(events.mock_calls, [*expected_calls, call.cleanup(robot, teleop, False)])
+                    self.assertEqual(
+                        events.mock_calls, [call.disconnect(reset=expected), call.cleanup(robot, teleop, False)]
+                    )
 
     def test_startup_interrupt_does_not_start_exit_reset(self):
         config = draccus.parse(
@@ -135,7 +134,7 @@ class TestRebotTeleoperate(unittest.TestCase):
             self.assertRaises(KeyboardInterrupt),
         ):
             cli.teleoperate(config)
-        self.exit_reset.assert_not_called()
+        robot.disconnect.assert_called_once_with(reset=False)
         cleanup.assert_called_once_with(robot, teleop, False)
 
     def test_single_arm_spacemouse_uses_measured_euler_pose(self):
@@ -178,47 +177,6 @@ class TestRebotTeleoperate(unittest.TestCase):
         self.assertEqual(robot.names().count("send_action"), 1)
         self.assertEqual(teleop.names().count("reset_to_pose"), 1)
         self.assertLess(robot.names().index("get_current_tcp_pose_quat"), robot.names().index("send_action"))
-
-
-class TestB601ExitReset(unittest.TestCase):
-    def setUp(self):
-        self.enterContext(patch.object(cli, "logger"))
-        self.robot = Mock(is_connected=True)
-        self.events = Mock()
-        self.events.attach_mock(self.robot.reset_to_initial_position, "reset")
-        self.events.attach_mock(self.robot.disconnect, "disconnect")
-        self.sleep = self.enterContext(patch.object(cli.time, "sleep", new=self.events.sleep))
-
-    def test_waits_for_feedback_before_disconnect_without_reading_cameras(self):
-        with patch.object(type(self.robot), "rt_moving", new_callable=PropertyMock, create=True) as moving:
-            moving.side_effect = [True, True, False]
-            cli._reset_b601_on_exit(self.robot)
-        self.assertEqual(
-            self.events.mock_calls, [call.reset(), call.sleep(0.01), call.sleep(0.01), call.disconnect()]
-        )
-        self.robot.get_observation.assert_not_called()
-
-    def test_second_ctrl_c_closes_robot_without_waiting_for_reset(self):
-        with patch.object(type(self.robot), "rt_moving", new_callable=PropertyMock, create=True, return_value=True):
-            self.sleep.side_effect = KeyboardInterrupt
-            cli._reset_b601_on_exit(self.robot)
-        self.assertEqual(self.events.mock_calls, [call.reset(), call.sleep(0.01), call.disconnect()])
-
-    def test_fault_or_timeout_during_return_closes_robot(self):
-        for failure in (RuntimeError("motor fault"), TimeoutError("reset timeout")):
-            with self.subTest(failure=failure):
-                self.events.reset_mock()
-                with patch.object(type(self.robot), "rt_moving", new_callable=PropertyMock, create=True) as moving:
-                    moving.side_effect = failure
-                    with self.assertRaises(type(failure)):
-                        cli._reset_b601_on_exit(self.robot)
-                self.assertEqual(self.events.mock_calls, [call.reset(), call.disconnect()])
-
-    def test_failed_reset_request_still_closes_robot(self):
-        self.robot.reset_to_initial_position.side_effect = RuntimeError("preexisting fault")
-        with self.assertRaisesRegex(RuntimeError, "preexisting fault"):
-            cli._reset_b601_on_exit(self.robot)
-        self.assertEqual(self.events.mock_calls, [call.reset(), call.disconnect()])
 
 
 if __name__ == "__main__":

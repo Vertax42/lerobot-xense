@@ -13,7 +13,7 @@ from ..rebot_b601_rt.config_rebot_b601_rt import RebotB601RTConfig
 class BiRebotB601RTConfig(RobotConfig):
     left_arm_config: RebotB601RTConfig
     right_arm_config: RebotB601RTConfig
-    reset_on_exit: bool = False  # teleoperate: return both arms before disconnecting
+    reset_on_exit: bool = False  # disconnect: return both arms unless reset=False
     cameras: dict[str, CameraConfig] = field(default_factory=dict)
 
     def __post_init__(self):

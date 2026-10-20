@@ -75,7 +75,7 @@ Both control modes use native timed Cartesian interpolation by default (`interpo
 
 Streaming Cartesian tracking approaches unreachable targets with bounded local IK steps instead of rejecting the entire waypoint. Each accepted step reduces the sampled pose error and stays within joint position limits and the per-cycle speed bound. At a local boundary it holds when no improving step is available; returning targets are followed from the last command without queuing a distant joint solution. This preserves the Pico pose mapping and applies independently to both arms in either control mode. It is a local approximation, not a global nearest-pose or collision-avoidance planner. Rebuild `libpyrebot` to use this behavior; tracking logs expose `tracking_limited` and `tracking_progress` with the updated native library.
 
-These recipes enable `robot.reset_on_exit: true`: after Ctrl+C or the teleoperation duration ends, the arm(s) return to `reset_position_rad` (six zeros) at `reset_joint_speed` (0.5 rad/s), then disconnect. MIT and position/velocity modes use the same reset path. Feedback must settle within `reset_tolerance_rad`; `reset_timeout_sec` bounds the wait. A second Ctrl+C aborts the return and disconnects immediately. Startup failures, teleoperation errors and dry runs skip the exit reset; a fault during reset stops it. Use `--robot.reset_on_exit=false` to disable this behavior. Plain `disconnect()` never starts a reset.
+These recipes enable `robot.reset_on_exit: true`: after Ctrl+C or the teleoperation duration ends, the arm(s) return to `reset_position_rad` (six zeros) at `reset_joint_speed` (0.5 rad/s), then disconnect. MIT and position/velocity modes use the same reset path. Feedback must settle within `reset_tolerance_rad`; `reset_timeout_sec` bounds the wait. A second Ctrl+C aborts the return and disconnects immediately. Startup failures, teleoperation errors and dry runs skip the exit reset; a fault during reset stops it. Use `--robot.reset_on_exit=false` to disable this behavior. The driver handles the return in `disconnect()`; `disconnect(reset=False)` closes without returning.
 
 The RS TacCap recipes set `mit_velocity_feedforward: false`: MIT tracks the interpolated position with desired velocity `dq=0`, retaining its configured stiffness and damping. This follows `libtron2rt`'s Cartesian command behavior and avoids sending waypoint-boundary finite-difference velocity pulses into MIT's velocity term. `--robot.mit_velocity_feedforward=true` restores the previous behavior for comparison. This option does not affect `pos_vel`; native API and general robot-config defaults remain `true` for compatibility. Tracking logs distinguish `velocity` (position-ramp slope) from `mit_dq` (MIT desired velocity before encoding). Physical smoothness and load tracking still require a hardware check.
 
@@ -83,6 +83,57 @@ B601 uses local tactile-camera adapters for cached observations and bounded USB
 reopen retries, plus local TacCap discovery for gripper hubs sharing an upstream
 USB hub. Other robots retain the original shared camera and USB grouping behavior.
 The B601 native SDK is loaded only when its driver is requested.
+
+B601 recording recipes are available for
+[one arm](recipes/record/rebot_b601_rt/rs-taccap.yaml) and
+[two arms](recipes/record/bi_rebot_b601_rt/rs-taccap.yaml). Both use MIT with
+TacCap camera discovery; the recording recipe maps the left arm to `can1` and
+the right arm to `can0`. Set these to match your adapters. For example:
+
+```bash
+lerobot-record \
+  --config_path=recipes/record/bi_rebot_b601_rt/rs-taccap.yaml \
+  --dataset.repo_id=Xense/bi_rebot_pick_cube_001 \
+  --dataset.single_task="Pick up the cube and place it in the box" \
+  --dataset.num_episodes=10
+```
+
+The recipes save locally (`push_to_hub: false`); use a new dataset name for a new
+run, or `--resume=true` to append to a compatible existing dataset. Recording
+uses `dataset.fps`, with a default of 30. Single-arm recording also supports
+SpaceMouse by overriding `--teleop.type=spacemouse`.
+
+For B601 recording, right arrow ends the current recording/preparation phase,
+left arrow requests a retake, and Esc stops the session. During recording,
+Space or the Pico A button returns the arm(s) to the configured joint pose;
+SpaceMouse uses both buttons. B/X/Y are not mapped to episode controls. The
+preparation interval uses the same generic loop as other robots: teleoperation
+without adding frames or handling reset buttons. Startup and reset completion seed
+the teleoperator from the measured TCP pose(s), and no VR commands are sent
+during a native reset. An active reset finishes before saving or leaving a
+phase, which can extend that phase beyond its configured duration.
+
+Normal frames pair the current observation/images with the accepted action
+returned by `send_action`; native Cartesian interpolation can accept it
+asynchronously. B601 uses the shared `run_rt_record_loop` with a device policy;
+after reset it resynchronizes the teleoperator before reading the next action.
+During reset, the action is the measured
+TCP and gripper, paired with the previous observation as in the other RT
+recording loops; the reset-trigger frame is skipped. Single-arm actions have
+10 values and dual-arm actions have 20 (position, two rotation columns, and
+gripper per arm). Keep `use_joint_observation: false` on each arm, as in the
+recipes: the shared reset-frame logic requires TCP observation keys.
+
+Normal completion, Esc, and Ctrl+C honor `robot.reset_on_exit`. Like the other
+robots, Ctrl+C interrupts recording without saving the current episode; previously
+saved episodes are retained. A second Ctrl+C during the return aborts it.
+Recording uses the common cleanup order: video encoding, dataset finalization,
+then `disconnect()` for connected devices. B601's driver handles the configured
+exit return and checks the controller for faults before starting it; the recording
+script does not select a different disconnect mode based on the exception.
+Image-writer cleanup uses the same exception decorator as the other recording loops.
+These recording paths have offline
+regression coverage; validate them on your rig before a collection run.
 
 > `xensesdk` is **not** a submodule — it is installed from PyPI (`xensesdk==2.1.2`,
 > the published cp312 manylinux wheel, which bundles the patched `libxense_c.so`

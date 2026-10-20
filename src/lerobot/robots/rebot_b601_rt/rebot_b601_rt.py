@@ -212,7 +212,7 @@ class RebotB601RT(Robot):
             )
             for cam in self.cameras.values():
                 cam.connect()
-        except Exception as exc:
+        except BaseException as exc:
             self._close_devices(native)
             self._log_can_error_hint(str(exc))
             raise
@@ -429,16 +429,31 @@ class RebotB601RT(Robot):
                 self._last_ik_warning = now
             self._ik_failed = True
 
-    @check_if_not_connected
-    def disconnect(self) -> None:
-        self._close_devices(self._native)
-        self._native = None
-        self._reset_target = None
+    def disconnect(self, *, reset: bool = True) -> None:
+        """Return to the configured pose, then close; use reset=False after an error."""
+        try:
+            if reset and self.config.reset_on_exit and self.is_connected:
+                self.logger.info("B601 exit reset: returning to the configured pose; press Ctrl+C again to abort")
+                self.reset_to_initial_position()
+                while self.rt_moving:
+                    time.sleep(0.01)
+                self.logger.info("B601 exit reset complete; disconnecting")
+        except KeyboardInterrupt:
+            self.logger.warn("B601 exit reset interrupted; disconnecting immediately")
+        except Exception as error:
+            self.logger.error(f"B601 exit reset failed; disconnecting: {error}")
+        finally:
+            # A lost camera/gripper must not prevent closing the native controller.
+            self._close_devices(self._native)
+            self._native = None
+            self._reset_target = None
+            self._reset_settled_since = None
 
-    def _close_devices(self, native: rebot_rt.Robot) -> None:
+    def _close_devices(self, native: rebot_rt.Robot | None) -> None:
         # Attempt every release even if one device fails during teardown.
         with best_effort(self.logger, "closing the native arm"):
-            native.close()
+            if native is not None:
+                native.close()
         for cam in self.cameras.values():
             with best_effort(self.logger, "disconnecting a camera"):
                 if cam.is_connected:
