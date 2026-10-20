@@ -19,7 +19,10 @@ from lerobot.robots.bi_rebot_b601_rt import BiRebotB601RT, BiRebotB601RTConfig
 from lerobot.robots.rebot_b601_rt import RebotB601RT, RebotB601RTConfig, rebot_b601_rt as driver
 
 ASSETS = Path(rebot_rt.__file__).parent / "assets"
-TACCAP_URDF = "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
+TACCAP_URDFS = {
+    "dm": "DM_Taccap/urdf/rebot_b601_dm_taccap.urdf",
+    "rs": "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf",
+}
 INITIAL_POSE = [0.0, 0.8, 0.8, -0.5, 0.0, 0.0]
 
 
@@ -178,7 +181,7 @@ class TestRebotB601RT(unittest.TestCase):
             robot.get_observation()
         self.assertIn("reached", robot.logger.info.call_args.args[0])
 
-    def test_motor_family_and_gripper_select_models_independently(self):
+    def test_motor_family_and_gripper_select_matching_models(self):
         for family in ("dm", "RS"):
             for taccap in (False, True):
                 with self.subTest(family=family, taccap=taccap):
@@ -190,7 +193,11 @@ class TestRebotB601RT(unittest.TestCase):
                     )
                     robot.connect()
                     args = self.native_factory.call_args.args
-                    model = TACCAP_URDF if taccap else f"{family.upper()}/urdf/ReBot_Arm_{family.upper()}.urdf"
+                    model = (
+                        TACCAP_URDFS[family.lower()]
+                        if taccap
+                        else f"{family.upper()}/urdf/ReBot_Arm_{family.upper()}.urdf"
+                    )
                     self.assertEqual(args[0], rebot_rt.Family.DM if family == "dm" else rebot_rt.Family.RS)
                     self.assertEqual(Path(args[2]), ASSETS / model)
                     self.assertTrue(Path(args[2]).is_file())
@@ -222,7 +229,8 @@ class TestRebotB601RT(unittest.TestCase):
                         "gripper": {"type": "taccap_follower", "side": "right"},
                     },
                 )
-                self.assertEqual(config.default_urdf, TACCAP_URDF)
+                self.assertEqual(config.default_urdf, TACCAP_URDFS[family.lower()])
+                self.assertTrue(config.uses_taccap_model)
                 self.assertEqual(config.gripper.side, "right")
                 self.assertFalse(config.has_gripper)
 
@@ -253,23 +261,57 @@ class TestRebotB601RT(unittest.TestCase):
                     robot.disconnect()
 
     def test_explicit_model_and_tool_frame_override_taccap_defaults(self):
-        self.gripper_factory.return_value = fake_gripper()
         urdf = ASSETS / "DM/urdf/ReBot_Arm_DM.urdf"
-        robot = self.make_robot(
-            motor_family="rs",
-            urdf_path=str(urdf),
-            end_frame="link6",
-            gripper=TaccapFollowerConfig(auto_discover_cameras=False),
-        )
-        robot.connect()
-        self.assertEqual(self.native_factory.call_args.args[2:5], (str(urdf), "link6", False))
+        for family in ("dm", "rs"):
+            for end_frame in (None, "link6"):
+                with self.subTest(family=family, end_frame=end_frame):
+                    self.gripper_factory.return_value = fake_gripper()
+                    robot = self.make_robot(
+                        motor_family=family,
+                        urdf_path=str(urdf),
+                        end_frame=end_frame,
+                        gripper=TaccapFollowerConfig(auto_discover_cameras=False),
+                    )
+                    self.assertFalse(robot.config.uses_taccap_model)
+                    robot.connect()
+                    self.assertEqual(self.native_factory.call_args.args[2:5], (str(urdf), end_frame or "", False))
+                    robot.disconnect()
 
     def test_explicit_taccap_model_disables_native_gripper_for_both_families(self):
         for family in ("dm", "rs"):
-            robot = self.make_robot(motor_family=family, urdf_path=str(ASSETS / TACCAP_URDF))
+            for model in TACCAP_URDFS.values():
+                with self.subTest(family=family, model=model):
+                    urdf = str(ASSETS / model)
+                    robot = self.make_robot(motor_family=family, urdf_path=urdf)
+                    robot.connect()
+                    self.assertEqual(self.native_factory.call_args.args[2:5], (urdf, "taccap_eef_link", False))
+                    self.assertNotIn("gripper.pos", robot.action_features)
+                    robot.disconnect()
+
+    def test_bimanual_mixed_families_select_each_arms_taccap_model(self):
+        self.native_factory.side_effect = [fake_native(), fake_native()]
+        self.gripper_factory.side_effect = [fake_gripper(), fake_gripper()]
+        robot = BiRebotB601RT(
+            BiRebotB601RTConfig(
+                calibration_dir=self.calibration_dir,
+                left_arm_config=RebotB601RTConfig(
+                    motor_family="dm",
+                    channel="can1",
+                    gripper=TaccapFollowerConfig(side="left", auto_discover_cameras=False),
+                ),
+                right_arm_config=RebotB601RTConfig(
+                    motor_family="rs",
+                    channel="can0",
+                    gripper=TaccapFollowerConfig(side="right", auto_discover_cameras=False),
+                ),
+            )
+        )
+        try:
             robot.connect()
-            self.assertEqual(self.native_factory.call_args.args[3:5], ("taccap_eef_link", False))
-            self.assertNotIn("gripper.pos", robot.action_features)
+            for family, native_call in zip(("dm", "rs"), self.native_factory.call_args_list, strict=True):
+                self.assertEqual(Path(native_call.args[2]), ASSETS / TACCAP_URDFS[family])
+                self.assertEqual(native_call.args[3:5], ("taccap_eef_link", False))
+        finally:
             robot.disconnect()
 
     def test_external_gripper_cannot_also_enable_seventh_arm_motor(self):
@@ -671,12 +713,14 @@ class TestRebotB601RT(unittest.TestCase):
 
         # Load only the kinematic model: no connect/start or hardware IO.
         model = NativeRobot(
-            rebot_rt.Family.RS, "offline", str(ASSETS / TACCAP_URDF), "taccap_eef_link", has_gripper=False
+            rebot_rt.Family.RS, "offline", str(ASSETS / TACCAP_URDFS["rs"]), "taccap_eef_link", has_gripper=False
         )
         self.native.forward_kinematics.side_effect = model.forward_kinematics
         self.gripper_factory.return_value = fake_gripper()
         robot = self.make_robot(
-            gripper=TaccapFollowerConfig(auto_discover_cameras=False), interpolate_cartesian_targets=True
+            motor_family="rs",
+            gripper=TaccapFollowerConfig(auto_discover_cameras=False),
+            interpolate_cartesian_targets=True,
         )
         robot.connect()
         state = self.native.get_state.return_value
@@ -882,7 +926,7 @@ class TestRebotB601RT(unittest.TestCase):
         try:
             robot.connect()
             left, right = self.native_factory.call_args_list
-            self.assertEqual(Path(left.args[2]), ASSETS / TACCAP_URDF)
+            self.assertEqual(Path(left.args[2]), ASSETS / TACCAP_URDFS["dm"])
             self.assertEqual(Path(right.args[2]), ASSETS / "RS/urdf/ReBot_Arm_RS.urdf")
             obs = robot.get_observation()
             self.assertEqual(obs["left_gripper.pos"], 0.73)

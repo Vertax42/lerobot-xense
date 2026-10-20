@@ -8,7 +8,9 @@ from lerobot.cameras.configs import CameraConfig
 from lerobot.grippers import GripperConfig
 from lerobot.robots.config import RobotConfig
 
+DEFAULT_DM_TACCAP_URDF = "DM_Taccap/urdf/rebot_b601_dm_taccap.urdf"
 DEFAULT_RS_TACCAP_URDF = "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
+DEFAULT_TACCAP_URDFS = {"dm": DEFAULT_DM_TACCAP_URDF, "rs": DEFAULT_RS_TACCAP_URDF}
 
 
 @RobotConfig.register_subclass("rebot_b601_rt")
@@ -25,11 +27,11 @@ class RebotB601RTConfig(RobotConfig):
     gravity_slew_rate_nm_s: float = 5.0  # maximum FF change per second, including startup
     gravity_vector: list[float] = field(default_factory=lambda: [0.0, 0.0, -9.81])  # URDF root frame, m/s^2
     motor_configs: list[dict[str, int | float | str]] = field(default_factory=list)
-    urdf_path: str | None = None
-    # Empty uses the selected URDF's default tool frame.
+    urdf_path: str | None = None  # explicit override; None selects the bundled family/gripper model
+    # Empty selects taccap_eef_link for bundled TacCap models, otherwise the URDF's default tool frame.
     end_frame: str | None = None
     # An external gripper uses its own driver instead of the seventh arm motor.
-    # taccap_follower selects RS_Taccap for either motor family; None keeps
+    # taccap_follower selects DM_Taccap or RS_Taccap by motor_family; None keeps
     # the original DM/RS model and its optional motor gripper.
     gripper: GripperConfig | None = None
     # Whether the native arm controller drives a seventh CAN motor.
@@ -123,10 +125,11 @@ class RebotB601RTConfig(RobotConfig):
     def default_urdf(self) -> str:
         """Bundled model selected by the mounted gripper and motor family."""
         if self.gripper is not None and self.gripper.type == "taccap_follower":
-            return DEFAULT_RS_TACCAP_URDF
+            return DEFAULT_TACCAP_URDFS[self.motor_family]
         family = self.motor_family.upper()
         return f"{family}/urdf/ReBot_Arm_{family}.urdf"
 
     @property
     def uses_taccap_model(self) -> bool:
-        return Path(self.urdf_path or self.default_urdf).name == Path(DEFAULT_RS_TACCAP_URDF).name
+        model_name = Path(self.urdf_path or self.default_urdf).name
+        return any(model_name == Path(urdf).name for urdf in DEFAULT_TACCAP_URDFS.values())
