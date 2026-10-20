@@ -6,69 +6,75 @@
 # the shared RT recording loop requires TCP observations during reset.
 robot:
   type: bi_rebot_b601_rt
-  id: bi_rebot_rs_taccap # Identifier for this dual-arm setup
-  reset_on_exit: true # The dual-arm driver returns both arms to zero before disconnecting
+  id: bi_rebot_rs_taccap # String; identifier for this robot setup
+  reset_on_exit: true # true, false; return joints to zero before disconnecting / skip the return
 
   # Each arm needs a separate CAN interface. Set channel to match the wiring.
   left_arm_config:
-    motor_family: rs # RS series joint motors
-    control_mode: mit # Position tracking with damping and model gravity feedforward
-    channel: can1 # Left arm; configure SocketCAN at 1 Mbps and bring it UP before running
-    interpolate_cartesian_targets: true # Native C++ TCP position/orientation interpolation at 100 Hz
-    mit_velocity_feedforward: false # MIT desired velocity dq=0; retain position tracking and damping
+    motor_family: rs # rs, dm; rs=RobStride motors, dm=Damiao motors
+    control_mode: mit # mit, pos_vel; mit=PD + torque feedforward, pos_vel=position/velocity loop
+    # pos_vel requires gravity_compensation_scale: 0.0.
+    # SocketCAN interfaces must be configured at 1 Mbps and brought UP.
+    channel: can1 # SocketCAN name / DM serial path; e.g. can0, can1 / /dev/ttyACM0
+    interpolate_cartesian_targets: true # true, false; true=100 Hz TCP interpolation, false=synchronous IK
+    mit_velocity_feedforward: false # true, false; true=use command velocity, false=dq=0 with damping (MIT only)
     # Upright base + stock TacCap: its mass is already included in the selected URDF.
-    gravity_compensation_scale: 1.0 # Start at half model gravity; validate tracking before increasing to 1.0
-    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # J1..J6 feedforward caps, not total PD+FF torque limits
-    gravity_slew_rate_nm_s: 5.0 # Ramp feedforward from zero and limit changes during motion
-    max_joint_speed: 1.5 # Joint command speed limit in rad/s, not TCP linear speed
-    coordinate_cartesian_speed: true # Scale TCP translation/rotation together when joint speed is limited
-    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return; capped by each joint's limit
-    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
-    reset_tolerance_rad: 0.06 # Startup/A-button tolerance; allows the observed MIT steady-state offset
-    exit_reset_tolerance_rad: 0.03 # Stricter feedback tolerance before disabling at zero
+    gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity feedforward (MIT only)
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 gravity feedforward caps, not total PD+FF torque limits
+    gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum gravity feedforward change rate, including startup
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit, overridden for the arm by max_joint_speeds
+    coordinate_cartesian_speed: true # true, false; coordinate TCP translation/rotation speed / use bounded IK alone
+    # Used only with interpolate_cartesian_targets=true; joint speed limits apply in both cases.
+    reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by each joint speed limit
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # 6 angles (rad); J1..J6 startup and user-reset pose, within model limits
+    reset_tolerance_rad: 0.06 # > 0 (rad); per-joint measured error tolerance for startup/user reset
+    exit_reset_tolerance_rad: 0.03 # > 0 (rad); per-joint measured error tolerance for exit return to zero
 
     # TacCap uses a separate gripper driver and discovers cameras on its USB hub.
     gripper:
-      type: taccap_follower
-      side: left # Match the left-side TacCap device
-      auto_discover_cameras: true # Discover the wrist camera and enabled tactile cameras
-      enable_tactile: true # Capture images from both tactile sensors on this gripper
+      type: taccap_follower # taccap_follower, serial; TacCap / Xense serial gripper (match hardware and URDF)
+      side: left # left, right; select the physical left/right gripper by its firmware serial number
+      auto_discover_cameras: true # true, false; discover gripper cameras / use explicit robot.cameras
+      enable_tactile: true # true, false; include / omit tactile cameras during auto-discovery
 
   # Same fields as the left arm; mode, speed limits and reset pose can be set independently.
   right_arm_config:
-    motor_family: rs
-    control_mode: mit
-    channel: can0 # Right arm; also configure at 1 Mbps and bring UP before running
-    interpolate_cartesian_targets: true
-    mit_velocity_feedforward: false
-    gravity_compensation_scale: 1.0
-    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1]
-    gravity_slew_rate_nm_s: 5.0
-    max_joint_speed: 1.5 # rad/s
-    coordinate_cartesian_speed: true
-    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
-    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
-    reset_tolerance_rad: 0.06
-    exit_reset_tolerance_rad: 0.03
+    motor_family: rs # rs, dm; rs=RobStride motors, dm=Damiao motors
+    control_mode: mit # mit, pos_vel; mit=PD + torque feedforward, pos_vel=position/velocity loop
+    # pos_vel requires gravity_compensation_scale: 0.0.
+    # SocketCAN interfaces must be configured at 1 Mbps and brought UP.
+    channel: can0 # SocketCAN name / DM serial path; e.g. can0, can1 / /dev/ttyACM0
+    interpolate_cartesian_targets: true # true, false; true=100 Hz TCP interpolation, false=synchronous IK
+    mit_velocity_feedforward: false # true, false; true=use command velocity, false=dq=0 with damping (MIT only)
+    gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity feedforward (MIT only)
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 gravity feedforward caps, not total PD+FF torque limits
+    gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum gravity feedforward change rate, including startup
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit, overridden for the arm by max_joint_speeds
+    coordinate_cartesian_speed: true # true, false; coordinate TCP translation/rotation speed / use bounded IK alone
+    # Used only with interpolate_cartesian_targets=true; joint speed limits apply in both cases.
+    reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by each joint speed limit
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # 6 angles (rad); J1..J6 startup and user-reset pose, within model limits
+    reset_tolerance_rad: 0.06 # > 0 (rad); per-joint measured error tolerance for startup/user reset
+    exit_reset_tolerance_rad: 0.03 # > 0 (rad); per-joint measured error tolerance for exit return to zero
     gripper:
-      type: taccap_follower
-      side: right # Match the right-side TacCap device
-      auto_discover_cameras: true
-      enable_tactile: true
+      type: taccap_follower # taccap_follower, serial; TacCap / Xense serial gripper (match hardware and URDF)
+      side: right # left, right; select the physical left/right gripper by its firmware serial number
+      auto_discover_cameras: true # true, false; discover gripper cameras / use explicit robot.cameras
+      enable_tactile: true # true, false; include / omit tactile cameras during auto-discovery
 
 teleop:
-  type: bi_pico4 # Left/right Pico controllers drive their respective arms
+  type: bi_pico4 # bi_pico4; paired Pico VR controllers for two arms
 
 dataset:
   # Format: namespace/name. Use a new name for a new dataset, or resume=true to append.
-  repo_id: Xense/bi_rebot_b601_rt_test
-  single_task: "Pick up the cube and place it in the box" # Task description stored with the data
-  fps: 30 # Recording/sample rate, independent of the native 100 Hz interpolation
-  episode_time_s: 600 # Seconds per episode; right arrow ends the phase early
-  reset_time_s: 120 # Seconds to manually prepare the scene between episodes, not arm reset duration
-  num_episodes: 10 # Episodes to record in this run; additional episodes when resuming
-  video: true # Store camera images as videos
-  push_to_hub: false # Save locally; set true to upload to Hugging Face Hub
+  repo_id: Xense/bi_rebot_b601_rt_test # namespace/name; dataset ID, also used for the default local storage path
+  single_task: "Pick up the cube and place it in the box" # Text; task description stored with the recorded data
+  fps: 30 # > 0 (integer Hz); recording rate; native control remains 100 Hz
+  episode_time_s: 600 # > 0 (s); duration per episode; right arrow ends the phase early
+  reset_time_s: 120 # >= 0 (s); scene preparation between episodes; 0 skips this wait
+  num_episodes: 10 # > 0 (integer); episodes to save in this run, additional when resuming
+  video: true # true, false; store camera data as videos / image frames
+  push_to_hub: false # true, false; upload to Hugging Face Hub / save locally only
 
-display_data: false # Show camera images and observation/action data in Rerun
-resume: false # true appends to the existing repo_id; hardware and dataset features must be compatible
+display_data: false # true, false; enable / disable Rerun visualization
+resume: false # true, false; append to a compatible existing dataset / create a new dataset

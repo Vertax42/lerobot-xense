@@ -4,56 +4,62 @@
 # Set each channel to the corresponding arm's SocketCAN interface.
 robot:
   type: bi_rebot_b601_rt
-  reset_on_exit: true # Return both arms to zero before disconnecting on Ctrl+C / normal completion
-  id: bi_rebot_rs_taccap
+  reset_on_exit: true # true, false; return joints to zero before disconnecting / skip the return
+  id: bi_rebot_rs_taccap # String; identifier for this robot setup
   left_arm_config:
-    motor_family: rs
-    control_mode: mit
-    interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
-    mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
+    motor_family: rs # rs, dm; rs=RobStride motors, dm=Damiao motors
+    control_mode: mit # mit, pos_vel; mit=PD + torque feedforward, pos_vel=position/velocity loop
+    # pos_vel requires gravity_compensation_scale: 0.0.
+    # SocketCAN interfaces must be configured at 1 Mbps and brought UP.
+    interpolate_cartesian_targets: true # true, false; true=100 Hz TCP interpolation, false=synchronous IK
+    mit_velocity_feedforward: false # true, false; true=use command velocity, false=dq=0 with damping (MIT only)
     # Upright base + stock TacCap: its mass is already included in the selected URDF.
-    gravity_compensation_scale: 1.0 # Start at half model gravity; validate tracking before increasing to 1.0
-    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # J1..J6 feedforward caps, not total PD+FF torque limits
-    gravity_slew_rate_nm_s: 5.0 # Ramp feedforward from zero and limit changes during motion
-    channel: can1
-    max_joint_speed: 1.5 # rad/s per joint during teleoperation
-    # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
+    gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity feedforward (MIT only)
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 gravity feedforward caps, not total PD+FF torque limits
+    gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum gravity feedforward change rate, including startup
+    channel: can1 # SocketCAN name / DM serial path; e.g. can0, can1 / /dev/ttyACM0
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit, overridden for the arm by max_joint_speeds
+    # Optional max_joint_speeds: 6 values > 0 (rad/s), J1..J6; overrides max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
-    coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
-    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
-    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
-    reset_tolerance_rad: 0.06 # Startup/A-button tolerance; also accommodates MIT when selected
-    exit_reset_tolerance_rad: 0.03 # Stricter feedback tolerance before disabling at zero
+    coordinate_cartesian_speed: true # true, false; coordinate TCP translation/rotation speed / use bounded IK alone
+    # Used only with interpolate_cartesian_targets=true; joint speed limits apply in both cases.
+    reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by each joint speed limit
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # 6 angles (rad); J1..J6 startup and user-reset pose, within model limits
+    reset_tolerance_rad: 0.06 # > 0 (rad); per-joint measured error tolerance for startup/user reset
+    exit_reset_tolerance_rad: 0.03 # > 0 (rad); per-joint measured error tolerance for exit return to zero
     gripper:
-      type: taccap_follower
-      side: left
-      auto_discover_cameras: true
-      enable_tactile: true
+      type: taccap_follower # taccap_follower, serial; TacCap / Xense serial gripper (match hardware and URDF)
+      side: left # left, right; select the physical left/right gripper by its firmware serial number
+      auto_discover_cameras: true # true, false; discover gripper cameras / use explicit robot.cameras
+      enable_tactile: true # true, false; include / omit tactile cameras during auto-discovery
   right_arm_config:
-    motor_family: rs
-    control_mode: mit
-    interpolate_cartesian_targets: true # native 100 Hz substeps; also applies to MIT
-    mit_velocity_feedforward: false # MIT dq=0 avoids feeding waypoint slope changes into Kd
-    gravity_compensation_scale: 1.0
-    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1]
-    gravity_slew_rate_nm_s: 5.0
-    channel: can0
-    max_joint_speed: 1.5 # rad/s per joint during teleoperation
-    # Optional [J1, J2, J3, J4, J5, J6] in rad/s; replaces max_joint_speed for the arm.
+    motor_family: rs # rs, dm; rs=RobStride motors, dm=Damiao motors
+    control_mode: mit # mit, pos_vel; mit=PD + torque feedforward, pos_vel=position/velocity loop
+    # pos_vel requires gravity_compensation_scale: 0.0.
+    # SocketCAN interfaces must be configured at 1 Mbps and brought UP.
+    interpolate_cartesian_targets: true # true, false; true=100 Hz TCP interpolation, false=synchronous IK
+    mit_velocity_feedforward: false # true, false; true=use command velocity, false=dq=0 with damping (MIT only)
+    gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity feedforward (MIT only)
+    gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 gravity feedforward caps, not total PD+FF torque limits
+    gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum gravity feedforward change rate, including startup
+    channel: can0 # SocketCAN name / DM serial path; e.g. can0, can1 / /dev/ttyACM0
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit, overridden for the arm by max_joint_speeds
+    # Optional max_joint_speeds: 6 values > 0 (rad/s), J1..J6; overrides max_joint_speed for the arm.
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5]
-    coordinate_cartesian_speed: true # slow TCP translation/rotation together at joint limits
-    reset_joint_speed: 0.5 # rad/s for startup, A-button reset and exit return
-    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # Startup and A-button pose, J1..J6 in radians
-    reset_tolerance_rad: 0.06
-    exit_reset_tolerance_rad: 0.03
+    coordinate_cartesian_speed: true # true, false; coordinate TCP translation/rotation speed / use bounded IK alone
+    # Used only with interpolate_cartesian_targets=true; joint speed limits apply in both cases.
+    reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by each joint speed limit
+    reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # 6 angles (rad); J1..J6 startup and user-reset pose, within model limits
+    reset_tolerance_rad: 0.06 # > 0 (rad); per-joint measured error tolerance for startup/user reset
+    exit_reset_tolerance_rad: 0.03 # > 0 (rad); per-joint measured error tolerance for exit return to zero
     gripper:
-      type: taccap_follower
-      side: right
-      auto_discover_cameras: true
-      enable_tactile: true
+      type: taccap_follower # taccap_follower, serial; TacCap / Xense serial gripper (match hardware and URDF)
+      side: right # left, right; select the physical left/right gripper by its firmware serial number
+      auto_discover_cameras: true # true, false; discover gripper cameras / use explicit robot.cameras
+      enable_tactile: true # true, false; include / omit tactile cameras during auto-discovery
 
 teleop:
-  type: bi_pico4
+  type: bi_pico4 # bi_pico4; paired Pico VR controllers for two arms
 
-fps: 30
-display_data: true
+fps: 30 # > 0 (integer Hz); teleop target update rate; native control remains 100 Hz
+display_data: false # true, false; enable / disable Rerun visualization

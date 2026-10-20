@@ -24,7 +24,8 @@ class TestRebotTeleoperate(unittest.TestCase):
             args=["--display_data=false", "--dryrun=true"],
         )
         self.assertEqual(config.robot.motor_family, "rs")
-        self.assertEqual(config.robot.control_mode, "pos_vel")
+        self.assertEqual(config.robot.control_mode, "mit")
+        self.assertEqual(config.robot.gravity_compensation_scale, 1.0)
         self.assertTrue(config.robot.interpolate_cartesian_targets)
         self.assertFalse(config.robot.mit_velocity_feedforward)
         self.assertTrue(config.robot.reset_on_exit)
@@ -61,7 +62,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         for arm in (config.robot.left_arm_config, config.robot.right_arm_config):
             self.assertEqual(arm.motor_family, "rs")
             self.assertEqual(arm.control_mode, "mit")
-            self.assertEqual(arm.gravity_compensation_scale, 0.5)
+            self.assertEqual(arm.gravity_compensation_scale, 1.0)
             self.assertTrue(arm.interpolate_cartesian_targets)
             self.assertFalse(arm.mit_velocity_feedforward)
             self.assertEqual(arm.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
@@ -111,7 +112,11 @@ class TestRebotTeleoperate(unittest.TestCase):
                     config = draccus.parse(
                         cli.TeleoperateConfig,
                         config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
-                        args=["--display_data=false", f"--robot.control_mode={mode}"],
+                        args=[
+                            "--display_data=false",
+                            f"--robot.control_mode={mode}",
+                            f"--robot.gravity_compensation_scale={1.0 if mode == 'mit' else 0.0}",
+                        ],
                     )
                     config.robot.reset_on_exit = enabled
                     config.dryrun = dryrun
