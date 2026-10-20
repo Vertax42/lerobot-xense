@@ -947,14 +947,18 @@ def teleoperate(cfg: TeleoperateConfig):
             try:
                 robot.connect(go_to_start=not cfg.dryrun)
                 if bimanual:
-                    left_pose, right_pose = robot.get_current_tcp_pose_quat()
+                    left_pose, right_pose = (
+                        robot.get_current_tcp_pose_quat() if cfg.dryrun else robot.get_commanded_tcp_pose_quat()
+                    )
                     teleop.connect(left_tcp_pose_quat=left_pose, right_tcp_pose_quat=right_pose)
-                    policy = BiPico4Policy()
+                    policy = BiPico4Policy(use_commanded_pose=True)
                 elif cfg.teleop.type == "pico4":
-                    teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
-                    policy = Pico4Policy()
+                    pose = robot.get_current_tcp_pose_quat() if cfg.dryrun else robot.get_commanded_tcp_pose_quat()
+                    teleop.connect(current_tcp_pose_quat=pose)
+                    policy = Pico4Policy(use_commanded_pose=True)
                 else:
-                    teleop.connect(current_tcp_pose_euler=robot.get_current_tcp_pose_euler())
+                    pose = robot.get_current_tcp_pose_euler() if cfg.dryrun else robot.get_commanded_tcp_pose_euler()
+                    teleop.connect(current_tcp_pose_euler=pose)
                     policy = SpaceMousePolicy()
                 with contextlib.suppress(KeyboardInterrupt):
                     run_cartesian_teleop_loop(

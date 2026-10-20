@@ -106,6 +106,11 @@ class BiRebotB601RT(Robot):
         return self.left_arm.get_current_tcp_pose_quat(), self.right_arm.get_current_tcp_pose_quat()
 
     @check_if_not_connected
+    def get_commanded_tcp_pose_quat(self):
+        """Each arm's current commanded TCP, for reset-to-teleop handoff."""
+        return self.left_arm.get_commanded_tcp_pose_quat(), self.right_arm.get_commanded_tcp_pose_quat()
+
+    @check_if_not_connected
     def reset_to_initial_position(self) -> None:
         if any(arm.config.reset_position_rad is None for arm in (self.left_arm, self.right_arm)):
             raise ValueError("Both arms need reset_position_rad before using the reset button")

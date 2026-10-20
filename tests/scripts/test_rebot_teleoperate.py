@@ -1,4 +1,4 @@
-"""B601 launch recipes seed Cartesian teleoperators from the measured tool pose."""
+"""B601 handoffs preserve commanded TCP poses; dry runs use measured poses."""
 
 import unittest
 from pathlib import Path
@@ -8,7 +8,7 @@ import draccus
 import numpy as np
 
 from lerobot.scripts import lerobot_teleoperate as cli, teleop_device_loops as loops
-from tests.scripts.conftest_teleop_doubles import FakeRobot, FakeTeleop, run_loop
+from tests.scripts.conftest_teleop_doubles import FakeBiPico4Teleop, FakeRobot, FakeTeleop, run_loop
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -71,7 +71,10 @@ class TestRebotTeleoperate(unittest.TestCase):
         left = np.array([0.1, 0.2, 0.3, 1, 0, 0, 0, 0.7])
         right = np.array([0.4, 0.5, 0.6, 1, 0, 0, 0, 0.3])
         events = []
-        robot = Mock(get_current_tcp_pose_quat=Mock(return_value=(left, right)))
+        robot = Mock(
+            get_commanded_tcp_pose_quat=Mock(return_value=(left, right)),
+            get_current_tcp_pose_quat=Mock(side_effect=AssertionError("Measured pose used for startup target")),
+        )
         robot.connect.side_effect = lambda **kwargs: events.append("arm")
         teleop = Mock()
         teleop.pre_init.side_effect = lambda: events.append("vr")
@@ -87,6 +90,11 @@ class TestRebotTeleoperate(unittest.TestCase):
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["left_tcp_pose_quat"], left)
         np.testing.assert_allclose(teleop.connect.call_args.kwargs["right_tcp_pose_quat"], right)
         self.assertIsInstance(loop.call_args.kwargs["policy"], cli.BiPico4Policy)
+        loop.call_args.kwargs["policy"].resync(robot, teleop)
+        for actual, expected in zip(
+            teleop.reset_to_pose.call_args.args, (left[:7], right[:7], left[7], right[7]), strict=True
+        ):
+            np.testing.assert_allclose(actual, expected)
         robot.disconnect.assert_called_once_with(reset=True)
 
     def test_disconnect_requests_return_only_after_normal_or_interrupted_loop(self):
@@ -138,14 +146,17 @@ class TestRebotTeleoperate(unittest.TestCase):
         robot.disconnect.assert_called_once_with(reset=False)
         cleanup.assert_called_once_with(robot, teleop, False)
 
-    def test_single_arm_spacemouse_uses_measured_euler_pose(self):
+    def test_single_arm_spacemouse_uses_commanded_euler_pose(self):
         config = draccus.parse(
             cli.TeleoperateConfig,
             config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
             args=["--teleop.type=spacemouse", "--display_data=false"],
         )
         pose = np.array([0.1, 0.2, 0.3, 0, 0, 1.5, 0.7])
-        robot = Mock(get_current_tcp_pose_euler=Mock(return_value=pose))
+        robot = Mock(
+            get_commanded_tcp_pose_euler=Mock(return_value=pose),
+            get_current_tcp_pose_euler=Mock(side_effect=AssertionError("Measured pose used for startup target")),
+        )
         teleop = Mock()
         with (
             patch.object(cli, "make_robot_from_config", return_value=robot),
@@ -159,6 +170,8 @@ class TestRebotTeleoperate(unittest.TestCase):
 
     def test_a_reset_stands_aside_then_resyncs_before_sending_again(self):
         robot = FakeRobot(iterations=5, name="rebot_b601_rt", rt_moving_frames={1, 2})
+        pose = np.array([0.15, 0.25, 0.4, 1, 0, 0, 0, 0.7])
+        robot.get_commanded_tcp_pose_quat = Mock(return_value=pose)
         teleop = FakeTeleop(reset_frames={0})
         with (
             patch.object(loops, "precise_sleep"),
@@ -172,12 +185,27 @@ class TestRebotTeleoperate(unittest.TestCase):
                 teleop=teleop,
                 robot=robot,
                 fps=30,
-                policy=cli.Pico4Policy(),
+                policy=cli.Pico4Policy(use_commanded_pose=True),
             )
         self.assertEqual(robot.names().count("reset_to_initial_position"), 1)
         self.assertEqual(robot.names().count("send_action"), 1)
         self.assertEqual(teleop.names().count("reset_to_pose"), 1)
-        self.assertLess(robot.names().index("get_current_tcp_pose_quat"), robot.names().index("send_action"))
+        robot.get_commanded_tcp_pose_quat.assert_called_once()
+        self.assertNotIn("get_current_tcp_pose_quat", robot.names())
+        reset = next(call for call in teleop.calls if call[0] == "reset_to_pose")
+        np.testing.assert_allclose(reset[1], pose[:7])
+
+    def test_commanded_pose_is_opt_in_and_dryrun_still_uses_measurement(self):
+        for dual in (False, True):
+            with self.subTest(dual=dual):
+                robot = FakeRobot(iterations=1, bimanual=dual)
+                robot.get_commanded_tcp_pose_quat = Mock(side_effect=AssertionError("Unexpected commanded pose"))
+                teleop = FakeBiPico4Teleop() if dual else FakeTeleop()
+                policy = cli.BiPico4Policy if dual else cli.Pico4Policy
+                policy().resync(robot, teleop)
+                policy(use_commanded_pose=True).dryrun_resync(robot, teleop)
+                self.assertEqual(robot.names().count("get_current_tcp_pose_quat"), 2)
+                robot.get_commanded_tcp_pose_quat.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -390,10 +390,22 @@ class RebotB601RT(Robot):
     @check_if_not_connected
     def get_current_tcp_pose_quat(self) -> np.ndarray:
         """Measured base-frame TCP as [x, y, z, qw, qx, qy, qz, gripper]."""
+        return self._get_tcp_pose_quat(commanded=False)
+
+    @check_if_not_connected
+    def get_commanded_tcp_pose_quat(self) -> np.ndarray:
+        """TCP of the current joint command, with measured gripper position.
+
+        Use this reference when handing a reset back to teleop so MIT tracking
+        error is not fed back as a new target and applied a second time.
+        """
+        return self._get_tcp_pose_quat(commanded=True)
+
+    def _get_tcp_pose_quat(self, *, commanded: bool) -> np.ndarray:
         state = self._native.get_state()
         if state.fault:
             self._raise_control_fault(state.fault_reason)
-        pose = self._native.forward_kinematics(state.q)
+        pose = self._native.forward_kinematics(state.command if commanded else state.q)
         qx, qy, qz, qw = Rotation.from_matrix(pose[:3, :3]).as_quat()
         gripper = 0.0
         if self._gripper is not None:
@@ -406,6 +418,12 @@ class RebotB601RT(Robot):
     def get_current_tcp_pose_euler(self) -> np.ndarray:
         """Measured base-frame TCP as [x, y, z, roll, pitch, yaw, gripper]."""
         pose = self.get_current_tcp_pose_quat()
+        return np.array([*pose[:3], *quaternion_to_euler(*pose[3:7]), pose[7]], dtype=np.float64)
+
+    @check_if_not_connected
+    def get_commanded_tcp_pose_euler(self) -> np.ndarray:
+        """Commanded TCP as [x, y, z, roll, pitch, yaw, measured gripper]."""
+        pose = self.get_commanded_tcp_pose_quat()
         return np.array([*pose[:3], *quaternion_to_euler(*pose[3:7]), pose[7]], dtype=np.float64)
 
     @check_if_not_connected

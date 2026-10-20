@@ -531,7 +531,7 @@ class EliteRecordPolicy(RtRecordPolicy):
 
 
 class B601RecordPolicy(RtRecordPolicy):
-    """Single/dual B601 reset buttons and measured TCP re-sync."""
+    """Single/dual B601 reset buttons and commanded TCP re-sync."""
 
     label = "B601 reset to initial position"
 
@@ -543,9 +543,11 @@ class B601RecordPolicy(RtRecordPolicy):
             raise ValueError(f"{robot.name} recording requires teleop.type in {sorted(supported)}")
         if not robot.action_features.keys() <= robot.observation_features.keys():
             raise ValueError("B601 RT recording requires use_joint_observation=false on each arm for reset frames")
-        self.device_policy = {"pico4": Pico4Policy, "bi_pico4": BiPico4Policy, "spacemouse": SpaceMousePolicy}[
-            teleop.name
-        ]()
+        if teleop.name == "spacemouse":
+            self.device_policy = SpaceMousePolicy()
+        else:
+            policy = BiPico4Policy if teleop.name == "bi_pico4" else Pico4Policy
+            self.device_policy = policy(use_commanded_pose=True)
         self.reset_pending = False
 
     def reset_requested(self, events: dict, teleop) -> bool:
@@ -783,9 +785,15 @@ def rebot_b601_rt_record_loop(
     display_data: bool = False,
 ):
     """Single/dual B601 recording through the shared RT loop."""
+    from lerobot.robots.rebot_b601_rt.tactile_camera import wait_for_fresh_camera_frames
+
     if fps <= 0:
         raise ValueError("B601 recording fps must be positive")
     policy = B601RecordPolicy(robot, teleop)
+    if dataset is not None:
+        # Encoder warmup can delay camera readers beyond the frame-age limit.
+        # Wait before the episode clock starts, keeping the RT loop unchanged.
+        wait_for_fresh_camera_frames(robot.cameras)
     run_rt_record_loop(
         robot,
         policy,
@@ -931,15 +939,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
                 logger.info("Elite CS66 + Pico4: teleop seeded from current TCP pose")
             elif cfg.robot.type == "rebot_b601_rt" and teleop_type == "spacemouse":
-                teleop.connect(current_tcp_pose_euler=robot.get_current_tcp_pose_euler())
-                logger.info("B601 + SpaceMouse: teleop seeded from current TCP pose")
+                teleop.connect(current_tcp_pose_euler=robot.get_commanded_tcp_pose_euler())
+                logger.info("B601 + SpaceMouse: teleop seeded from commanded TCP pose")
             elif cfg.robot.type == "rebot_b601_rt" and teleop_type == "pico4":
-                teleop.connect(current_tcp_pose_quat=robot.get_current_tcp_pose_quat())
-                logger.info("B601 + Pico4: teleop seeded from current TCP pose")
+                teleop.connect(current_tcp_pose_quat=robot.get_commanded_tcp_pose_quat())
+                logger.info("B601 + Pico4: teleop seeded from commanded TCP pose")
             elif cfg.robot.type == "bi_rebot_b601_rt" and teleop_type == "bi_pico4":
-                left_pose, right_pose = robot.get_current_tcp_pose_quat()
+                left_pose, right_pose = robot.get_commanded_tcp_pose_quat()
                 teleop.connect(left_tcp_pose_quat=left_pose, right_tcp_pose_quat=right_pose)
-                logger.info("BiB601 + BiPico4: teleop seeded from both current TCP poses")
+                logger.info("BiB601 + BiPico4: teleop seeded from both commanded TCP poses")
             else:
                 teleop.connect()
 

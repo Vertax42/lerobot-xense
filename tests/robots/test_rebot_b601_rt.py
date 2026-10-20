@@ -616,6 +616,52 @@ class TestRebotB601RT(unittest.TestCase):
         )
         np.testing.assert_allclose(robot.get_current_tcp_pose_euler(), [0.1, 0.2, 0.3, 0, 0, np.pi / 2, 0.73])
 
+    def test_reset_handoff_does_not_send_measured_sag_as_a_new_target(self):
+        from rebot_rt._native import Robot as NativeRobot
+
+        from lerobot.scripts.teleop_device_loops import Pico4Policy
+        from lerobot.teleoperators.pico4 import Pico4, Pico4Config
+
+        # Load only the kinematic model: no connect/start or hardware IO.
+        model = NativeRobot(
+            rebot_rt.Family.RS, "offline", str(ASSETS / TACCAP_URDF), "taccap_eef_link", has_gripper=False
+        )
+        self.native.forward_kinematics.side_effect = model.forward_kinematics
+        self.gripper_factory.return_value = fake_gripper()
+        robot = self.make_robot(
+            gripper=TaccapFollowerConfig(auto_discover_cameras=False), interpolate_cartesian_targets=True
+        )
+        robot.connect()
+        state = self.native.get_state.return_value
+        state.command = [*INITIAL_POSE, 0.0]
+        # Reproduce the steady MIT tracking error from the startup log.
+        state.q = [0.0033, 0.8067, 0.753, -0.5398, -0.0006, -0.0017, 0.0]
+        commanded = model.forward_kinematics(state.command)
+        measured = model.forward_kinematics(state.q)
+        self.assertGreater(np.linalg.norm(commanded[:3, 3] - measured[:3, 3]), 0.005)
+        np.testing.assert_allclose(robot.get_current_tcp_pose_quat()[:3], measured[:3, 3])
+        self.assertAlmostEqual(robot.get_commanded_tcp_pose_quat()[7], 0.73)
+        np.testing.assert_allclose(robot.get_commanded_tcp_pose_euler()[:3], commanded[:3, 3])
+
+        teleop = Pico4(Pico4Config(calibration_dir=self.calibration_dir))
+        teleop._is_connected = True
+        teleop._xrt = SimpleNamespace(
+            get_right_controller_pose=lambda: [0, 0, 0, 0, 0, 0, 1],
+            get_right_grip=Mock(return_value=0.0),
+            get_right_trigger=lambda: 0.0,
+            get_A_button=lambda: False,
+            get_B_button=lambda: False,
+        )
+        policy = Pico4Policy(use_commanded_pose=True)
+        for grip in (0.0, 1.0):
+            # Both a released grip and a stationary grip held across reset
+            # must keep the arm's command rather than adding another sag step.
+            teleop._xrt.get_right_grip.return_value = grip
+            policy.resync(robot, teleop)
+            robot.send_action(teleop.get_action())
+            np.testing.assert_allclose(self.native.queue_target_pose.call_args.args[0], commanded, atol=1e-6)
+            self.assertAlmostEqual(robot.get_observation()["tcp.z"], measured[2, 3])
+
     def test_failed_camera_connect_releases_arm_and_external_gripper(self):
         gripper = fake_gripper()
         self.gripper_factory.return_value = gripper
@@ -797,6 +843,11 @@ class TestRebotB601RT(unittest.TestCase):
             left_pose, right_pose = robot.get_current_tcp_pose_quat()
             np.testing.assert_allclose(left_pose, [0, 0, 0, 1, 0, 0, 0, 0.73])
             np.testing.assert_allclose(right_pose, [0, 0, 0, 1, 0, 0, 0, -1.2])
+            for arm, z in ((robot.left_arm, 0.4), (robot.right_arm, 0.5)):
+                arm.get_commanded_tcp_pose_quat = Mock(return_value=np.array([0, 0, z, 1, 0, 0, 0, 0.6]))
+            left_pose, right_pose = robot.get_commanded_tcp_pose_quat()
+            self.assertEqual(left_pose[2], 0.4)
+            self.assertEqual(right_pose[2], 0.5)
         finally:
             if robot.is_connected:
                 robot.disconnect()

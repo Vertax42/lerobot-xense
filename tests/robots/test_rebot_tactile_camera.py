@@ -11,7 +11,11 @@ from unittest.mock import Mock, patch
 import numpy as np
 
 from lerobot.cameras.xense import XenseOutputType, XenseTactileCamera, XenseTactileCameraConfig, camera_xense as driver
-from lerobot.robots.rebot_b601_rt.tactile_camera import RebotTactileCamera, make_rebot_cameras
+from lerobot.robots.rebot_b601_rt.tactile_camera import (
+    RebotTactileCamera,
+    make_rebot_cameras,
+    wait_for_fresh_camera_frames,
+)
 from lerobot.utils.errors import DeviceNotConnectedError
 
 SERIAL = "GSPS01A34Z0021"
@@ -137,6 +141,53 @@ class TestXenseCameraConnect(unittest.TestCase):
             self.assertRaisesRegex(TimeoutError, "too old"),
         ):
             self.camera.read_latest(max_age_ms=500)
+
+    def test_recording_start_waits_for_new_frames_after_encoder_warmup(self):
+        self.camera.connect(warmup=False)
+        old_frame = np.zeros((4, 7, 3), dtype=np.uint8)
+        fresh_frame = np.ones_like(old_frame)
+        self.camera._latest_sample = (old_frame, 9.0)
+
+        def background_reader(_seconds):
+            self.camera._latest_sample = (fresh_frame, 10.0)
+
+        with (
+            patch.object(driver.time, "monotonic", return_value=10.0),
+            patch.object(driver.time, "sleep", side_effect=background_reader) as sleep,
+        ):
+            wait_for_fresh_camera_frames({"tactile": self.camera})
+            self.assertIs(self.camera.read_latest(), fresh_frame)
+        sleep.assert_called_once_with(0.01)
+        self.sensor.selectSensorInfo.assert_not_called()
+
+    def test_recording_start_rechecks_all_cameras_and_never_changes_age_limit(self):
+        left, right = Mock(), Mock()
+        left.read_latest.side_effect = [TimeoutError("left stale"), object(), object()]
+        right.read_latest.side_effect = [TimeoutError("right stale"), object()]
+        wait_for_fresh_camera_frames({"left": left, "right": right})
+        self.assertEqual(left.read_latest.call_count, 3)
+        self.assertEqual(right.read_latest.call_count, 2)
+        for camera in (left, right):
+            self.assertTrue(all(not call.args and not call.kwargs for call in camera.read_latest.call_args_list))
+        self.assertEqual(self.sleep.call_count, 2)
+
+    def test_recording_start_times_out_when_camera_does_not_recover(self):
+        self.camera.connect(warmup=False)
+        self.camera._latest_sample = (np.zeros((4, 7, 3), dtype=np.uint8), -10.0)
+        with self.assertRaisesRegex(TimeoutError, "before recording") as caught:
+            wait_for_fresh_camera_frames({"tactile": self.camera}, timeout_s=0.5)
+        self.assertIn("too old", str(caught.exception.__cause__))
+        self.assertLessEqual(self.sleep.call_count, 3)
+        self.sensor.selectSensorInfo.assert_not_called()
+
+    def test_recording_start_does_not_wait_for_fresh_caches_or_hide_device_errors(self):
+        camera = Mock()
+        wait_for_fresh_camera_frames({})
+        wait_for_fresh_camera_frames({"camera": camera})
+        camera.read_latest.side_effect = DeviceNotConnectedError("disconnected")
+        with self.assertRaises(DeviceNotConnectedError):
+            wait_for_fresh_camera_frames({"camera": camera})
+        self.sleep.assert_not_called()
 
     def test_disconnect_clears_the_previous_stream_sample(self):
         self.camera.connect(warmup=False)

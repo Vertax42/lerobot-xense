@@ -82,6 +82,25 @@ class RebotTactileCamera(XenseTactileCamera):
         self.new_frame_event.clear()
 
 
+def wait_for_fresh_camera_frames(cameras, timeout_s: float = 2.0) -> None:
+    """Let camera caches recover after encoder warmup, before recording starts."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            for camera in cameras.values():
+                camera.read_latest()
+            return
+        except TimeoutError as error:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    f"B601 cameras did not provide fresh frames within {timeout_s:.1f} s before recording: {error}"
+                ) from error
+            # Yield to the existing camera readers. Never accept stale images
+            # or introduce this wait into the per-frame observation path.
+            time.sleep(min(0.01, remaining))
+
+
 def make_rebot_cameras(camera_configs):
     """Select the local tactile adapter only for cameras owned by a B601 arm."""
     cameras = make_cameras_from_configs({key: cfg for key, cfg in camera_configs.items() if cfg.type != "xense"})

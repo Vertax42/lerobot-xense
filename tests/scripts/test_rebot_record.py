@@ -53,6 +53,15 @@ class RecordingRobot(FakeRobot):
         obs["wrist"] = np.full((2, 3, 3), self._obs_count, dtype=np.uint8)
         return obs
 
+    def get_commanded_tcp_pose_quat(self):
+        self.calls.append(("get_commanded_tcp_pose_quat",))
+        pose = np.array([0.15, 0.25, 0.4, 1, 0, 0, 0, 0.5])
+        return (pose, pose.copy()) if self._bimanual else pose
+
+    def get_commanded_tcp_pose_euler(self):
+        self.calls.append(("get_commanded_tcp_pose_euler",))
+        return np.array([0.15, 0.25, 0.4, 0, 0, 0, 0.5])
+
     def send_action(self, action):
         self.assert_not_resetting()
         super().send_action(action)
@@ -132,6 +141,38 @@ class TestB601RecordLoop(unittest.TestCase):
                     self.assertEqual(frame["task"], "test task")
                     self.assertTrue((frame["observation.images.wrist"] == index).all())
 
+    def test_each_episode_waits_for_fresh_cameras_before_entering_rt_loop(self):
+        for dual in (False, True):
+            with self.subTest(dual=dual):
+                robot, teleop = RecordingRobot(dual), teleoperator(dual)
+                dataset = dataset_for(robot)
+                order = Mock()
+                with (
+                    patch(
+                        "lerobot.robots.rebot_b601_rt.tactile_camera.wait_for_fresh_camera_frames",
+                        new=order.wait,
+                    ),
+                    patch.object(cli, "run_rt_record_loop", new=order.record),
+                ):
+                    for _ in range(2):
+                        cli.rebot_b601_rt_record_loop(robot, fresh_events(), 30, dataset, teleop)
+                self.assertEqual([call[0] for call in order.mock_calls], ["wait", "record", "wait", "record"])
+                order.wait.assert_called_with(robot.cameras)
+
+    def test_camera_start_timeout_prevents_recording_or_sending_actions(self):
+        robot, teleop = RecordingRobot(True), teleoperator(True)
+        with (
+            patch(
+                "lerobot.robots.rebot_b601_rt.tactile_camera.wait_for_fresh_camera_frames",
+                side_effect=TimeoutError("camera did not recover"),
+            ),
+            patch.object(cli, "run_rt_record_loop") as loop,
+            self.assertRaisesRegex(TimeoutError, "camera did not recover"),
+        ):
+            cli.rebot_b601_rt_record_loop(robot, fresh_events(), 30, dataset_for(robot), teleop)
+        loop.assert_not_called()
+        self.assertNotIn("send_action", robot.names())
+
     def test_a_reset_records_measured_pose_and_resyncs_before_reading_next_action(self):
         for dual in (False, True):
             with self.subTest(dual=dual):
@@ -152,6 +193,11 @@ class TestB601RecordLoop(unittest.TestCase):
                 loop(fresh_events(), 1, dataset=dataset, control_time_s=7)
                 self.assertEqual(robot.names().count("reset_to_initial_position"), 1)
                 teleop.reset_to_pose.assert_called_once()
+                pose = robot.get_commanded_tcp_pose_quat()
+                expected = (pose[0][:7], pose[1][:7], pose[0][7], pose[1][7]) if dual else (pose[:7], pose[7])
+                for actual, reference in zip(teleop.reset_to_pose.call_args.args, expected, strict=True):
+                    np.testing.assert_allclose(actual, reference)
+                self.assertNotIn("get_current_tcp_pose_quat", robot.names())
                 # Shared RT semantics: skip the trigger frame, then pair the
                 # previous observation with measured TCP while reset is moving.
                 self.assertEqual(len(dataset.frames), 6)
@@ -300,14 +346,14 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         self.enterContext(patch.object(cli.time, "sleep"))
         return cfg, robot, teleop, dataset, order
 
-    def test_recipes_seed_measured_poses_and_close_after_encoding(self):
+    def test_recipes_seed_commanded_poses_and_close_after_encoding(self):
         for dual in (False, True):
             with self.subTest(dual=dual):
                 cfg, robot, teleop, dataset, order = self.setup_record(dual)
                 dataset.episode_buffer["size"] = 2
                 with patch.object(cli, "rebot_b601_rt_record_loop") as loop:
                     cli.record(cfg)
-                pose = robot.get_current_tcp_pose_quat()
+                pose = robot.get_commanded_tcp_pose_quat()
                 expected = (
                     {"left_tcp_pose_quat": pose[0], "right_tcp_pose_quat": pose[1]}
                     if dual
@@ -315,6 +361,7 @@ class TestB601RecordEntrypoint(unittest.TestCase):
                 )
                 for key, value in expected.items():
                     np.testing.assert_allclose(teleop.connect.call_args.kwargs[key], value)
+                self.assertNotIn("get_current_tcp_pose_quat", robot.names())
                 self.assertEqual(loop.call_count, 1)
                 robot.disconnect.assert_called_once_with()
                 self.assertEqual(order, ["save", "encoder_cleanup", "finalize", "disconnect"])
@@ -415,7 +462,7 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         self.assertNotIn("reset_to_initial_position", robot.names())
         robot.disconnect.assert_called_once_with()
 
-    def test_spacemouse_connection_uses_measured_euler_pose(self):
+    def test_spacemouse_connection_uses_commanded_euler_pose(self):
         cfg, robot, teleop, dataset, _ = self.setup_record(dual=False)
         cfg.teleop = cli.spacemouse.SpacemouseConfig()
         teleop.name = "spacemouse"
@@ -423,8 +470,9 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         with patch.object(cli, "rebot_b601_rt_record_loop"):
             cli.record(cfg)
         np.testing.assert_allclose(
-            teleop.connect.call_args.kwargs["current_tcp_pose_euler"], [0.1, 0.2, 0.3, 0, 0, 0, 0.5]
+            teleop.connect.call_args.kwargs["current_tcp_pose_euler"], robot.get_commanded_tcp_pose_euler()
         )
+        self.assertNotIn("get_current_tcp_pose_euler", robot.names())
 
     def test_teleop_startup_interrupt_uses_common_disconnect(self):
         cfg, robot, teleop, _, order = self.setup_record()
