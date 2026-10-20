@@ -41,7 +41,7 @@ robot:
     channel: can0 # Right arm; also configure at 1 Mbps and bring UP before running
     interpolate_cartesian_targets: true
     mit_velocity_feedforward: false
-    gravity_compensation_scale: 0.5
+    gravity_compensation_scale: 1.0
     gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1]
     gravity_slew_rate_nm_s: 5.0
     max_joint_speed: 1.5 # rad/s
