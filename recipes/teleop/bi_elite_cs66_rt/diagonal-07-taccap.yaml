@@ -163,10 +163,17 @@ robot:
   # Set native_assembly before using `auto`.
   native_collision_profile: null
   # Grippers move freely; measured state updates geometry and constrains only the arms.
-  # Live collision mode requires measured hardware calibration.
-  # Format: {left: {left_tool_taccap_right_finger_joint: [[opening, rad], ...]}, right: {...}}
-  # URDF limits are not sensor calibration; missing calibration refuses live collision mode.
-  native_collision_gripper_calibration: null
+  # Hardware mapping confirmed by the operator: 0 = closed (0 rad), 1 = open (28.92 deg).
+  # Fixed-ratio transmission gives a linear map; the other finger follows the URDF mimic.
+  native_collision_gripper_calibration:
+    left:
+      left_tool_taccap_right_finger_joint:
+        - [0.0, 0.0]
+        - [1.0, 0.5047492196767601]
+    right:
+      right_tool_taccap_right_finger_joint:
+        - [0.0, 0.0]
+        - [1.0, 0.5047492196767601]
   native_collision_gripper_max_age_s: 0.1
   native_collision_gripper_publish_hz: 100.0
   # Joint-current contact stop (any link). Off until its thresholds are tuned on

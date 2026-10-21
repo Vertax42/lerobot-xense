@@ -155,6 +155,18 @@ robot:
   # refused when their joint path is blocked. Not yet validated on hardware.
   # `auto` uses this assembly's TacCap collision.json (python -m libpyelite.sim --collision-profile auto).
   native_collision_profile: auto
+  # Grippers move freely; measured state updates geometry and constrains only the arms.
+  # Hardware mapping confirmed by the operator: 0 = closed (0 rad), 1 = open (28.92 deg).
+  # Fixed-ratio transmission gives a linear map; the other finger follows the URDF mimic.
+  native_collision_gripper_calibration:
+    left:
+      left_tool_taccap_right_finger_joint:
+        - [0.0, 0.0]
+        - [1.0, 0.5047492196767601]
+    right:
+      right_tool_taccap_right_finger_joint:
+        - [0.0, 0.0]
+        - [1.0, 0.5047492196767601]
   # Joint-current contact stop (any link). Off until its thresholds are tuned on
   # the bench; see third_party/libpyelite/examples/contact_monitor.json.
   native_contact_monitor: null

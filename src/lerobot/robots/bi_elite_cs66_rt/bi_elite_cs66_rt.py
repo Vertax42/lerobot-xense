@@ -117,6 +117,7 @@ class BiEliteCS66RT(Robot):
         self._station_gripper_stop = threading.Event()
         self._station_gripper_thread: threading.Thread | None = None
         self._station_gripper_error: str | None = None
+        self._station_gripper_samples: tuple[float, dict[str, Any]] | None = None
         self._native_tools: dict[str, list[float] | None] = dict.fromkeys(_SIDES)
         self._dashboard: dict[str, Any] = dict.fromkeys(_SIDES)
         self._rtsi: dict[str, Any] = dict.fromkeys(_SIDES)
@@ -469,9 +470,6 @@ class BiEliteCS66RT(Robot):
                 futs = {side: ex.submit(self._connect_arm, side) for side in _SIDES}
                 for side in _SIDES:
                     futs[side].result()
-            # Before any arm is driven: the coordinator owns both arms' planning.
-            self._start_station_layer()
-
             # --- Connect bimanual cameras in parallel ---
             # Read the wrist fisheye intrinsics off each gripper's MCU while it is
             # open, before the cameras build their remap tables.
@@ -483,7 +481,14 @@ class BiEliteCS66RT(Robot):
                     cam_futs = [ex.submit(cam.connect) for cam in self.cameras.values()]
                     for f in cam_futs:
                         f.result()
+            # Start freshness-sensitive publication after device initialization,
+            # still before any MoveJ or servo command. Camera/MCU setup may block
+            # Python threads longer than the gripper freshness budget.
+            self._start_station_layer()
+            self._check_station_health()
         except BaseException:
+            with best_effort(self.logger, "logging connection fault diagnostics"):
+                self._log_native_fault_diagnostics()
             self._cleanup_after_failed_connect()
             raise
 
@@ -521,7 +526,12 @@ class BiEliteCS66RT(Robot):
                 online_futs = {side: ex.submit(_bring_arm_online, side) for side in _SIDES}
                 for side in _SIDES:
                     online_futs[side].result()
+            self._check_station_health()
+            for side in _SIDES:
+                self._driver[side].check_error()
         except BaseException:
+            with best_effort(self.logger, "logging connection fault diagnostics"):
+                self._log_native_fault_diagnostics()
             self._is_connected = False
             self._cleanup_after_failed_connect()
             raise
@@ -710,7 +720,16 @@ class BiEliteCS66RT(Robot):
 
     def _start_servo_loop(self, side: str) -> None:
         assert self._driver[side] is not None and self._rtsi[side] is not None
+        # startServo clears the driver's latched error. It must never revive a
+        # sender whose external planner has already stopped with a station fault.
+        self._check_station_health()
         self._driver[side].startServo(self._rtsi[side])
+        try:
+            self._check_station_health()
+        except Exception:
+            with best_effort(self.logger, f"stopping {side} after station fault during servo startup"):
+                self._stop_servo_loop(side)
+            raise
 
     def _stop_servo_loop(self, side: str) -> None:
         if self._driver[side] is not None:
@@ -719,8 +738,20 @@ class BiEliteCS66RT(Robot):
     def _is_reset_moving_locked(self, side: str, now: float) -> bool:
         return self._driver[side] is not None and self._driver[side].status().reset_active
 
+    def _check_station_health(self) -> None:
+        if self._coordinator is None:
+            return
+        status = self._coordinator.status()
+        if status.error:
+            raise RuntimeError(f"Elite station collision layer failed: {status.error}")
+        if not status.running:
+            raise RuntimeError("Elite station collision coordinator is not running")
+
     def _raise_servo_error_if_any(self, side: str) -> None:
         try:
+            # Preserve the primary station fault instead of a subsequent sender
+            # deadline error caused by the stopped external planner.
+            self._check_station_health()
             # A fault on either arm stops command production for the pair.
             for selected in _SIDES:
                 if self._driver[selected] is not None:
@@ -751,6 +782,20 @@ class BiEliteCS66RT(Robot):
                 f"error={st.error!r} last: held={list(st.last.held)} limited={list(st.last.limited)} "
                 f"clearance={st.last.clearance.minimum_distance * 1000:.1f} mm"
             )
+        if self._station_gripper_error is not None:
+            self.logger.error(f"[station] gripper publisher error: {self._station_gripper_error}")
+        if self._station_gripper_samples is not None:
+            published_at, samples = self._station_gripper_samples
+            now = time.monotonic()
+            for side, sample in samples.items():
+                # This is the latest publication, not necessarily the one that
+                # faulted. The native station error describes the failing sample.
+                self.logger.error(
+                    f"[{side}] latest gripper snapshot: opening={sample.position!r} raw={sample.raw_position!r} "
+                    f"valid={sample.valid} sequence={sample.sequence} "
+                    f"sample_age={(now - sample.sampled_at) * 1000:.1f} ms "
+                    f"publication_age={(now - published_at) * 1000:.1f} ms"
+                )
 
     def _start_station_layer(self) -> None:
         """Bring up the station collision layer when the recipe asks for it.
@@ -805,6 +850,7 @@ class BiEliteCS66RT(Robot):
         # transaction is permitted in get_gripper_snapshot().
         self._station_gripper_stop.clear()
         self._station_gripper_error = None
+        self._station_gripper_samples = None
         self._station_gripper_thread = threading.Thread(
             target=self._station_gripper_loop, args=(self._station,), name="station-gripper-state", daemon=True
         )
@@ -824,6 +870,7 @@ class BiEliteCS66RT(Robot):
         while not self._station_gripper_stop.is_set():
             try:
                 snapshots = {side: self._gripper[side].get_gripper_snapshot() for side in _SIDES}
+                self._station_gripper_samples = (time.monotonic(), snapshots)
                 station.publish_gripper_snapshots(snapshots)
                 self._station_gripper_error = None
             except Exception as exc:
@@ -861,6 +908,7 @@ class BiEliteCS66RT(Robot):
         its measured joints. Arms moved together share one duration, so their
         joint-interpolated paths progress together along this segment.
         """
+        self._check_station_health()
         if self._station is None:
             return
         start = self._measured_joints()
@@ -877,6 +925,7 @@ class BiEliteCS66RT(Robot):
     ) -> None:
         driver = self._driver[side]
         assert driver is not None
+        self._check_station_health()  # also required for a previously checked joint path
         if not path_checked:
             self._check_joint_move({side: list(target_joints)}, f"{side} MoveJ")
         was_running = driver.status().running
