@@ -32,13 +32,14 @@ package does not hard-fail on hosts where the native extension is not built —
 the error is raised with rebuild guidance at ``connect()`` time instead.
 """
 
+import math
 import threading
 import time
 
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import get_logger
 
-from ..gripper import Gripper
+from ..gripper import Gripper, GripperSnapshot
 from .configuration_taccap import TaccapFollowerConfig
 
 try:
@@ -123,6 +124,7 @@ class TaccapFollower(Gripper):
         self._is_connected: bool = False
         self._gripper = None  # xense.taccap.FollowerGripper
         self._loop = None  # active ForcePositionController
+        self._snapshot_calibration: tuple[float, float, float] | None = None
 
         # Seed so get_gripper_position() returns something sane before the loop
         # produces its first observation.
@@ -255,6 +257,7 @@ class TaccapFollower(Gripper):
         if self._is_connected:
             raise DeviceAlreadyConnectedError(f"{self} is already connected.")
 
+        self._snapshot_calibration = None
         if taccap is None:
             raise RuntimeError(
                 "xense.taccap is not importable — the TacCap SDK native extension is "
@@ -282,6 +285,18 @@ class TaccapFollower(Gripper):
             except Exception as e:
                 calibrated = False
                 self.logger.warn(f"Could not read gripper config (assuming uncalibrated): {e}")
+            else:
+                # Optional snapshot metadata must not change the existing
+                # calibration check or controller startup on older SDKs.
+                try:
+                    low, high = float(cfg.min_open_rad), float(cfg.max_open_rad)
+                    self._snapshot_calibration = (
+                        (low, high, -1.0 if cfg.flags & 0x0002 else 1.0)
+                        if calibrated and math.isfinite(low) and math.isfinite(high) and high > low
+                        else None
+                    )
+                except Exception:
+                    self._snapshot_calibration = None
             if not calibrated and self._require_calibrated:
                 raise RuntimeError(
                     f"TacCap follower (side={self._side}) is not calibrated; normalized [0, 1] "
@@ -332,6 +347,7 @@ class TaccapFollower(Gripper):
         Mirrors disconnect(), but tolerates every step being absent — we may be
         anywhere between "handle open" and "loop running" when this fires.
         """
+        self._snapshot_calibration = None
         if self._loop is not None:
             try:
                 self._loop.stop()
@@ -378,6 +394,7 @@ class TaccapFollower(Gripper):
         if not self._is_connected:
             raise DeviceNotConnectedError(f"{self} is not connected.")
 
+        self._snapshot_calibration = None
         if self._loop is not None:
             try:
                 self._loop.stop()
@@ -408,6 +425,35 @@ class TaccapFollower(Gripper):
         self.logger.info(f"TacCap follower disconnected (side={self._side}).")
 
     # ── Position interface ─────────────────────────────────────────────────────
+
+    def get_gripper_snapshot(self) -> GripperSnapshot:
+        """Copy the SDK stream snapshot; never query USB or reuse getter cache.
+
+        SDK ``age_ms`` is recomputed from its steady-clock receive timestamp,
+        including while its controller is stalled. Use the time before the FFI
+        call so contention cannot make an old sample appear younger.
+        """
+        if not self._is_connected or self._loop is None or self._snapshot_calibration is None:
+            return GripperSnapshot()
+        try:
+            before = time.monotonic()
+            snapshot = self._loop.snapshot()
+            obs = snapshot.observation
+            low, high, direction = self._snapshot_calibration
+            raw, age = float(obs.raw_pos), float(obs.age_ms) / 1000.0
+            position = (direction * raw - low) / (high - low)
+            valid = (
+                bool(snapshot.running)
+                and bool(obs.valid)
+                and int(obs.seq) > 0
+                and math.isfinite(raw)
+                and math.isfinite(position)
+                and math.isfinite(age)
+                and age >= 0
+            )
+            return GripperSnapshot(position, before - age, int(obs.seq), valid, raw)
+        except Exception:
+            return GripperSnapshot()
 
     def get_gripper_position(self) -> float:
         """Return normalized position in [0, 1] from the control loop's latest

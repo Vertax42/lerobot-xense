@@ -28,6 +28,7 @@ USB hub are read by the *robot* as XenseTactileCamera entries, not by this
 driver.
 """
 
+import math
 import time
 from threading import Thread
 
@@ -36,7 +37,7 @@ from xgripper import XenseSerialGripper
 from lerobot.utils.errors import DeviceAlreadyConnectedError, DeviceNotConnectedError
 from lerobot.utils.robot_utils import get_logger
 
-from ..gripper import Gripper
+from ..gripper import Gripper, GripperSnapshot
 from .configuration_serial import SerialGripperConfig
 
 # find_port_by_sn is re-exported here for backward compatibility; both it and the
@@ -104,6 +105,7 @@ class SerialGripper(Gripper):
         self._cached_position: float = 1.0 if config.init_open else 0.0
         self._poll_thread: Thread | None = None
         self._poll_running: bool = False
+        self._sensor_snapshot = GripperSnapshot()
 
     @property
     def is_connected(self) -> bool:
@@ -162,6 +164,7 @@ class SerialGripper(Gripper):
             raise RuntimeError(f"Failed to open serial gripper on {self._port}: {e}") from e
 
         self._is_connected = True
+        self._sensor_snapshot = GripperSnapshot()
         self._cached_position = 1.0 if self._init_open else 0.0
         self.logger.info(f"Serial gripper connected on {self._port}.")
 
@@ -192,6 +195,7 @@ class SerialGripper(Gripper):
             if gripper is None:
                 break
             try:
+                requested_at = time.monotonic()
                 status = gripper.get_gripper_status(timeout=0.05)
                 failure_reason = gripper.get_receive_thread_failure_reason()
                 if failure_reason is not None:
@@ -215,7 +219,18 @@ class SerialGripper(Gripper):
                     time.sleep(_POLL_FAIL_SLEEP_S)
                     continue
 
-                raw_pos = max(self._gripper_min_pos, min(float(raw_pos), self._gripper_max_pos))
+                raw_pos = float(raw_pos)
+                position = (raw_pos - self._gripper_min_pos) / span
+                # The SDK clears its receive cache before this request. Timestamp
+                # the request conservatively: waiting for the reply adds age.
+                self._sensor_snapshot = GripperSnapshot(
+                    position,
+                    requested_at,
+                    self._sensor_snapshot.sequence + 1,
+                    math.isfinite(position),
+                    raw_pos,
+                )
+                raw_pos = max(self._gripper_min_pos, min(raw_pos, self._gripper_max_pos))
                 self._cached_position = (raw_pos - self._gripper_min_pos) / span
             except Exception as e:
                 consecutive_failures += 1
@@ -274,6 +289,10 @@ class SerialGripper(Gripper):
         self.logger.info("Serial gripper disconnected.")
 
     # ── Position interface ─────────────────────────────────────────────────────
+
+    def get_gripper_snapshot(self) -> GripperSnapshot:
+        """Read one immutable sample produced by the existing serial poller."""
+        return self._sensor_snapshot if self._is_connected else GripperSnapshot()
 
     def get_gripper_position(self) -> float:
         """Return normalized gripper position in [0, 1] from the background cache.
