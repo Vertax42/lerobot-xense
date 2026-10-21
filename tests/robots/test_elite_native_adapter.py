@@ -263,6 +263,24 @@ def test_single_and_bimanual_planner_defaults_agree():
     single, bi = EliteCS66RTConfig(), BiEliteCS66RTConfig()
     assert single.native_max_tcp_linear_velocity == bi.native_max_tcp_linear_velocity
     assert single.native_max_tcp_angular_velocity == bi.native_max_tcp_angular_velocity
+    assert single.native_preserve_configuration and bi.native_preserve_configuration
+    assert single.native_joint_motion_limits and bi.native_joint_motion_limits
+
+
+@pytest.mark.parametrize("cls", [EliteCS66RTConfig, BiEliteCS66RTConfig])
+def test_configuration_policy_fields_reach_native_planner(cls):
+    native = _native_cfg()
+    config = cls(
+        native_preserve_configuration=True,
+        native_configuration_margin=0.08,
+        native_configuration_joint_span=2.8,
+        native_boundary_orientation_tolerance=0.02,
+    )
+    _configure_native_driver(native, config, None)
+    assert native.planner.preserve_configuration
+    assert native.planner.configuration_margin == 0.08
+    assert native.planner.configuration_joint_span == 2.8
+    assert native.planner.boundary_orientation_tolerance == 0.02
 
 
 @pytest.mark.parametrize(
@@ -275,6 +293,7 @@ def test_bimanual_recipes_decode_with_native_safety(path):
     assert (config.max_lin_speed, config.max_ang_speed) == (0.25, 1.0)
     assert config.native_cartesian_motion_limits
     assert config.native_joint_motion_limits
+    assert config.native_preserve_configuration
     if config.native_assembly is None:
         assert config.native_collision_profile is None
     else:
