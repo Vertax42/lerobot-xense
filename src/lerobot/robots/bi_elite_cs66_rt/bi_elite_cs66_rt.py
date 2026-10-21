@@ -114,6 +114,9 @@ class BiEliteCS66RT(Robot):
         # StationLayer and the StationCoordinator planning both arms through it.
         self._station: Any = None
         self._coordinator: Any = None
+        self._station_gripper_stop = threading.Event()
+        self._station_gripper_thread: threading.Thread | None = None
+        self._station_gripper_error: str | None = None
         self._native_tools: dict[str, list[float] | None] = dict.fromkeys(_SIDES)
         self._dashboard: dict[str, Any] = dict.fromkeys(_SIDES)
         self._rtsi: dict[str, Any] = dict.fromkeys(_SIDES)
@@ -447,6 +450,13 @@ class BiEliteCS66RT(Robot):
         if self.is_connected:
             raise DeviceAlreadyConnectedError(f"{self} already connected, do not run connect() twice.")
 
+        if self.config.native_collision_profile is not None:
+            from libpyelite.collision import StationLayer
+
+            # Validate geometry/backend/calibration before powerOn/brakeRelease
+            # or gripper enable. Actual TCP transforms are obtained later.
+            preflight = StationLayer(self._assembly, self.config.native_collision_profile, [np.eye(4), np.eye(4)])
+            self._configure_station_grippers(preflight)
         self._cs = _import_elite_sdk()
         # Native workers own the high-rate path; preserve the Python station logic.
 
@@ -759,6 +769,8 @@ class BiEliteCS66RT(Robot):
             raise RuntimeError("Both native driver TCP transforms must be configured before the station layer")
         tools = [self._native_tools[side] for side in _SIDES]
         self._station = StationLayer(self._assembly, profile, tools)
+        self._configure_station_grippers(self._station)
+        self._start_station_gripper_publisher()
         native = {side: self._driver[side]._native for side in _SIDES}
         for side in _SIDES:
             native[side].setExternalPlanning(True)
@@ -768,11 +780,76 @@ class BiEliteCS66RT(Robot):
         self._coordinator.start()
         self.logger.info(f"Station collision layer active: {self._station.path}")
 
+    def _configure_station_grippers(self, station) -> None:
+        for side in _SIDES:
+            gripper = self._gripper[side]
+            if gripper is None:
+                raise ValueError(
+                    f"Collision station models movable {side} gripper fingers but no sensor backend is enabled"
+                )
+            if (
+                any(f"{side}_tool_taccap_" in str(name) for name in station.model.names)
+                and gripper.config.type != "taccap_follower"
+            ):
+                raise ValueError(
+                    f"{side} gripper backend {gripper.config.type!r} does not match the TacCap station geometry"
+                )
+        station.configure_grippers(
+            self.config.native_collision_gripper_calibration,
+            self.config.native_collision_gripper_max_age_s,
+        )
+
+    def _start_station_gripper_publisher(self) -> None:
+        # An independent cache reader owns publication, including while arms
+        # hold and when no get_observation() calls are made. No USB/serial
+        # transaction is permitted in get_gripper_snapshot().
+        self._station_gripper_stop.clear()
+        self._station_gripper_error = None
+        self._station_gripper_thread = threading.Thread(
+            target=self._station_gripper_loop, args=(self._station,), name="station-gripper-state", daemon=True
+        )
+        self._station_gripper_thread.start()
+        deadline = time.monotonic() + 1.0
+        while True:
+            try:
+                self._station.station_q([0.0] * 6, [0.0] * 6)
+                break
+            except RuntimeError as exc:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(f"No fresh calibrated gripper state for collision startup: {exc}") from exc
+                time.sleep(0.01)
+
+    def _station_gripper_loop(self, station) -> None:
+        period = 1.0 / self.config.native_collision_gripper_publish_hz
+        while not self._station_gripper_stop.is_set():
+            try:
+                snapshots = {side: self._gripper[side].get_gripper_snapshot() for side in _SIDES}
+                station.publish_gripper_snapshots(snapshots)
+                self._station_gripper_error = None
+            except Exception as exc:
+                self._station_gripper_error = str(exc)
+                # Explicit invalidation, never refresh the old valid sample.
+                try:
+                    station.publish_gripper_snapshots({})
+                except Exception:
+                    return  # native timestamp validation still expires the last publication
+            self._station_gripper_stop.wait(period)
+
     def _stop_station_layer(self) -> None:
-        if self._coordinator is not None:
-            self._coordinator.stop()
-        self._coordinator = None
-        self._station = None
+        try:
+            if self._coordinator is not None:
+                self._coordinator.stop()
+        finally:
+            self._station_gripper_stop.set()
+            if self._station_gripper_thread is not None:
+                self._station_gripper_thread.join(timeout=1.0)
+                if self._station_gripper_thread.is_alive():
+                    raise RuntimeError(
+                        "Gripper snapshot reader did not stop; backend must provide a nonblocking snapshot"
+                    )
+                self._station_gripper_thread = None
+            self._coordinator = None
+            self._station = None
 
     def _measured_joints(self) -> dict[str, np.ndarray]:
         return {side: np.asarray(self._rtsi[side].getActualJointPositions(), dtype=np.float64) for side in _SIDES}

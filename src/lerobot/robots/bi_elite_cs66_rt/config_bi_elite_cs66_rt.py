@@ -173,6 +173,12 @@ class BiEliteCS66RTConfig(RobotConfig):
     # assembly's collision.json) or a path. Needs native_assembly; the robot then
     # runs both arms through the same StationGuard as libpyelite.sim.
     native_collision_profile: str | None = None
+    # Actual sensor opening -> URDF driver coordinate calibration, per side.
+    # {left: {left_tool_taccap_right_finger_joint: [[opening, rad], ...]}, right: {...}}
+    # Must be measured; URDF limits do not establish motor/finger gearing.
+    native_collision_gripper_calibration: dict[str, dict[str, list[list[float]]]] | None = None
+    native_collision_gripper_max_age_s: float = 0.1
+    native_collision_gripper_publish_hz: float = 100.0
     left_native_contact_monitor: dict | None = None  # per-arm overrides (fitted gravity, friction)
     right_native_contact_monitor: dict | None = None
 
@@ -310,6 +316,10 @@ class BiEliteCS66RTConfig(RobotConfig):
             raise ValueError("native_model_path and native_assembly are mutually exclusive")
         if self.native_collision_profile is not None and self.native_assembly is None:
             raise ValueError("native_collision_profile needs native_assembly (the station the profile models)")
+        for name in ("native_collision_gripper_max_age_s", "native_collision_gripper_publish_hz"):
+            value = getattr(self, name)
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be positive and finite")
         if self.native_ik_max_iterations < 1:
             raise ValueError("native_ik_max_iterations must be positive")
         for name in (
