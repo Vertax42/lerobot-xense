@@ -11,8 +11,9 @@ robot:
 
   # ── Bench hardware ──────────────────────────────────────────────────────
   motor_family: dm # rs, dm; RobStride / Damiao motors
-  # Serial device names are examples; set the actual device or /dev/serial/by-id/... path.
-  channel: /dev/ttyACM0 # serial path / SocketCAN name; e.g. /dev/ttyACM0 / can0
+  # Plug right DM bridge first, wait for enumeration, then left (if used); repeat after reboot/reconnection.
+  # Explicit /dev/... paths or SocketCAN names (can0, can1) are also supported.
+  channel: auto:first # auto:first, auto:second; first / second DM bridge by USB initialization time
   dm_serial_baud: 921600 # 115200, 230400, 460800, 921600; serial baud, ignored for SocketCAN
   # Joint angles in RADIANS (J1..J6); Rebot uses this pose for startup and user reset.
   # DM J2/J3 use negative angles; check this example pose against the physical workspace.

@@ -56,6 +56,28 @@ value you had — verify before trimming.)
 The `robot:` and `teleop:` blocks are **identical** between a robot's record and
 teleop recipe (same hardware, same teleop device) — keep the two in sync.
 
+### Rebot DM serial connection order
+
+The DM TacCap recipes use `channel: auto:first` for the right arm and
+`channel: auto:second` for the left. Connect the **right DM bridge first**, wait
+until it appears under `/dev/ttyACM*`, then connect the left bridge and start
+recording or teleoperation. The single-arm recipe selects the first bridge.
+
+The driver filters HDSC bridges by USB vendor/product `2e88:4603`, excluding
+TacCap and other serial devices, and sorts by udev's `USEC_INITIALIZED` timestamp.
+It does not sort ACM numbers or bind to USB ports. Both arms are resolved from
+one snapshot before either controller connects, and startup logs show the mapping.
+Missing devices, unavailable/tied timestamps and more than two matching bridges
+stop automatic selection instead of falling back to ACM numbering. No udev rules
+or root privileges are needed; normal serial-device permissions still apply.
+
+This convention does not identify the physical arms: after rebooting with both
+bridges attached, reconnect **both** in right-then-left order before starting.
+Also repeat that sequence if either bridge is unplugged; reconnecting only the
+right bridge while leaving the left attached reverses the order. Keep the USB
+connections unchanged while a program is running. Explicit `/dev/...` paths and
+SocketCAN channels remain supported, including for other bridge hardware.
+
 ### Grippers
 
 The gripper is one typed block, not a pile of flat knobs:

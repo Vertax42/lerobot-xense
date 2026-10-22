@@ -16,7 +16,9 @@ except ImportError as exc:
 
 from lerobot.grippers import SerialGripperConfig, TaccapFollowerConfig
 from lerobot.robots.bi_rebot_b601_rt import BiRebotB601RT, BiRebotB601RTConfig
+from lerobot.robots.bi_rebot_b601_rt import bi_rebot_b601_rt as bi_driver
 from lerobot.robots.rebot_b601_rt import RebotB601RT, RebotB601RTConfig, rebot_b601_rt as driver
+from lerobot.robots.rebot_b601_rt.dm_serial_discovery import DMSerialDevice
 
 ASSETS = Path(rebot_rt.__file__).parent / "assets"
 TACCAP_URDFS = {
@@ -93,6 +95,83 @@ class TestRebotB601RT(unittest.TestCase):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 self.make_robot(**kwargs)
         self.native.connect.assert_not_called()
+
+    def test_auto_serial_is_dm_only_and_rejects_unknown_selectors(self):
+        for family, channel in (("rs", "auto:first"), ("dm", "auto"), ("dm", "auto:third")):
+            with self.subTest(family=family, channel=channel), self.assertRaises(ValueError):
+                self.make_robot(motor_family=family, channel=channel)
+
+    def test_single_auto_serial_is_resolved_again_on_reconnect(self):
+        robot = self.make_robot(motor_family="dm", channel="auto:first")
+        with (
+            patch.object(driver, "discover_dm_serial_devices") as discover,
+            patch.object(driver, "verify_dm_serial_device") as verify,
+        ):
+            for channel, timestamp in (("/dev/ttyACM7", 100), ("/dev/ttyACM3", 300)):
+                devices = (DMSerialDevice(channel, timestamp),)
+                discover.return_value = devices
+                robot.connect()
+                self.assertEqual(self.native_factory.call_args.args[1], channel)
+                self.assertEqual(robot.config.channel, "auto:first")
+                verify.assert_called_with(channel, devices)
+                robot.disconnect()
+            self.assertEqual(discover.call_count, 2)
+
+    def test_auto_serial_reenumeration_aborts_before_native_connect(self):
+        robot = self.make_robot(motor_family="dm", channel="auto:first")
+        with (
+            patch.object(driver, "discover_dm_serial_devices", return_value=(DMSerialDevice("/dev/ttyACM7", 100),)),
+            patch.object(driver, "verify_dm_serial_device", side_effect=RuntimeError("changed during startup")),
+            self.assertRaisesRegex(RuntimeError, "changed during startup"),
+        ):
+            robot.connect()
+        self.native.connect.assert_not_called()
+
+    def test_bimanual_auto_serial_resolves_both_before_connect_from_one_snapshot(self):
+        devices = (DMSerialDevice("/dev/ttyACM7", 100), DMSerialDevice("/dev/ttyACM0", 200))
+        natives = [fake_native(), fake_native()]
+        self.native_factory.side_effect = natives
+        robot = BiRebotB601RT(
+            BiRebotB601RTConfig(
+                calibration_dir=self.calibration_dir,
+                left_arm_config=RebotB601RTConfig(channel="auto:second"),
+                right_arm_config=RebotB601RTConfig(channel="auto:first"),
+            )
+        )
+        with (
+            patch.object(bi_driver, "discover_dm_serial_devices", return_value=devices) as discover,
+            patch.object(driver, "discover_dm_serial_devices") as single_discover,
+            patch.object(driver, "verify_dm_serial_device") as verify,
+        ):
+            try:
+                robot.connect()
+                self.assertEqual(
+                    [c.args[1] for c in self.native_factory.call_args_list], ["/dev/ttyACM0", "/dev/ttyACM7"]
+                )
+                discover.assert_called_once()
+                single_discover.assert_not_called()
+                self.assertEqual(
+                    verify.call_args_list, [call("/dev/ttyACM0", devices), call("/dev/ttyACM7", devices)]
+                )
+            finally:
+                robot.disconnect()
+
+    def test_bimanual_auto_serial_missing_or_duplicate_device_fails_before_either_arm_connects(self):
+        devices = (DMSerialDevice("/dev/ttyACM7", 100),)
+        for left_channel, error in (("auto:second", RuntimeError), ("/dev/ttyACM7", ValueError)):
+            robot = BiRebotB601RT(
+                BiRebotB601RTConfig(
+                    calibration_dir=self.calibration_dir,
+                    left_arm_config=RebotB601RTConfig(channel=left_channel),
+                    right_arm_config=RebotB601RTConfig(channel="auto:first"),
+                )
+            )
+            with (
+                patch.object(bi_driver, "discover_dm_serial_devices", return_value=devices),
+                self.assertRaises(error),
+            ):
+                robot.connect()
+        self.native_factory.assert_not_called()
 
     def test_gravity_is_opt_in_and_configured_before_native_connect(self):
         self.native.configure_gravity_compensation = Mock()

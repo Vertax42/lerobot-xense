@@ -19,7 +19,7 @@ class BiRebotB601RTConfig(RobotConfig):
     def __post_init__(self):
         super().__post_init__()
         if self.left_arm_config.channel == self.right_arm_config.channel:
-            raise ValueError("Each arm needs its own SocketCAN interface")
+            raise ValueError("Each arm needs its own SocketCAN interface or DM serial device")
         names = set(self.cameras) & (set(self.left_arm_config.cameras) | set(self.right_arm_config.cameras))
         if names:
             raise ValueError(f"Camera names collide: {sorted(names)}")

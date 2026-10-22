@@ -3,12 +3,18 @@
 import time
 from dataclasses import replace
 from functools import cached_property
+from pathlib import Path
 from typing import Any
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.robot_utils import best_effort, get_logger
 
 from ..rebot_b601_rt import RebotB601RT
+from ..rebot_b601_rt.dm_serial_discovery import (
+    AUTO_DM_CHANNELS,
+    discover_dm_serial_devices,
+    resolve_dm_serial_channel,
+)
 from ..robot import Robot
 from .config_bi_rebot_b601_rt import BiRebotB601RTConfig
 
@@ -75,10 +81,20 @@ class BiRebotB601RT(Robot):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = True, go_to_start: bool = True) -> None:
+        connect_kwargs = {}
+        channels = [self.left_arm.config.channel, self.right_arm.config.channel]
+        if any(channel in AUTO_DM_CHANNELS for channel in channels):
+            # Resolve both from the same snapshot before either arm is enabled.
+            devices = discover_dm_serial_devices()
+            left, right = (resolve_dm_serial_channel(channel, devices) for channel in channels)
+            if Path(left).resolve() == Path(right).resolve():
+                raise ValueError("Both arms resolve to the same communication device")
+            connect_kwargs["_dm_serial_devices"] = devices
+            self.logger.info(f"DM serial mapping: left={left}, right={right}; plug right first, then left")
         try:
             # Connect both arms before either begins its startup movement.
-            self.left_arm.connect(calibrate=calibrate, go_to_start=False)
-            self.right_arm.connect(calibrate=calibrate, go_to_start=False)
+            self.left_arm.connect(calibrate=calibrate, go_to_start=False, **connect_kwargs)
+            self.right_arm.connect(calibrate=calibrate, go_to_start=False, **connect_kwargs)
             if go_to_start and any(
                 arm.config.reset_position_rad is not None for arm in (self.left_arm, self.right_arm)
             ):

@@ -21,6 +21,13 @@ from lerobot.utils.rotation import Rotation
 from ..robot import Robot
 from .can_diagnostics import can_error_hint
 from .config_rebot_b601_rt import RebotB601RTConfig
+from .dm_serial_discovery import (
+    AUTO_DM_CHANNELS,
+    DMSerialDevice,
+    discover_dm_serial_devices,
+    resolve_dm_serial_channel,
+    verify_dm_serial_device,
+)
 from .taccap_discovery import inject_taccap_cameras
 from .tactile_camera import make_rebot_cameras as make_cameras_from_configs
 
@@ -63,6 +70,7 @@ class RebotB601RT(Robot):
     def __init__(self, config: RebotB601RTConfig):
         super().__init__(config)
         self.config = config
+        self._channel = config.channel
         self.logger = get_logger(self.__class__.__name__)
         self._native: rebot_rt.Robot | None = None
         self._ik_failed = False
@@ -140,7 +148,19 @@ class RebotB601RT(Robot):
             raise RuntimeError("connect() must be called before configure()")
 
     @check_if_already_connected
-    def connect(self, calibrate: bool = True, go_to_start: bool = True) -> None:
+    def connect(
+        self,
+        calibrate: bool = True,
+        go_to_start: bool = True,
+        *,
+        _dm_serial_devices: tuple[DMSerialDevice, ...] | None = None,
+    ) -> None:
+        self._channel = self.config.channel
+        if self.config.channel in AUTO_DM_CHANNELS:
+            if _dm_serial_devices is None:
+                _dm_serial_devices = discover_dm_serial_devices()
+            self._channel = resolve_dm_serial_channel(self.config.channel, _dm_serial_devices)
+            self.logger.info(f"DM serial: {self.config.channel} -> {self._channel} (USB initialization order)")
         assets = Path(rebot_rt.__file__).parent / "assets"
         urdf = self.config.urdf_path or str(assets / self.config.default_urdf)
         end_frame = self.config.end_frame or ("taccap_eef_link" if self.config.uses_taccap_model else "")
@@ -189,7 +209,7 @@ class RebotB601RT(Robot):
             )
         native = rebot_rt.Robot(
             family,
-            self.config.channel,
+            self._channel,
             urdf,
             end_frame,
             self.config.has_gripper,
@@ -217,6 +237,8 @@ class RebotB601RT(Robot):
                 gravity=self.config.gravity_vector,
             )
         try:
+            if self.config.channel in AUTO_DM_CHANNELS:
+                verify_dm_serial_device(self._channel, _dm_serial_devices)
             native.connect()
             native.start()
             if self._gripper is not None:
@@ -267,7 +289,7 @@ class RebotB601RT(Robot):
         self._reset_started_at = time.monotonic()
         self._reset_settled_since = None
         self._last_reset_log = self._reset_started_at
-        self.logger.info(f"Returning on {self.config.channel} to joint position={position_rad} at {speed} rad/s")
+        self.logger.info(f"Returning on {self._channel} to joint position={position_rad} at {speed} rad/s")
 
     def _validate_reset(self) -> None:
         state = self._native.get_state()
@@ -296,7 +318,7 @@ class RebotB601RT(Robot):
                 f"J{i + 1}" for i, error in enumerate(feedback_error) if abs(error) > self._reset_tolerance_rad
             ]
             status = (
-                f"B601 reset on {self.config.channel}: elapsed={elapsed:.1f}s, mode={self.config.control_mode}, "
+                f"B601 reset on {self._channel}: elapsed={elapsed:.1f}s, mode={self.config.control_mode}, "
                 f"command_arrived={command_arrived}, "
                 f"measured={[round(float(q), 4) for q in state.q[:6]]}, "
                 f"error_rad={feedback_error.round(4).tolist()}, "
@@ -477,7 +499,7 @@ class RebotB601RT(Robot):
         return sent
 
     def _log_can_error_hint(self, error: str) -> None:
-        hint = can_error_hint(self.config.channel, error)
+        hint = can_error_hint(self._channel, error)
         if hint is not None:
             self.logger.error(hint)
 

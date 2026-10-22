@@ -8,6 +8,8 @@ from lerobot.cameras.configs import CameraConfig
 from lerobot.grippers import GripperConfig
 from lerobot.robots.config import RobotConfig
 
+from .dm_serial_discovery import AUTO_DM_CHANNELS
+
 DEFAULT_DM_TACCAP_URDF = "DM_Taccap/urdf/rebot_b601_dm_taccap.urdf"
 DEFAULT_RS_TACCAP_URDF = "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
 DEFAULT_TACCAP_URDFS = {"dm": DEFAULT_DM_TACCAP_URDF, "rs": DEFAULT_RS_TACCAP_URDF}
@@ -17,7 +19,7 @@ DEFAULT_TACCAP_URDFS = {"dm": DEFAULT_DM_TACCAP_URDF, "rs": DEFAULT_RS_TACCAP_UR
 @dataclass
 class RebotB601RTConfig(RobotConfig):
     motor_family: str = "dm"  # dm or rs
-    channel: str = "can0"  # SocketCAN interface, or /dev/ttyACM* for DM serial bridge
+    channel: str = "can0"  # SocketCAN, serial path, or auto:first / auto:second (DM USB connection order)
     dm_serial_baud: int = 921600
     control_mode: str = "pos_vel"  # position/velocity loop, or mit
     interpolate_cartesian_targets: bool = True  # native timed Cartesian substeps, in both modes
@@ -90,7 +92,9 @@ class RebotB601RTConfig(RobotConfig):
             raise ValueError("An external gripper requires has_gripper=False for the native arm controller")
         if not self.channel:
             raise ValueError("channel must name a SocketCAN interface or DM serial device")
-        if self.motor_family == "rs" and self.channel.startswith("/"):
+        if (self.channel == "auto" or self.channel.startswith("auto:")) and self.channel not in AUTO_DM_CHANNELS:
+            raise ValueError("DM auto channel must be 'auto:first' or 'auto:second'")
+        if self.motor_family == "rs" and (self.channel.startswith("/") or self.channel in AUTO_DM_CHANNELS):
             raise ValueError("RS requires a SocketCAN interface such as can0")
         if self.dm_serial_baud <= 0:
             raise ValueError("dm_serial_baud must be positive")
