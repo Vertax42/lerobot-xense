@@ -137,11 +137,15 @@ class RebotB601RT(Robot):
 
     @property
     def is_calibrated(self) -> bool:
-        # Zero offsets live in motor firmware and must be established with the vendor tool.
+        # Hardware zero offsets live in the motor, independent of the local calibration record.
         return True
 
     def calibrate(self) -> None:
-        raise RuntimeError("B601 motor zero offsets must be set with the vendor calibration tool")
+        from .calibration import calibrate_b601
+
+        if self._native is not None:
+            raise RuntimeError("Disconnect the RT controller before setting motor zeros")
+        calibrate_b601(self.config)
 
     def configure(self) -> None:
         if self._native is None:

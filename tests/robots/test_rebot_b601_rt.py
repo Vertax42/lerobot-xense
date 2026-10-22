@@ -15,8 +15,7 @@ except ImportError as exc:
     raise unittest.SkipTest("Build libpyrebot to run the B601 RT adapter tests") from exc
 
 from lerobot.grippers import SerialGripperConfig, TaccapFollowerConfig
-from lerobot.robots.bi_rebot_b601_rt import BiRebotB601RT, BiRebotB601RTConfig
-from lerobot.robots.bi_rebot_b601_rt import bi_rebot_b601_rt as bi_driver
+from lerobot.robots.bi_rebot_b601_rt import BiRebotB601RT, BiRebotB601RTConfig, bi_rebot_b601_rt as bi_driver
 from lerobot.robots.rebot_b601_rt import RebotB601RT, RebotB601RTConfig, rebot_b601_rt as driver
 from lerobot.robots.rebot_b601_rt.dm_serial_discovery import DMSerialDevice
 
@@ -77,6 +76,23 @@ class TestRebotB601RT(unittest.TestCase):
         robot = RebotB601RT(config)
         self.addCleanup(lambda: robot.disconnect() if robot.is_connected else None)
         return robot
+
+    def test_calibration_delegates_without_connecting_rt_controller(self):
+        robot = self.make_robot(motor_family="rs")
+        with patch("lerobot.robots.rebot_b601_rt.calibration.calibrate_b601") as calibrate:
+            robot.calibrate()
+        calibrate.assert_called_once_with(robot.config)
+        self.assertIsNone(robot._native)
+
+    def test_calibration_rejects_active_rt_controller(self):
+        robot = self.make_robot()
+        robot.connect()
+        with (
+            patch("lerobot.robots.rebot_b601_rt.calibration.calibrate_b601") as calibrate,
+            self.assertRaisesRegex(RuntimeError, "Disconnect the RT controller"),
+        ):
+            robot.calibrate()
+        calibrate.assert_not_called()
 
     def test_gravity_configuration_is_validated_before_connect(self):
         for kwargs in (
@@ -150,9 +166,7 @@ class TestRebotB601RT(unittest.TestCase):
                 )
                 discover.assert_called_once()
                 single_discover.assert_not_called()
-                self.assertEqual(
-                    verify.call_args_list, [call("/dev/ttyACM0", devices), call("/dev/ttyACM7", devices)]
-                )
+                self.assertEqual(verify.call_args_list, [call("/dev/ttyACM0", devices), call("/dev/ttyACM7", devices)])
             finally:
                 robot.disconnect()
 

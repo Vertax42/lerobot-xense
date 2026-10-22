@@ -135,6 +135,7 @@ damiao = ["lerobot[can-dep]"]
 robstride = ["lerobot[can-dep]"]
 
 # Robots
+rebot-calibration = ["motorbridge>=0.5.6,<0.6"]
 openarms = ["lerobot[damiao]"]
 gamepad = ["lerobot[pygame-dep]", "hidapi>=0.14.0,<0.15.0"]
 hopejr = ["lerobot[feetech]", "lerobot[pygame-dep]"]

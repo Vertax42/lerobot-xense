@@ -86,6 +86,47 @@ reopen retries, plus local TacCap discovery for gripper hubs sharing an upstream
 USB hub. Other robots retain the original shared camera and USB grouping behavior.
 The B601 native SDK is loaded only when its driver is requested.
 
+B601 DM and RobStride (RS) motor zeros can be set separately from RT control. Install
+`motorbridge>=0.5.6,<0.6` (or the `rebot-calibration` extra), then run:
+
+```bash
+lerobot-calibrate \
+  --robot.type=rebot_b601_rt \
+  --robot.motor_family=dm \
+  --robot.channel=/dev/ttyACM0 \
+  --robot.id=follower1 \
+  --robot.has_gripper=false
+
+# RobStride / 灵足, over SocketCAN
+lerobot-calibrate \
+  --robot.type=rebot_b601_rt \
+  --robot.motor_family=rs \
+  --robot.channel=can0 \
+  --robot.id=follower1 \
+  --robot.has_gripper=false
+```
+
+The calibration path in `rebot_b601_rt` disables the selected motors, checks their
+communication, then waits for you to manually place the arm in its mechanical
+zero pose before sending zero commands. It does not enable motors, switch control
+modes, or automatically move the arm. It reuses `channel`, `dm_serial_baud`,
+`motor_configs`, and `has_gripper` from the RT configuration. The example above
+calibrates the six arm motors with a separate USB/TacCap gripper; use
+`--robot.has_gripper=true` to include CAN gripper motor 7. Calibration records are
+stored separately under `calibration/robots/rebot_b601_rt/dm/` and `rs/`.
+An existing `follower1.json` is kept unless you enter `c` at the recalibration prompt.
+After setting zeros, calibration requests a fresh position register reply from
+each motor (DM `p_m`, RS `mechPos`) and prints its position in radians/degrees and
+PASS/FAIL. Keep the arm supported in the mechanical zero pose until this finishes.
+All positions must be finite and within **±0.01 rad (about ±0.57°)** before the
+record is saved; this check is independent of `reset_tolerance_rad`. A read timeout
+or out-of-tolerance position fails calibration and leaves any existing JSON intact,
+although the hardware zero commands have already been sent. This readback verifies
+the current zero, not persistence across a power cycle or correct manual alignment.
+The JSON uses the legacy Seeed format;
+its range fields are placeholders, not measured travel limits. Use
+`rebot_b601_rt` / `bi_rebot_b601_rt` for teleoperation and recording.
+
 B601 recording recipes are available for
 [one arm](recipes/record/rebot_b601_rt/rs-taccap.yaml) and
 [two arms](recipes/record/bi_rebot_b601_rt/rs-taccap.yaml). Both use MIT with

@@ -37,6 +37,7 @@ from lerobot.robots import (  # noqa: F401
     RobotConfig,
     make_robot_from_config,
 )
+from lerobot.robots.rebot_b601_rt import RebotB601RTConfig
 from lerobot.teleoperators import (  # noqa: F401
     Teleoperator,
     TeleoperatorConfig,
@@ -66,6 +67,12 @@ class CalibrateConfig:
 def calibrate(cfg: CalibrateConfig):
     init_logging()
     logger.info(pformat(asdict(cfg)))
+
+    if isinstance(cfg.device, RebotB601RTConfig):
+        from lerobot.robots.rebot_b601_rt.calibration import calibrate_b601
+
+        calibrate_b601(cfg.device)
+        return
 
     if isinstance(cfg.device, RobotConfig):
         device = make_robot_from_config(cfg.device)
