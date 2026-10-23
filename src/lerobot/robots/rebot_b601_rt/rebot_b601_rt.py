@@ -215,6 +215,16 @@ class RebotB601RT(Robot):
                 "Check PYTHONPATH for an older checkout overriding the installed package, "
                 "then build/install the intended libpyrebot repository."
             )
+        cartesian_limits = {
+            name: value
+            for name in ("max_cartesian_linear_speed", "max_cartesian_angular_speed")
+            if (value := getattr(self.config, name)) is not None
+        }
+        if cartesian_limits and not hasattr(rebot_rt.State, "cartesian_speed_scale"):
+            raise RuntimeError(
+                "Rebuild/install libpyrebot with Cartesian speed limit support. "
+                f"Loaded rebot_rt from {rebot_rt.__file__}; check PYTHONPATH for an older checkout."
+            )
         native = rebot_rt.Robot(
             family,
             self._channel,
@@ -229,7 +239,14 @@ class RebotB601RT(Robot):
             self.config.mit_velocity_feedforward,
             max_joint_speeds=self.config.max_joint_speeds or [],
             coordinate_cartesian_speed=self.config.coordinate_cartesian_speed,
+            **cartesian_limits,
         )
+        if cartesian_limits:
+            self.logger.info(
+                f"B601 TCP command limits: linear={self.config.max_cartesian_linear_speed} m/s, "
+                f"angular={self.config.max_cartesian_angular_speed} rad/s, "
+                f"joint coordination={self.config.coordinate_cartesian_speed}"
+            )
         if self.config.interpolate_cartesian_targets and not hasattr(native, "queue_target_pose"):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support native Cartesian interpolation")
         if self.config.gravity_compensation_scale > 0:
@@ -420,7 +437,7 @@ class RebotB601RT(Robot):
                 # it is not an IK rejection. Report it in the tracking trace.
                 if state.cartesian_tracking_limited != self._ik_failed and now - self._last_ik_warning >= 1.0:
                     self.logger.info(
-                        "B601 Cartesian tracking limited; approaching the target within joint limits"
+                        "B601 Cartesian tracking limited; approaching within TCP speed and joint limits"
                         if state.cartesian_tracking_limited
                         else "B601 Cartesian tracking reached the sampled target"
                     )
@@ -448,6 +465,7 @@ class RebotB601RT(Robot):
                 f" tracking_progress={getattr(state, 'cartesian_tracking_progress', False)}"
                 f" tcp_coordinated={getattr(state, 'cartesian_coordinated', False)}"
                 f" tcp_step_scale={getattr(state, 'cartesian_step_scale', 0.0):.3f}"
+                f" tcp_speed_scale={getattr(state, 'cartesian_speed_scale', 1.0):.3f}"
                 f" tcp_bound_joint={'J' + str(limiting_joint + 1) if limiting_joint >= 0 else 'none'}"
                 if self.config.interpolate_cartesian_targets
                 else ""

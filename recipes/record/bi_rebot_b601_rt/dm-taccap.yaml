@@ -44,6 +44,8 @@ robot:
       - {} # J7; unused with the separate TacCap driver
     interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
     coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
+    max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
+    max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
     max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
@@ -111,6 +113,8 @@ robot:
       - {} # J7; unused with the separate TacCap driver
     interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
     coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
+    max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
+    max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
     max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
     # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit

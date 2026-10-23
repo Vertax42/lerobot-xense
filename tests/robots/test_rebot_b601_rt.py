@@ -118,6 +118,38 @@ class TestRebotB601RT(unittest.TestCase):
             with self.subTest(family=family, channel=channel), self.assertRaises(ValueError):
                 self.make_robot(motor_family=family, channel=channel)
 
+    def test_cartesian_speed_limits_validate_and_reach_native_for_both_families(self):
+        for name in ("max_cartesian_linear_speed", "max_cartesian_angular_speed"):
+            for value in (0, -1, float("nan"), float("inf")):
+                with self.subTest(name=name, value=value), self.assertRaises(ValueError):
+                    self.make_robot(interpolate_cartesian_targets=True, **{name: value})
+            with self.assertRaisesRegex(ValueError, "interpolate_cartesian_targets"):
+                self.make_robot(**{name: 1.0})
+        self.native.connect.assert_not_called()
+        for family in ("dm", "rs"):
+            with self.subTest(family=family):
+                robot = self.make_robot(
+                    motor_family=family,
+                    interpolate_cartesian_targets=True,
+                    max_cartesian_linear_speed=1.0,
+                    max_cartesian_angular_speed=6.28,
+                )
+                robot.connect()
+                self.assertEqual(self.native_factory.call_args.kwargs["max_cartesian_linear_speed"], 1.0)
+                self.assertEqual(self.native_factory.call_args.kwargs["max_cartesian_angular_speed"], 6.28)
+                robot.disconnect()
+
+    def test_cartesian_limits_reject_old_native_before_connect(self):
+        robot = self.make_robot(interpolate_cartesian_targets=True, max_cartesian_linear_speed=1.0)
+        with (
+            patch.object(
+                driver.rebot_rt, "State", SimpleNamespace(mit_command_velocity=None, cartesian_step_scale=None)
+            ),
+            self.assertRaisesRegex(RuntimeError, "Cartesian speed limit support"),
+        ):
+            robot.connect()
+        self.native.connect.assert_not_called()
+
     def test_single_auto_serial_is_resolved_again_on_reconnect(self):
         robot = self.make_robot(motor_family="dm", channel="auto:first")
         with (

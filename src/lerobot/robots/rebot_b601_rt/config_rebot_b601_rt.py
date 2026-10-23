@@ -42,6 +42,8 @@ class RebotB601RTConfig(RobotConfig):
     max_joint_speed: float = 0.5  # rad/s, fallback for all joints and native gripper speed
     max_joint_speeds: list[float] | None = None  # optional [J1, ..., J6], replaces arm scalar limit
     coordinate_cartesian_speed: bool = True  # scale TCP translation/rotation together before bounded IK
+    max_cartesian_linear_speed: float | None = None  # m/s; TCP command limit, None disables
+    max_cartesian_angular_speed: float | None = None  # rad/s; TCP command limit, None disables
     command_timeout_sec: float = 0.5
     reset_position_rad: list[float] | None = None  # six arm joints; startup and A-button target
     reset_on_exit: bool = False  # disconnect: return all six arm joints to zero unless reset=False
@@ -107,6 +109,11 @@ class RebotB601RTConfig(RobotConfig):
             len(self.max_joint_speeds) != 6 or any(not math.isfinite(v) or v <= 0 for v in self.max_joint_speeds)
         ):
             raise ValueError("max_joint_speeds must contain six finite positive speeds in rad/s")
+        cartesian_limits = (self.max_cartesian_linear_speed, self.max_cartesian_angular_speed)
+        if any(v is not None and (not math.isfinite(v) or v <= 0) for v in cartesian_limits):
+            raise ValueError("Cartesian speed limits must be finite and positive, or None to disable")
+        if any(v is not None for v in cartesian_limits) and not self.interpolate_cartesian_targets:
+            raise ValueError("Cartesian speed limits require interpolate_cartesian_targets=True")
         if not math.isfinite(self.reset_joint_speed) or self.reset_joint_speed <= 0:
             raise ValueError("reset_joint_speed must be positive and finite")
         if self.reset_position_rad is not None and (
