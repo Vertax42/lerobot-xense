@@ -497,7 +497,8 @@ def concatenate_video_files(input_video_paths: list[Path | str], output_video_pa
     Note:
         - Creates a temporary directory for intermediate files that is cleaned up after use.
         - Uses ffmpeg's concat demuxer which requires all input videos to have the same
-          codec, resolution, and frame rate for proper concatenation.
+          codec, resolution, frame rate, and time base for proper concatenation.
+        - Preserves the input video's 1/N time base so the output can be concatenated again.
     """
 
     output_video_path = Path(output_video_path)
@@ -506,10 +507,27 @@ def concatenate_video_files(input_video_paths: list[Path | str], output_video_pa
         logger.warn(f"Video file already exists: {output_video_path}. Skipping concatenation.")
         return
 
-    output_video_path.parent.mkdir(parents=True, exist_ok=True)
-
     if len(input_video_paths) == 0:
         raise FileNotFoundError("No input video paths provided.")
+
+    input_video_paths = [Path(path) for path in input_video_paths]
+    video_time_base = None
+    for input_path in input_video_paths:
+        with av.open(str(input_path), mode="r") as container:
+            current_time_base = container.streams.video[0].time_base
+
+        if current_time_base is None or current_time_base.numerator != 1:
+            raise ValueError(f"Unsupported video time_base for {input_path}: {current_time_base}; expected 1/N.")
+        if video_time_base is None:
+            video_time_base = current_time_base
+        elif current_time_base != video_time_base:
+            raise ValueError(
+                f"Video time_base mismatch: {input_path} has {current_time_base}, "
+                f"expected {video_time_base} from {input_video_paths[0]}. "
+                "Rebuild from the original videos or normalize the inputs before concatenating."
+            )
+
+    output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Create a temporary .ffconcat file to list the input video paths
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ffconcat", delete=False) as tmp_concatenate_file:
@@ -527,9 +545,13 @@ def concatenate_video_files(input_video_paths: list[Path | str], output_video_pa
     with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_named_file:
         tmp_output_video_path = tmp_named_file.name
 
+    # Setting stream.time_base alone is insufficient: the MP4 muxer can change 1/30
+    # to 1/15360 when writing the header, breaking a later concat with an original video.
     output_container = av.open(
-        tmp_output_video_path, mode="w", options={"movflags": "faststart"}
-    )  # faststart is to move the metadata to the beginning of the file to speed up loading
+        tmp_output_video_path,
+        mode="w",
+        options={"movflags": "faststart", "video_track_timescale": str(video_time_base.denominator)},
+    )  # faststart moves the metadata to the beginning of the file to speed up loading
 
     # Replicate input streams in output container
     stream_map = {}
