@@ -447,8 +447,8 @@ def aggregate_data(src_meta, dst_meta, data_idx, data_files_size_in_mb, chunk_si
     unique_chunk_file_ids = sorted(unique_chunk_file_ids)
     contains_images = len(dst_meta.image_keys) > 0
 
-    # retrieve features schema for proper image typing in parquet
-    hf_features = get_hf_features_from_features(dst_meta.features) if contains_images else None
+    # Preserve numeric array lengths as well as image types when writing parquet.
+    hf_features = get_hf_features_from_features(dst_meta.features)
 
     # Track source to destination file mapping for metadata update
     # This is critical for handling datasets that are already results of a merge
@@ -567,7 +567,7 @@ def append_or_create_parquet_file(
         default_path: Format string for generating file paths.
         contains_images: Whether the data contains images requiring special handling.
         aggr_root: Root path for the aggregated dataset.
-        hf_features: Optional HuggingFace Features schema for proper image typing.
+        hf_features: Optional HuggingFace Features schema preserving array lengths and image types.
 
     Returns:
         tuple: (updated_idx, (dst_chunk, dst_file)) where updated_idx is the index dict
@@ -578,7 +578,7 @@ def append_or_create_parquet_file(
 
     if not dst_path.exists():
         dst_path.parent.mkdir(parents=True, exist_ok=True)
-        if contains_images:
+        if contains_images or hf_features is not None:
             to_parquet_with_hf_images(df, dst_path, features=hf_features)
         else:
             df.to_parquet(dst_path)
@@ -604,7 +604,7 @@ def append_or_create_parquet_file(
         final_df = pd.concat([existing_df, df], ignore_index=True)
         target_path = dst_path
 
-    if contains_images:
+    if contains_images or hf_features is not None:
         to_parquet_with_hf_images(final_df, target_path, features=hf_features)
     else:
         final_df.to_parquet(target_path)
