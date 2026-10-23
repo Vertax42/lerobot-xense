@@ -47,8 +47,14 @@ robot:
     max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
     max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
-    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
+    max_joint_speed: 1.5 # rad/s; fallback only when max_joint_speeds is omitted
+    max_joint_speeds: # rad/s; independent J1..J6 caps; overrides the scalar arm limit
+      - 1.5 # J1
+      - 1.5 # J2
+      - 1.5 # J3
+      - 1.5 # J4
+      - 1.5 # J5
+      - 1.5 # J6
     trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
@@ -116,8 +122,14 @@ robot:
     max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
     max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
-    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
+    max_joint_speed: 1.5 # rad/s; fallback only when max_joint_speeds is omitted
+    max_joint_speeds: # rad/s; independent J1..J6 caps; overrides the scalar arm limit
+      - 1.5 # J1
+      - 1.5 # J2
+      - 1.5 # J3
+      - 1.5 # J4
+      - 1.5 # J5
+      - 1.5 # J6
     trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
