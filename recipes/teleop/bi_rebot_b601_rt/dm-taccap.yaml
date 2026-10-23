@@ -43,8 +43,8 @@ robot:
     interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
     coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-    max_joint_speed: 0.5 # > 0 (rad/s); joint command speed limit
-    # max_joint_speeds: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] # 6 values > 0 (rad/s); overrides the arm speed limit
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
+    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
     trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
@@ -102,7 +102,7 @@ robot:
     motor_configs: # J1..J7; kp [0, 500] (Nm/rad), kd [0, 5] (Nm*s/rad), protocol ranges
       - {kp: 60.0, kd: 5.0} # J1
       - {kp: 60.0, kd: 5.0} # J2
-      - {kp: 70.0, kd: 5.0} # J3
+      - {kp: 80.0, kd: 5.0} # J3
       - {kp: 12.0, kd: 1.2} # J4
       - {kp: 12.0, kd: 1.2} # J5
       - {kp: 12.0, kd: 1.2} # J6
@@ -110,8 +110,8 @@ robot:
     interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
     coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
     mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-    max_joint_speed: 0.5 # > 0 (rad/s); joint command speed limit
-    # max_joint_speeds: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] # 6 values > 0 (rad/s); overrides the arm speed limit
+    max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
+    # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
     trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
