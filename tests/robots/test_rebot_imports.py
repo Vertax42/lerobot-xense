@@ -6,6 +6,36 @@ import unittest
 
 
 class TestRebotImports(unittest.TestCase):
+    def test_missing_or_broken_native_sdk_has_an_install_hint(self):
+        code = """
+import importlib
+import sys
+from importlib.abc import MetaPathFinder
+
+class BrokenNativeSDK(MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'rebot_rt':
+            if sys.argv[1] == 'missing':
+                raise ModuleNotFoundError("No module named 'rebot_rt'")
+            raise OSError('libpinocchio_default.so: cannot open shared object file')
+
+sys.meta_path.insert(0, BrokenNativeSDK())
+try:
+    importlib.import_module('lerobot.robots.rebot_b601_rt.rebot_b601_rt')
+except ImportError as exc:
+    assert 'bash scripts/install_rebot.sh' in str(exc), str(exc)
+    assert sys.executable in str(exc), str(exc)
+    assert isinstance(exc.__cause__, (ImportError, OSError))
+else:
+    raise AssertionError('Missing SDK did not prevent driver import')
+"""
+        for failure in ("missing", "broken"):
+            with self.subTest(failure=failure):
+                result = subprocess.run(
+                    [sys.executable, "-c", code, failure], capture_output=True, text=True, timeout=60
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_common_imports_leave_b601_unloaded_until_explicit_registration(self):
         code = """
 import sys

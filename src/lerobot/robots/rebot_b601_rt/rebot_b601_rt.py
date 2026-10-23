@@ -1,12 +1,12 @@
 """LeRobot adapter; all motor IO, scheduling and IK run in rebot_rt C++."""
 
+import sys
 import time
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import rebot_rt
 
 from lerobot.grippers import make_gripper_from_config
 from lerobot.grippers.camera_injection import (
@@ -31,6 +31,16 @@ from .dm_serial_discovery import (
 from .gravity_compensation import load_joint_torque_offsets
 from .taccap_discovery import inject_taccap_cameras
 from .tactile_camera import make_rebot_cameras as make_cameras_from_configs
+
+try:
+    import rebot_rt
+except (ImportError, OSError) as exc:
+    raise ImportError(
+        f"Cannot load the reBot B601 native SDK with {sys.executable}: {exc}. "
+        "Activate the LeRobot environment and run `bash scripts/install_rebot.sh` "
+        "from the lerobot-xense repository root. This builds rebot_rt for your Python "
+        "using isolated Pinocchio dependencies; do not install Pinocchio into the ROS environment."
+    ) from exc
 
 RobotAction = dict[str, Any]
 RobotObservation = dict[str, Any]

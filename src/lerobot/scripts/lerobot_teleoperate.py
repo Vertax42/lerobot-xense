@@ -940,10 +940,12 @@ def teleoperate(cfg: TeleoperateConfig):
             if cfg.teleop.type not in supported:
                 raise ValueError(f"{cfg.robot.type} supports teleop types {supported}, got {cfg.teleop.type!r}")
             logger.info(f"Detected {cfg.robot.type} + {cfg.teleop.type}")
+            # Resolve the B601 SDK before starting peripherals. Construction does
+            # not enable the arm; connect still waits until VR is ready below.
+            robot = make_robot_from_config(cfg.robot)
             teleop = make_teleoperator_from_config(cfg.teleop)
             if bimanual:
                 teleop.pre_init()
-            robot = make_robot_from_config(cfg.robot)
             try:
                 robot.connect(go_to_start=not cfg.dryrun)
                 if bimanual:

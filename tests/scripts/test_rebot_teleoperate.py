@@ -99,6 +99,22 @@ class TestRebotTeleoperate(unittest.TestCase):
             np.testing.assert_allclose(actual, expected)
         robot.disconnect.assert_called_once_with(reset=True)
 
+    def test_missing_b601_sdk_fails_before_peripherals_start(self):
+        config = draccus.parse(
+            cli.TeleoperateConfig,
+            config_path=ROOT / "recipes/teleop/bi_rebot_b601_rt/dm-taccap00-09.yaml",
+            args=["--display_data=false"],
+        )
+        with (
+            patch.object(cli, "make_robot_from_config", side_effect=ImportError("missing rebot_rt")),
+            patch.object(cli, "make_teleoperator_from_config") as make_teleop,
+            patch.object(cli, "_cleanup") as cleanup,
+        ):
+            cli.teleoperate(config)
+        make_teleop.assert_not_called()
+        cleanup.assert_called_once_with(None, None, False)
+        self.assertIn("missing rebot_rt", cli.logger.error.call_args.args[0])
+
     def test_disconnect_requests_return_only_after_normal_or_interrupted_loop(self):
         for mode in ("mit", "pos_vel"):
             for outcome, enabled, dryrun, expected in (

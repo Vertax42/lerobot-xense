@@ -224,35 +224,51 @@ This step will:
   [v0.2.1 release](https://github.com/XenseRobotics-AI/XenseVR-PC-Service/releases/tag/v0.2.1)
   into `/opt/apps/roboticsservice`; override with `XENSEVR_DEB_URL`, or point
   `XENSEVR_DEB` at a local file for offline installs) — only with `--pico4` / `--bi_pico4` or a full install
-- Build and install the SDK packages supported by `setup_env.sh`: `pyarx`, `flexiv_rt`, `xensevr_pc_service_sdk` (built against the `.deb`'s client SDK), `xgripper`, `elite_cs_sdk` (Elite CS — built from the C++ + Python submodules), and `xense.taccap` (TacCap UMI gripper)
+- Build and install the SDK packages supported by `setup_env.sh`: `pyarx`, `rebot_rt`, `flexiv_rt`, `xensevr_pc_service_sdk` (built against the `.deb`'s client SDK), `xgripper`, `elite_cs_sdk` (Elite CS — built from the C++ + Python submodules), and `xense.taccap` (TacCap UMI gripper)
 - Configure SpaceMouse udev rules and HID permissions automatically
 
 > You will be prompted for `sudo` password during installation (for ARX5 real-time capability and udev rules).
 
-For **reBot B601**, build and install `rebot_rt` separately; `setup_env.sh` does
-not build it yet. Activate the environment used for LeRobot first. It must have
-CMake, a C++17 compiler, pybind11, Eigen, and Pinocchio's C++ headers and libraries
-(`pinocchio_default` and `pinocchio_parsers`). From this repository's root:
+For **reBot B601 DM/RS**, an existing LeRobot environment can install or rebuild
+just `rebot_rt` with the following command from the repository root:
 
 ```bash
 git submodule update --init --recursive third_party/libpyrebot
-cmake -S third_party/libpyrebot -B third_party/libpyrebot/build \
-  -DPython3_EXECUTABLE="$(command -v python)"
-cmake --build third_party/libpyrebot/build -j2
-python -m pip install -e third_party/libpyrebot --no-build-isolation
+bash scripts/install_rebot.sh
 ```
 
-CMake looks for Pinocchio in the active Python environment by default; pass
-`-DPINOCCHIO_PREFIX=/path/to/pinocchio/environment` if it is installed elsewhere.
-Rebuild the extension when the pinned submodule commit or Python minor version
-changes. `pip install` alone does not compile it. For RS + TacCap + Pico4, also
-install the gripper and teleoperator bindings with
-`bash ./setup_env.sh --install --taccap --pico4`.
+On Linux x86_64, the installer creates a separate conda-forge environment for
+Pinocchio 3.9 and its build tools (GCC 12 for Ubuntu 22.04/24.04 compatibility),
+compiles for the active Python ABI, builds a wheel locally with
+`--no-build-isolation --no-deps --no-index`, then installs and verifies it in the
+LeRobot environment. Verification loads both DM/RS models and computes gravity
+without connecting to hardware. Pinocchio 3.9 needs Boost 1.88, which conflicts
+with the ROS Jazzy dependencies; **do not install it into the LeRobot conda
+environment**. No ROS/CUDA packages are changed by this standalone installer.
+If the target interpreter loads an older system C++ runtime first, the installer
+validates a compatible runtime and writes `lerobot_rebot_runtime.pth` into that
+Python environment to preload it before NumPy. It prefers the target conda
+environment's own runtime, then the isolated dependency environment's runtime;
+it does not replace `sitecustomize.py` or any system library.
+
+The dependency environment defaults to
+`~/.local/share/lerobot-xense/rebot-rt-deps/py<major.minor>` (under `XDG_DATA_HOME` when
+set). **Keep this directory after installation**: the compiled module links to
+its shared libraries. Override it with `REBOT_DEPS_PREFIX`, or use
+`--skip-deps` to reuse an already provisioned environment. A complete dependency
+environment is reused without network access. The first run needs access to
+conda-forge; this avoids the failing PyPI build-dependency download but does not
+repair a broken network connection.
+
+Re-run the installer after changing the submodule or Python version, and on
+each new computer. Build directories and native binaries from another computer
+are not reused. `pip install -e third_party/libpyrebot` alone does not compile
+the extension. For a full reBot + TacCap + Pico4 station install, use
+`bash ./setup_env.sh --install --rebot --taccap --pico4`.
 
 #### 🎛️ Selective hardware install (build only the SDKs you need)
 
-By default `--install` builds every hardware SDK supported by the script (the
-separate reBot build above is still required). On a station that only uses one
+By default `--install` builds every hardware SDK supported by the script. On a station that only uses one
 or two devices, pass per-hardware-family selectors after `--install` to build
 **core + only those** SDKs — faster, and it skips SDKs you can't (or don't want to)
 build on that host:
@@ -273,6 +289,7 @@ bash ./setup_env.sh --install --help
 
 | Selector                  | Builds                                         | Robots / teleoperators enabled            |
 | ------------------------- | ---------------------------------------------- | ----------------------------------------- |
+| `--rebot`, `--bi_rebot`   | `rebot_rt` (isolated Pinocchio dependencies) | `rebot_b601_rt`, `bi_rebot_b601_rt`      |
 | `--flexiv`, `--bi_flexiv` | `flexiv_rt` (+ `xense`)                        | `flexiv_rizon4_rt`, `bi_flexiv_rizon4_rt` |
 | `--elite`, `--bi_elite`   | `elite_cs_sdk` (+ `xense`)                     | `elite_cs66_rt`, `bi_elite_cs66_rt`       |
 | `--taccap`, `--bi_taccap` | `xense.taccap` (+ `xense`)                     | `taccap_follower` gripper (on any arm)    |
