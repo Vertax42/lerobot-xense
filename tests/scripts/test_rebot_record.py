@@ -298,7 +298,7 @@ class TestB601RecordEntrypoint(unittest.TestCase):
         recipe = "bi_rebot_b601_rt" if dual else "rebot_b601_rt"
         cfg = draccus.parse(
             cli.RecordConfig,
-            config_path=ROOT / f"recipes/record/{recipe}/rs-taccap.yaml",
+            config_path=ROOT / f"recipes/record/{recipe}/rs-taccap05.yaml",
             args=[
                 "--display_data=false",
                 "--play_sounds=false",
@@ -601,7 +601,7 @@ class TestB601DatasetRoundTrip(unittest.TestCase):
             root = Path(temp_dir) / "dataset"
             cfg = draccus.parse(
                 cli.RecordConfig,
-                config_path=ROOT / "recipes/record/bi_rebot_b601_rt/rs-taccap.yaml",
+                config_path=ROOT / "recipes/record/bi_rebot_b601_rt/rs-taccap05.yaml",
                 args=[
                     "--display_data=false",
                     "--play_sounds=false",

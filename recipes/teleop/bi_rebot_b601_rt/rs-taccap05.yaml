@@ -1,8 +1,9 @@
-# Teleop recipe — bimanual Rebot B601 RS + Bi-Pico4, with TacCap followers.
-#   lerobot-teleoperate --config_path=recipes/teleop/bi_rebot_b601_rt/rs-taccap.yaml
+# Teleop recipe — bimanual Rebot B601 RS + Bi-Pico4, with TacCap05 followers.
+#   lerobot-teleoperate --config_path=recipes/teleop/bi_rebot_b601_rt/rs-taccap05.yaml
 #
 # Self-contained: hardware and tuning live here; omitted fields use dataclass defaults.
-# The TacCap URDF and TCP frame are selected from motor_family and gripper.type.
+# Run from the lerobot-xense repository root; urdf_path below is relative to that directory.
+# This recipe uses RS + TacCap05. For another assembly, set each arm's urdf_path and end_frame.
 # Each TCP uses its arm's base frame; each arm needs its own communication interface.
 
 robot:
@@ -16,6 +17,9 @@ robot:
   left_arm_config:
     # ── Bench hardware ────────────────────────────────────────────────────
     motor_family: rs # rs, dm; RobStride / Damiao motors
+    # RS + TacCap05 v2 arm/payload model; replace for a different mount or payload.
+    urdf_path: third_party/libpyrebot/rebot_rt/assets/RS_TacCap05/urdf/rebot_b601_rs_taccap_v2_gripper.urdf
+    end_frame: taccap_eef_link # TCP frame in the selected URDF; update with the model
     # Configure the SocketCAN interface at 1 Mbps and bring it UP.
     channel: can1 # SocketCAN name; e.g. can0, can1
     # Joint angles in RADIANS (J1..J6); Rebot uses this pose for startup and user reset.
@@ -40,7 +44,7 @@ robot:
       - 1.5 # J6
 
     # Gravity feedforward (MIT only).
-    # Upright base + stock TacCap: the selected URDF already includes its mass.
+    # Upright base + TacCap05: the explicit URDF above already includes its mass.
     gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity
     gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 feedforward caps, not total PD+FF limits
     gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum feedforward change rate
@@ -73,6 +77,9 @@ robot:
   right_arm_config:
     # ── Bench hardware ────────────────────────────────────────────────────
     motor_family: rs # rs, dm; RobStride / Damiao motors
+    # RS + TacCap05 v2 arm/payload model; replace for a different mount or payload.
+    urdf_path: third_party/libpyrebot/rebot_rt/assets/RS_TacCap05/urdf/rebot_b601_rs_taccap_v2_gripper.urdf
+    end_frame: taccap_eef_link # TCP frame in the selected URDF; update with the model
     # Configure the SocketCAN interface at 1 Mbps and bring it UP.
     channel: can0 # SocketCAN name; e.g. can0, can1
     # Joint angles in RADIANS (J1..J6); Rebot uses this pose for startup and user reset.
@@ -97,7 +104,7 @@ robot:
       - 1.5 # J6
 
     # Gravity feedforward (MIT only).
-    # Upright base + stock TacCap: the selected URDF already includes its mass.
+    # Upright base + TacCap05: the explicit URDF above already includes its mass.
     gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity
     gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 feedforward caps, not total PD+FF limits
     gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum feedforward change rate

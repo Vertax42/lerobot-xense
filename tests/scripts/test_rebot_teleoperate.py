@@ -20,7 +20,7 @@ class TestRebotTeleoperate(unittest.TestCase):
     def test_single_arm_recipe_and_pico4_startup(self):
         config = draccus.parse(
             cli.TeleoperateConfig,
-            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
+            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap05.yaml",
             args=["--display_data=false", "--dryrun=true"],
         )
         self.assertEqual(config.robot.motor_family, "rs")
@@ -30,7 +30,7 @@ class TestRebotTeleoperate(unittest.TestCase):
         self.assertFalse(config.robot.mit_velocity_feedforward)
         self.assertTrue(config.robot.reset_on_exit)
         self.assertEqual(config.robot.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
-        self.assertEqual(config.robot.max_joint_speed, 1.5)
+        self.assertEqual(config.robot.max_joint_speeds, [1.5] * 6)
         self.assertEqual(config.robot.reset_joint_speed, 0.5)
         self.assertTrue(config.robot.uses_taccap_model)
         self.assertFalse(config.robot.has_gripper)
@@ -53,7 +53,7 @@ class TestRebotTeleoperate(unittest.TestCase):
     def test_bimanual_recipe_waits_for_vr_then_seeds_each_arm(self):
         config = draccus.parse(
             cli.TeleoperateConfig,
-            config_path=ROOT / "recipes/teleop/bi_rebot_b601_rt/rs-taccap.yaml",
+            config_path=ROOT / "recipes/teleop/bi_rebot_b601_rt/rs-taccap05.yaml",
             args=["--display_data=false"],
         )
         self.assertEqual(config.robot.left_arm_config.channel, "can1")
@@ -66,7 +66,7 @@ class TestRebotTeleoperate(unittest.TestCase):
             self.assertTrue(arm.interpolate_cartesian_targets)
             self.assertFalse(arm.mit_velocity_feedforward)
             self.assertEqual(arm.reset_position_rad, [0, 0.8, 0.8, -0.5, 0, 0])
-            self.assertEqual(arm.max_joint_speed, 1.5)
+            self.assertEqual(arm.max_joint_speeds, [1.5] * 6)
             self.assertEqual(arm.reset_joint_speed, 0.5)
             self.assertTrue(arm.uses_taccap_model)
             self.assertFalse(arm.has_gripper)
@@ -111,7 +111,7 @@ class TestRebotTeleoperate(unittest.TestCase):
                 with self.subTest(mode=mode, outcome=outcome, enabled=enabled, dryrun=dryrun):
                     config = draccus.parse(
                         cli.TeleoperateConfig,
-                        config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
+                        config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap05.yaml",
                         args=[
                             "--display_data=false",
                             f"--robot.control_mode={mode}",
@@ -137,7 +137,7 @@ class TestRebotTeleoperate(unittest.TestCase):
     def test_startup_interrupt_does_not_start_exit_reset(self):
         config = draccus.parse(
             cli.TeleoperateConfig,
-            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
+            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap05.yaml",
             args=["--display_data=false"],
         )
         robot, teleop = Mock(), Mock()
@@ -155,7 +155,7 @@ class TestRebotTeleoperate(unittest.TestCase):
     def test_single_arm_spacemouse_uses_commanded_euler_pose(self):
         config = draccus.parse(
             cli.TeleoperateConfig,
-            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap.yaml",
+            config_path=ROOT / "recipes/teleop/rebot_b601_rt/rs-taccap05.yaml",
             args=["--teleop.type=spacemouse", "--display_data=false"],
         )
         pose = np.array([0.1, 0.2, 0.3, 0, 0, 1.5, 0.7])

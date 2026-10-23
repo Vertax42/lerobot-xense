@@ -69,7 +69,9 @@ This repository uses `third_party/` git submodules to manage hardware SDK depend
 | `third_party/elite-robots-cs-sdk-python` | `elite_cs_sdk` (Elite CS Python bindings)       |
 | `third_party/taccap-gripper`             | `xense.taccap` (TacCap UMI tactile gripper SDK) |
 
-The [`libpyrebot`](https://github.com/xensedyl/libpyrebot) submodule provides C++ 100 Hz Cartesian control and IK for reBot B601 DM and RS arms. Build its pybind11 extension for the active Python environment before using the `rebot_b601_rt` or `bi_rebot_b601_rt` robot types (see the build steps below and its [README](third_party/libpyrebot/README.md)). It supports DM serial bridges and SocketCAN, and RS over SocketCAN. Complete DM and RS model assets are bundled. Each motor family uses its original model by default; `gripper.type: taccap_follower` selects the identified `DM_TacCap00` v1 assembly for DM or the existing `RS_TacCap05` v2 assembly for RS, both with `taccap_eef_link`. The gripper uses its separate driver. DM recipes enable model gravity plus matching `_offset.yaml` holding biases via `gravity_use_joint_offsets: true`; no explicit `urdf_path` or `end_frame` is needed.
+The [`libpyrebot`](https://github.com/xensedyl/libpyrebot) submodule provides C++ 100 Hz Cartesian control and IK for reBot B601 DM and RS arms. Build its pybind11 extension for the active Python environment before using the `rebot_b601_rt` or `bi_rebot_b601_rt` robot types (see the build steps below and its [README](third_party/libpyrebot/README.md)). It supports DM serial bridges and SocketCAN, and RS over SocketCAN. Complete DM and RS model assets are bundled. Platform **09** uses the identified `DM_TacCap00` v1 assembly: its `dm-taccap00-09.yaml` recipes explicitly set each arm's `urdf_path` and `end_frame: taccap_eef_link`. Other platforms must select the URDF/TCP matching their actual arm, mount and payload; DM does not imply TacCap00. The gripper uses its separate driver. These recipes enable model gravity plus matching `_offset.yaml` holding biases via `gravity_use_joint_offsets: true`. Legacy configurations without `urdf_path` retain the family/gripper fallback (`DM_TacCap00` for DM TacCap, `RS_TacCap05` for RS TacCap, otherwise the original DM/RS model).
+
+Platform 09 recording includes the RealSense D415 `head` camera (RGB 640×480 at 30 Hz), plus the discovered wrist and tactile cameras. Use [the bimanual recording recipe](recipes/record/bi_rebot_b601_rt/dm-taccap00-09.yaml) and [matching teleoperation recipe](recipes/teleop/bi_rebot_b601_rt/dm-taccap00-09.yaml); see [platform/model configuration](recipes/README.md#rebot-platform-09-dm--taccap00) for commands and adapting a recipe to another platform.
 
 Both control modes use native timed Cartesian interpolation by default (`interpolate_cartesian_targets: true`): translation is linear, orientation uses SLERP, and each 100 Hz substep runs IK from the last limited command. The DM and RS TacCap recipes select `mit`; `pos_vel` uses the same interpolation. Their joint command caps are 1.5 rad/s, with A reset capped at 0.5 rad/s.
 
@@ -130,14 +132,14 @@ its range fields are placeholders, not measured travel limits. Use
 `rebot_b601_rt` / `bi_rebot_b601_rt` for teleoperation and recording.
 
 B601 recording recipes are available for
-[one arm](recipes/record/rebot_b601_rt/rs-taccap.yaml) and
-[two arms](recipes/record/bi_rebot_b601_rt/rs-taccap.yaml). Both use MIT with
+[one arm](recipes/record/rebot_b601_rt/rs-taccap05.yaml) and
+[two arms](recipes/record/bi_rebot_b601_rt/rs-taccap05.yaml). Both explicitly select the RS + TacCap05 v2 URDF and use MIT with
 TacCap camera discovery; the recording recipe maps the left arm to `can1` and
 the right arm to `can0`. Set these to match your adapters. For example:
 
 ```bash
 lerobot-record \
-  --config_path=recipes/record/bi_rebot_b601_rt/rs-taccap.yaml \
+  --config_path=recipes/record/bi_rebot_b601_rt/rs-taccap05.yaml \
   --dataset.repo_id=Xense/bi_rebot_pick_cube_001 \
   --dataset.single_task="Pick up the cube and place it in the box" \
   --dataset.num_episodes=10

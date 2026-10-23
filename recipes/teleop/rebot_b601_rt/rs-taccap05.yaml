@@ -1,25 +1,23 @@
-# Record recipe — single-arm Rebot B601 DM + Pico4, with TacCap followers.
-#   lerobot-record --config_path=recipes/record/rebot_b601_rt/dm-taccap.yaml
+# Teleop recipe — single-arm Rebot B601 RS + Pico4, with TacCap05 followers.
+#   lerobot-teleoperate --config_path=recipes/teleop/rebot_b601_rt/rs-taccap05.yaml
 #
 # Self-contained: hardware and tuning live here; omitted fields use dataclass defaults.
-# The TacCap URDF and TCP frame are selected from motor_family and gripper.type.
-# DM C1 direct-output TacCap mount; J1..J3=4340P, J4..J6=4310, IDs 1..6, feedback 0x11..0x16.
-# Set dataset.repo_id and single_task for each task.
-# Keep use_joint_observation=false: the recording reset loop requires TCP observations.
+# Run from the lerobot-xense repository root; urdf_path below is relative to that directory.
+# This recipe uses RS + TacCap05. For another assembly, set each arm's urdf_path and end_frame.
 
 robot:
   type: rebot_b601_rt
-  id: rebot_dm_taccap # String; robot setup identifier
+  id: rebot_rs_taccap # String; robot setup identifier
 
   # ── Bench hardware ──────────────────────────────────────────────────────
-  motor_family: dm # rs, dm; RobStride / Damiao motors
-  # Plug right DM bridge first, wait for enumeration, then left (if used); repeat after reboot/reconnection.
-  # Explicit /dev/... paths or SocketCAN names (can0, can1) are also supported.
-  channel: auto:first # auto:first, auto:second; first / second DM bridge by USB initialization time
-  dm_serial_baud: 921600 # 115200, 230400, 460800, 921600; serial baud, ignored for SocketCAN
+  motor_family: rs # rs, dm; RobStride / Damiao motors
+  # RS + TacCap05 v2 arm/payload model; replace for a different mount or payload.
+  urdf_path: third_party/libpyrebot/rebot_rt/assets/RS_TacCap05/urdf/rebot_b601_rs_taccap_v2_gripper.urdf
+  end_frame: taccap_eef_link # TCP frame in the selected URDF; update with the model
+  # Configure the SocketCAN interface at 1 Mbps and bring it UP.
+  channel: can0 # SocketCAN name; e.g. can0, can1
   # Joint angles in RADIANS (J1..J6); Rebot uses this pose for startup and user reset.
-  # DM J2/J3 use negative angles; check this example pose against the physical workspace.
-  reset_position_rad: [0, -0.8, -0.8, 0.5, 0, 0] # 6 angles (rad); initial pose within model limits
+  reset_position_rad: [0, 0.8, 0.8, -0.5, 0, 0] # 6 angles (rad); initial pose within model limits
 
   # ── Cameras ─────────────────────────────────────────────────────────────
   # Wrist + tactile cameras are discovered through gripper.auto_discover_cameras below.
@@ -28,19 +26,8 @@ robot:
   # ── Control ─────────────────────────────────────────────────────────────
   control_mode: mit # mit, pos_vel; PD + torque feedforward / position-velocity loop
   # pos_vel requires gravity_compensation_scale: 0.0.
-  # Trial MIT gains: validate tracking and contact feel on this arm.
-  motor_configs: # J1..J7; kp [0, 500] (Nm/rad), kd [0, 5] (Nm*s/rad), protocol ranges
-    - {kp: 60.0, kd: 5.0} # J1
-    - {kp: 60.0, kd: 5.0} # J2
-    - {kp: 80.0, kd: 5.0} # J3
-    - {kp: 12.0, kd: 1.2} # J4
-    - {kp: 12.0, kd: 1.2} # J5
-    - {kp: 12.0, kd: 1.2} # J6
-    - {} # J7; unused with the separate TacCap driver
   interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
   coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
-  max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
-  max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
   mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
   max_joint_speeds: # rad/s; independent J1..J6 speed caps
     - 1.5 # J1
@@ -49,16 +36,12 @@ robot:
     - 1.5 # J4
     - 1.5 # J5
     - 1.5 # J6
-  trace_joint_tracking: false # true, false; show / hide joint tracking diagnostics
-  trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
   # Gravity feedforward (MIT only).
-  # DM + TacCap00: identified v1 arm/payload model; selected automatically by motor_family.
+  # Upright base + TacCap05: the explicit URDF above already includes its mass.
   gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity
-  gravity_torque_limits_nm: [1.0, 22.0, 12.0, 4.0, 2.0, 1.0] # 6 values >= 0 (Nm); feedforward caps, J1..J6
+  gravity_torque_limits_nm: [1, 8, 8, 3, 1, 1] # 6 values >= 0 (Nm); J1..J6 feedforward caps, not total PD+FF limits
   gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum feedforward change rate
-  gravity_vector: [0.0, 0.0, -9.80665] # 3 values (m/s^2); gravity in URDF root frame
-  gravity_use_joint_offsets: true # true, false; load / omit the matching URDF _offset.yaml
 
   # Reset / disconnect.
   reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by joint limits
@@ -90,17 +73,6 @@ teleop:
   pos_sensitivity: 1.0 # Position scale; 1=1:1 mapping
   ori_sensitivity: 1.0 # Orientation scale; 1=full tracking
 
-dataset:
-  # Format: namespace/name. Use a new name for a new dataset, or resume=true to append.
-  repo_id: Xense/rebot_b601_rt_dm_taccap_test # namespace/name; dataset ID, also used for the default local storage path
-  single_task: "Pick up the cube and place it in the box" # Text; task description stored with the recorded data
-  fps: 30 # > 0 (integer Hz); recording rate; native control remains 100 Hz
-  episode_time_s: 600 # > 0 (s); duration per episode; right arrow ends the phase early
-  reset_time_s: 120 # >= 0 (s); scene preparation between episodes; 0 skips this wait
-  num_episodes: 10 # > 0 (integer); episodes to save in this run, additional when resuming
-  video: true # true, false; store camera data as videos / image frames
-  push_to_hub: false # true, false; upload to Hugging Face Hub / save locally only
-
-# ── Record loop (top level) ──
+# ── Teleoperate loop (top level) ──
+fps: 30 # > 0 (Hz); teleop target rate; native control remains 100 Hz
 display_data: false # true, false; enable / disable Rerun visualization
-resume: false # true, false; append to an existing dataset / create a new one
