@@ -40,8 +40,7 @@ robot:
   max_cartesian_linear_speed: 1.0 # m/s; TCP translation limit; all joints coordinate below this cap
   max_cartesian_angular_speed: 6.28 # rad/s; TCP rotation limit; shares progress with translation
   mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-  max_joint_speed: 1.5 # rad/s; fallback only when max_joint_speeds is omitted
-  max_joint_speeds: # rad/s; independent J1..J6 caps; overrides the scalar arm limit
+  max_joint_speeds: # rad/s; independent J1..J6 speed caps
     - 1.5 # J1
     - 1.5 # J2
     - 1.5 # J3
