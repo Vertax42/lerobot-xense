@@ -27,8 +27,13 @@ robot:
   interpolate_cartesian_targets: true # true, false; 100 Hz TCP interpolation / synchronous IK
   coordinate_cartesian_speed: true # true, false; coordinate TCP speed when interpolation is on
   mit_velocity_feedforward: false # true, false; command velocity / dq=0 with damping (MIT only)
-  max_joint_speed: 1.5 # > 0 (rad/s); joint command speed limit
-  # max_joint_speeds: [1.5, 1.5, 1.5, 1.5, 1.5, 1.5] # 6 values > 0 (rad/s); overrides the arm speed limit
+  max_joint_speeds: # rad/s; independent J1..J6 speed caps
+    - 1.5 # J1
+    - 1.5 # J2
+    - 1.5 # J3
+    - 1.5 # J4
+    - 1.5 # J5
+    - 1.5 # J6
 
   # Gravity feedforward (MIT only).
   # Upright base + stock TacCap: the selected URDF already includes its mass.
