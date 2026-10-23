@@ -54,7 +54,7 @@ robot:
       - 1.5 # J4
       - 1.5 # J5
       - 1.5 # J6
-    trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
+    trace_joint_tracking: false # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
     # Gravity feedforward (MIT only).
@@ -128,7 +128,7 @@ robot:
       - 1.5 # J4
       - 1.5 # J5
       - 1.5 # J6
-    trace_joint_tracking: true # true, false; show / hide joint tracking diagnostics
+    trace_joint_tracking: false # true, false; show / hide joint tracking diagnostics
     trace_joint_tracking_hz: 2.0 # > 0 (Hz); diagnostic log rate
 
     # Gravity feedforward (MIT only).
