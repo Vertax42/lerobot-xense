@@ -28,6 +28,7 @@ from .dm_serial_discovery import (
     resolve_dm_serial_channel,
     verify_dm_serial_device,
 )
+from .gravity_compensation import load_joint_torque_offsets
 from .taccap_discovery import inject_taccap_cameras
 from .tactile_camera import make_rebot_cameras as make_cameras_from_configs
 
@@ -202,6 +203,9 @@ class RebotB601RT(Robot):
                     if key != "model":
                         setattr(native_motor, key, value)
                 motor_configs.append(native_motor)
+        effective_motors = motor_configs or rebot_rt.default_motor_configs(family)
+        self._mit_kp = np.asarray([motor.kp for motor in effective_motors[:6]])
+        self._mit_kd = np.asarray([motor.kd for motor in effective_motors[:6]])
         if not hasattr(rebot_rt.State, "mit_command_velocity"):
             raise RuntimeError("libpyrebot must be rebuilt/updated to support mit_velocity_feedforward")
         if not hasattr(rebot_rt.State, "cartesian_step_scale"):
@@ -234,12 +238,27 @@ class RebotB601RT(Robot):
                     "Rebuild/install libpyrebot with gravity compensation support. "
                     f"Loaded rebot_rt from {rebot_rt.__file__}; check PYTHONPATH for an older checkout."
                 )
-            native.configure_gravity_compensation(
-                scale=self.config.gravity_compensation_scale,
-                torque_limits_nm=self.config.gravity_torque_limits_nm,
-                slew_rate_nm_s=self.config.gravity_slew_rate_nm_s,
-                gravity=self.config.gravity_vector,
-            )
+            offset_kwargs = {}
+            if self.config.gravity_use_joint_offsets:
+                offsets = load_joint_torque_offsets(urdf)
+                offset_kwargs["torque_offsets_nm"] = offsets
+                self.logger.info(f"B601 identified torque offsets: {Path(urdf).stem}_offset.yaml {offsets} Nm")
+            try:
+                native.configure_gravity_compensation(
+                    scale=self.config.gravity_compensation_scale,
+                    torque_limits_nm=self.config.gravity_torque_limits_nm,
+                    slew_rate_nm_s=self.config.gravity_slew_rate_nm_s,
+                    gravity=self.config.gravity_vector,
+                    **offset_kwargs,
+                )
+            except TypeError as error:
+                raise RuntimeError(
+                    "Rebuild/install libpyrebot with identified torque offset support. "
+                    f"Loaded rebot_rt from {rebot_rt.__file__}."
+                ) from error
+        self.logger.info(f"B601 model: {urdf}, end_frame={end_frame or 'URDF default'}")
+        if self.config.control_mode == "mit":
+            self.logger.info(f"B601 MIT on {self._channel}: kp={self._mit_kp.tolist()}, kd={self._mit_kd.tolist()}")
         try:
             if self.config.channel in AUTO_DM_CHANNELS:
                 verify_dm_serial_device(self._channel, _dm_serial_devices)
@@ -328,6 +347,8 @@ class RebotB601RT(Robot):
                 f"error_rad={feedback_error.round(4).tolist()}, "
                 f"tolerance_rad={self._reset_tolerance_rad}, waiting_for={waiting_for}"
             )
+            if self.config.control_mode == "mit":
+                status += self._reset_torque_diagnostics(state)
             if timed_out:
                 self._cancel_reset()
                 raise TimeoutError(f"{status}; exceeded reset_timeout_sec={self.config.reset_timeout_sec}")
@@ -351,6 +372,36 @@ class RebotB601RT(Robot):
             ),
         )
         return True
+
+    def _reset_torque_diagnostics(self, state) -> str:
+        """Report the same state snapshot even before the observation/teleop loop starts.
+
+        PD and total are estimates before protocol quantization or motor current
+        limiting. Feedback torque is a separate reading, not a load measurement.
+        Missing diagnostics stay explicit rather than looking like zero torque.
+        """
+        parts = []
+        for label, field in (
+            ("gravity_nm", "gravity_torque"),
+            ("mit_tau_ff_nm", "mit_command_torque"),
+            ("measured_tau_nm", "tau"),
+            ("measured_velocity", "dq"),
+        ):
+            values = getattr(state, field, None)
+            formatted = "unavailable" if values is None else np.asarray(values[:6]).round(4).tolist()
+            parts.append(f"{label}={formatted}")
+        limited = getattr(state, "gravity_torque_limited", None)
+        parts.append(f"gravity_limited={list(limited[:6]) if limited is not None else 'unavailable'}")
+        dq = getattr(state, "dq", None)
+        dq_des = getattr(state, "mit_command_velocity", None)
+        ff = getattr(state, "mit_command_torque", None)
+        if dq is not None and dq_des is not None:
+            pd = self._mit_kp * (np.asarray(state.command[:6]) - np.asarray(state.q[:6]))
+            pd += self._mit_kd * (np.asarray(dq_des[:6]) - np.asarray(dq[:6]))
+            parts.append(f"mit_pd_est_nm={pd.round(4).tolist()}")
+            if ff is not None:
+                parts.append(f"mit_total_est_nm={(pd + np.asarray(ff[:6])).round(4).tolist()}")
+        return " " + " ".join(parts)
 
     def _cancel_reset(self) -> None:
         self._native.hold_position()
@@ -402,7 +453,7 @@ class RebotB601RT(Robot):
                 else ""
             )
             self.logger.info(
-                f"Joint tracking: goal={fmt(state.target)} command={fmt(state.command)} "
+                f"Joint tracking: channel={self._channel} goal={fmt(state.target)} command={fmt(state.command)} "
                 f"measured={fmt(state.q)} error={fmt(tracking_error)} velocity={fmt(state.command_velocity)}"
                 + (f" mit_dq={fmt(state.mit_command_velocity)}" if self.config.control_mode == "mit" else "")
                 + (

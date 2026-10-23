@@ -35,10 +35,12 @@ robot:
   # max_joint_speeds: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] # 6 values > 0 (rad/s); overrides the arm speed limit
 
   # Gravity feedforward (MIT only).
-  # DM dynamics are not identified; validate the model and torque caps before enabling.
-  gravity_compensation_scale: 0.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity
-  gravity_torque_limits_nm: null # null / 6 values >= 0 (Nm); set verified feedforward caps before enabling
+  # DM + TacCap00: identified v1 arm/payload model; selected automatically by motor_family.
+  gravity_compensation_scale: 1.0 # [0.0, 1.0]; 0=off, 0.5=half, 1=full model gravity
+  gravity_torque_limits_nm: [1.0, 22.0, 12.0, 4.0, 2.0, 1.0] # 6 values >= 0 (Nm); feedforward caps, J1..J6
   gravity_slew_rate_nm_s: 5.0 # > 0 (Nm/s); maximum feedforward change rate
+  gravity_vector: [0.0, 0.0, -9.80665] # 3 values (m/s^2); gravity in URDF root frame
+  gravity_use_joint_offsets: true # true, false; load / omit the matching URDF _offset.yaml
 
   # Reset / disconnect.
   reset_joint_speed: 0.5 # > 0 (rad/s); startup/reset/exit speed, capped by joint limits

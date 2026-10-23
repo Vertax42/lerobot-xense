@@ -10,8 +10,8 @@ from lerobot.robots.config import RobotConfig
 
 from .dm_serial_discovery import AUTO_DM_CHANNELS
 
-DEFAULT_DM_TACCAP_URDF = "DM_Taccap/urdf/rebot_b601_dm_taccap.urdf"
-DEFAULT_RS_TACCAP_URDF = "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
+DEFAULT_DM_TACCAP_URDF = "DM_TacCap00/urdf/rebot_b601_dm_taccap_v1_gripper.urdf"
+DEFAULT_RS_TACCAP_URDF = "RS_TacCap05/urdf/rebot_b601_rs_taccap_v2_gripper.urdf"
 DEFAULT_TACCAP_URDFS = {"dm": DEFAULT_DM_TACCAP_URDF, "rs": DEFAULT_RS_TACCAP_URDF}
 
 
@@ -28,12 +28,13 @@ class RebotB601RTConfig(RobotConfig):
     gravity_torque_limits_nm: list[float] | None = None  # required when enabled; six FF caps, not total torque
     gravity_slew_rate_nm_s: float = 5.0  # maximum FF change per second, including startup
     gravity_vector: list[float] = field(default_factory=lambda: [0.0, 0.0, -9.81])  # URDF root frame, m/s^2
+    gravity_use_joint_offsets: bool = False  # load the matching URDF's _offset.yaml holding torque biases
     motor_configs: list[dict[str, int | float | str]] = field(default_factory=list)
     urdf_path: str | None = None  # explicit override; None selects the bundled family/gripper model
     # Empty selects taccap_eef_link for bundled TacCap models, otherwise the URDF's default tool frame.
     end_frame: str | None = None
     # An external gripper uses its own driver instead of the seventh arm motor.
-    # taccap_follower selects DM_Taccap or RS_Taccap by motor_family; None keeps
+    # taccap_follower selects DM_TacCap00 or RS_TacCap05 by motor_family; None keeps
     # the original DM/RS model and its optional motor gripper.
     gripper: GripperConfig | None = None
     # Whether the native arm controller drives a seventh CAN motor.

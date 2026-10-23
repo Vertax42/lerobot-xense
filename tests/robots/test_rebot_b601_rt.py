@@ -18,11 +18,12 @@ from lerobot.grippers import SerialGripperConfig, TaccapFollowerConfig
 from lerobot.robots.bi_rebot_b601_rt import BiRebotB601RT, BiRebotB601RTConfig, bi_rebot_b601_rt as bi_driver
 from lerobot.robots.rebot_b601_rt import RebotB601RT, RebotB601RTConfig, rebot_b601_rt as driver
 from lerobot.robots.rebot_b601_rt.dm_serial_discovery import DMSerialDevice
+from lerobot.robots.rebot_b601_rt.gravity_compensation import load_joint_torque_offsets
 
 ASSETS = Path(rebot_rt.__file__).parent / "assets"
 TACCAP_URDFS = {
-    "dm": "DM_Taccap/urdf/rebot_b601_dm_taccap.urdf",
-    "rs": "RS_Taccap/urdf/rebot_b601_rs_taccap_v2_gripper.urdf",
+    "dm": "DM_TacCap00/urdf/rebot_b601_dm_taccap_v1_gripper.urdf",
+    "rs": "RS_TacCap05/urdf/rebot_b601_rs_taccap_v2_gripper.urdf",
 }
 INITIAL_POSE = [0.0, 0.8, 0.8, -0.5, 0.0, 0.0]
 
@@ -215,6 +216,61 @@ class TestRebotB601RT(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "gravity compensation"):
             robot.connect()
         self.native.connect.assert_not_called()
+
+    def test_identified_offsets_are_loaded_before_connect_and_missing_file_is_rejected(self):
+        self.native.configure_gravity_compensation = Mock()
+        urdf = ASSETS / TACCAP_URDFS["dm"]
+        offsets = load_joint_torque_offsets(urdf)
+        np.testing.assert_allclose(
+            offsets, [0.08083891458, 0.02049686659, -0.05986744802, 0.05837195786, -0.008452037538, -0.01073598411]
+        )
+        robot = self.make_robot(
+            control_mode="mit",
+            urdf_path=str(urdf),
+            has_gripper=False,
+            gravity_compensation_scale=1,
+            gravity_torque_limits_nm=[1, 22, 12, 4, 2, 1],
+            gravity_use_joint_offsets=True,
+        )
+        parent = Mock()
+        parent.attach_mock(self.native.configure_gravity_compensation, "configure")
+        parent.attach_mock(self.native.connect, "connect")
+        robot.connect()
+        self.assertEqual(parent.mock_calls[0].kwargs["torque_offsets_nm"], offsets)
+        self.assertEqual(parent.mock_calls[1], call.connect())
+        robot.disconnect()
+        self.native.connect.reset_mock()
+        copied = self.calibration_dir / "custom.urdf"
+        copied.write_text(urdf.read_text())
+        robot = self.make_robot(
+            control_mode="mit",
+            urdf_path=str(copied),
+            has_gripper=False,
+            gravity_compensation_scale=1,
+            gravity_torque_limits_nm=[1] * 6,
+            gravity_use_joint_offsets=True,
+        )
+        with self.assertRaises(FileNotFoundError):
+            robot.connect()
+        self.native.connect.assert_not_called()
+
+    def test_offset_loader_uses_names_and_rejects_incomplete_or_nonfinite_values(self):
+        urdf = self.calibration_dir / "custom.urdf"
+        urdf.write_text((ASSETS / TACCAP_URDFS["dm"]).read_text())
+        offsets = urdf.with_name("custom_offset.yaml")
+        good = "joints:\n" + "".join(f"  joint{i}: {{offset: {i / 100}}}\n" for i in range(6, 0, -1))
+        offsets.write_text(good)
+        self.assertEqual(load_joint_torque_offsets(urdf), [i / 100 for i in range(1, 7)])
+        for bad in (
+            good.replace("joint6", "joint7"),
+            good.replace("0.06", ".nan"),
+            good.replace("0.06", "true"),
+            "joints: []",
+            "{}",
+        ):
+            offsets.write_text(bad)
+            with self.assertRaises(ValueError):
+                load_joint_torque_offsets(urdf)
 
     def test_native_cartesian_queue_in_both_control_modes(self):
         self.assertTrue(RebotB601RTConfig().interpolate_cartesian_targets)
@@ -575,6 +631,38 @@ class TestRebotB601RT(unittest.TestCase):
             clock.return_value = 30.1
             with self.assertRaisesRegex(TimeoutError, "waiting_for=.*J3.*J4.*reset_timeout_sec"):
                 _ = robot.rt_moving
+
+    def test_reset_reports_torques_before_observations_using_custom_gains_and_sent_command(self):
+        target = [0, -0.8, -0.8, 0.5, 0, 0]
+        robot = self.make_robot(
+            motor_family="dm", control_mode="mit", channel="/dev/ttyACM5", reset_position_rad=target,
+            reset_tolerance_rad=0.06, trace_joint_tracking=False,
+            motor_configs=[{}, {}, {"kp": 60, "kd": 2}, {}, {}, {}, {}],
+        )
+        robot.connect(go_to_start=False)
+        robot.logger = Mock()
+        state = self.native.get_state.return_value
+        state.q = [0, -0.8, -0.7338, 0.5, 0, 0, -1.2]
+        state.dq = [0, 0, 0.1, 0, 0, 0, 0]
+        state.gravity_torque = [0, 0, -8.0977, 0, 0, 0, 0]
+        state.mit_command_torque = [0, 0, -8.1576, 0, 0, 0, 0]
+        state.tau = [0, 0, -10.5, 0, 0, 0, 0]
+        state.gravity_torque_limited = [False] * 7
+        with patch.object(driver.time, "monotonic", return_value=0.0) as clock:
+            robot.reset_to_initial_position()
+            for now, command, pd, total in ((2, -0.8, -4.172, -12.3296), (4, -0.7, 1.828, -6.3296)):
+                state.command = [0, -0.8, command, 0.5, 0, 0, -1.2]
+                clock.return_value = now
+                self.assertTrue(robot.rt_moving)
+                message = robot.logger.info.call_args.args[0]
+                self.assertIn("/dev/ttyACM5", message)
+                self.assertIn("waiting_for=['J3']", message)
+                self.assertIn("gravity_nm=[0.0, 0.0, -8.0977", message)
+                self.assertIn("mit_tau_ff_nm=[0.0, 0.0, -8.1576", message)
+                self.assertIn("measured_tau_nm=[0.0, 0.0, -10.5", message)
+                self.assertIn(f"mit_pd_est_nm=[0.0, 0.0, {pd}", message)
+                self.assertIn(f"mit_total_est_nm=[0.0, 0.0, {total}", message)
+                self.native.set_target_joints.assert_called_with(target + [-1.2], max_joint_speed=0.5)
 
     def test_startup_and_button_reset_accept_observed_mit_offsets_within_configured_tolerance(self):
         measured = (
