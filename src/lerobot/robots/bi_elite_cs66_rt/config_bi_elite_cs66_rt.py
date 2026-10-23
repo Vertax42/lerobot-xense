@@ -172,6 +172,7 @@ class BiEliteCS66RTConfig(RobotConfig):
     # Collision avoidance (table, stand, self, other arm): null, "auto" (the
     # assembly's collision.json) or a path. Needs native_assembly; the robot then
     # runs both arms through the same StationGuard as libpyelite.sim.
+    # Hardware collision checking supports TacCap followers only, not retired XGrippers.
     native_collision_profile: str | None = None
     # Actual sensor opening -> URDF driver coordinate calibration, per side.
     # {left: {left_tool_taccap_right_finger_joint: [[opening, rad], ...]}, right: {...}}

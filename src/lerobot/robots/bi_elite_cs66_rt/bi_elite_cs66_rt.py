@@ -47,6 +47,7 @@ from lerobot.robots.bi_elite_cs66_rt.config_bi_elite_cs66_rt import (
     BiEliteCS66RTConfig,
     BiEliteCS66RTControlMode,
 )
+from lerobot.robots.bi_elite_cs66_rt.gripper_snapshots import GripperSnapshot, TaccapGripperSnapshotReader
 from lerobot.robots.elite_cs66_rt import elite_cs66_rt as _elite_mod
 from lerobot.robots.elite_cs66_rt.elite_cs66_rt import (
     _configure_native_driver,
@@ -117,7 +118,8 @@ class BiEliteCS66RT(Robot):
         self._station_gripper_stop = threading.Event()
         self._station_gripper_thread: threading.Thread | None = None
         self._station_gripper_error: str | None = None
-        self._station_gripper_samples: tuple[float, dict[str, Any]] | None = None
+        self._station_gripper_samples: tuple[float, dict[str, GripperSnapshot]] | None = None
+        self._station_gripper_readers: dict[str, TaccapGripperSnapshotReader] = {}
         self._native_tools: dict[str, list[float] | None] = dict.fromkeys(_SIDES)
         self._dashboard: dict[str, Any] = dict.fromkeys(_SIDES)
         self._rtsi: dict[str, Any] = dict.fromkeys(_SIDES)
@@ -832,12 +834,11 @@ class BiEliteCS66RT(Robot):
                 raise ValueError(
                     f"Collision station models movable {side} gripper fingers but no sensor backend is enabled"
                 )
-            if (
-                any(f"{side}_tool_taccap_" in str(name) for name in station.model.names)
-                and gripper.config.type != "taccap_follower"
-            ):
+            if gripper.config.type != "taccap_follower":
                 raise ValueError(
-                    f"{side} gripper backend {gripper.config.type!r} does not match the TacCap station geometry"
+                    f"Elite collision checking supports TacCap followers only; {side} backend is "
+                    f"{gripper.config.type!r}. XGripper collision checking is unsupported; "
+                    "set native_collision_profile to null."
                 )
         station.configure_grippers(
             self.config.native_collision_gripper_calibration,
@@ -845,9 +846,12 @@ class BiEliteCS66RT(Robot):
         )
 
     def _start_station_gripper_publisher(self) -> None:
+        # Query calibration only for this connected Elite collision session,
+        # before starting the nonblocking publisher or any arm motion.
+        self._station_gripper_readers = {side: TaccapGripperSnapshotReader(self._gripper[side]) for side in _SIDES}
         # An independent cache reader owns publication, including while arms
         # hold and when no get_observation() calls are made. No USB/serial
-        # transaction is permitted in get_gripper_snapshot().
+        # transaction is permitted in the reader's read().
         self._station_gripper_stop.clear()
         self._station_gripper_error = None
         self._station_gripper_samples = None
@@ -869,7 +873,7 @@ class BiEliteCS66RT(Robot):
         period = 1.0 / self.config.native_collision_gripper_publish_hz
         while not self._station_gripper_stop.is_set():
             try:
-                snapshots = {side: self._gripper[side].get_gripper_snapshot() for side in _SIDES}
+                snapshots = {side: self._station_gripper_readers[side].read() for side in _SIDES}
                 self._station_gripper_samples = (time.monotonic(), snapshots)
                 station.publish_gripper_snapshots(snapshots)
                 self._station_gripper_error = None
@@ -895,6 +899,7 @@ class BiEliteCS66RT(Robot):
                         "Gripper snapshot reader did not stop; backend must provide a nonblocking snapshot"
                     )
                 self._station_gripper_thread = None
+            self._station_gripper_readers.clear()
             self._coordinator = None
             self._station = None
 

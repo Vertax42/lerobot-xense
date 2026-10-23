@@ -125,7 +125,13 @@ class AssemblyAdapterTests(unittest.TestCase):
             robot._driver[side] = SimpleNamespace(_native=Mock())
         coordinator = Mock()
         robot._cs = SimpleNamespace(_native=SimpleNamespace(StationCoordinator=Mock(return_value=coordinator)))
-        with patch("libpyelite.collision.StationLayer") as layer:
+        # These tests isolate TCP/coordinator wiring. Measured gripper startup
+        # and rejection are exercised by test_elite_gripper_collision.py.
+        with (
+            patch("libpyelite.collision.StationLayer") as layer,
+            patch.object(robot, "_configure_station_grippers"),
+            patch.object(robot, "_start_station_gripper_publisher"),
+        ):
             robot._start_station_layer()
             np.testing.assert_allclose(layer.call_args.args[2], expected)
         robot._stop_station_layer()
@@ -146,7 +152,11 @@ class AssemblyAdapterTests(unittest.TestCase):
             robot._native_tools[side] = np.eye(4).ravel().tolist()
         coordinator = Mock()
         robot._cs = SimpleNamespace(_native=SimpleNamespace(StationCoordinator=Mock(return_value=coordinator)))
-        robot._start_station_layer()
+        with (
+            patch.object(robot, "_configure_station_grippers"),
+            patch.object(robot, "_start_station_gripper_publisher"),
+        ):
+            robot._start_station_layer()
         for side in ("left", "right"):
             native[side].setExternalPlanning.assert_called_once_with(True)
         args = robot._cs._native.StationCoordinator.call_args.args

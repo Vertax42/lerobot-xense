@@ -38,7 +38,6 @@ through the gripper object.
 
 import abc
 import time
-from dataclasses import dataclass
 
 from lerobot.utils.robot_utils import get_logger
 
@@ -47,23 +46,6 @@ from .configs import GripperConfig
 # Defaults for the blocking reach-wait in initialize_gripper_position().
 DEFAULT_INIT_POSITION_TOLERANCE = 0.03
 DEFAULT_INIT_TIMEOUT_S = 3.0
-
-
-@dataclass(frozen=True)
-class GripperSnapshot:
-    """One actual sensor sample, independent of observation/command frequency.
-
-    ``sampled_at`` uses time.monotonic() seconds; reading the same sample must
-    not refresh it. Position is calibrated opening (0 closed, 1 open), without
-    hiding measured overtravel by clamping. Invalid/uninitialized data is never
-    a substitute for a measured closed jaw.
-    """
-
-    position: float = float("nan")
-    sampled_at: float = 0.0
-    sequence: int = 0
-    valid: bool = False
-    raw_position: float | None = None
 
 
 class Gripper(abc.ABC):
@@ -124,13 +106,6 @@ class Gripper(abc.ABC):
         """
 
     # ── Position ───────────────────────────────────────────────────────────────
-
-    def get_gripper_snapshot(self) -> GripperSnapshot:
-        """Read the latest sensor sample without device IO.
-
-        Optional for backends: unavailable measurements return an invalid sample.
-        """
-        return GripperSnapshot()
 
     @abc.abstractmethod
     def get_gripper_position(self) -> float:
