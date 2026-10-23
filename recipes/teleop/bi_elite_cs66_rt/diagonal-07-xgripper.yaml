@@ -154,20 +154,9 @@ robot:
   native_max_target_translation_jump: 0.5  # m
   native_max_target_rotation_jump: 1.5     # rad
   native_max_target_joint_jump: 0.3        # rad, joint targets only
-  # Collision avoidance (table, stand, self, other arm): null | auto | <collision.json>.
-  # Set, the robot plans both arms through the same native StationGuard as
-  # libpyelite.sim (check the recipe there first), and MoveJ start/home moves are
-  # refused when their joint path is blocked. Not yet validated on hardware.
-  # This recipe sets no native_assembly; the simulator would load diagonal-08.
-  # Set native_assembly before using `auto`.
+  # XGripper is retired; Elite collision checking supports TacCap followers only.
+  # Keep collision checking disabled: no matching XGripper geometry/calibration is provided.
   native_collision_profile: null
-  # Grippers move freely; measured state updates geometry and constrains only the arms.
-  # Live collision mode requires geometry and calibration matching the installed XGripper.
-  # Calibration format: {left: {driver_joint_name: [[opening, joint_coordinate], ...]}, right: {...}}
-  # The packaged TacCap geometry does not match this gripper; its default finger angles cannot be reused.
-  native_collision_gripper_calibration: null
-  native_collision_gripper_max_age_s: 0.1
-  native_collision_gripper_publish_hz: 100.0
   # Joint-current contact stop (any link). Off until its thresholds are tuned on
   # the bench; see third_party/libpyelite/examples/contact_monitor.json.
   native_contact_monitor: null
