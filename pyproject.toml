@@ -92,6 +92,7 @@ dependencies = [
     "pygame>=2.5.1,<2.7.0",
     "wandb>=0.26.0",
     "draccus==0.10.0",                   # TODO: Relax version constraint
+    "defusedxml>=0.7.1,<0.8.0",         # Safe parsing of configured B601 URDFs
     "rerun-sdk>=0.24.0,<0.27.0",
 
     # Support dependencies

@@ -8,18 +8,26 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestInstallRebot(unittest.TestCase):
     def test_rejects_target_environment_as_dependency_prefix(self):
-        result = subprocess.run(
-            ["bash", str(ROOT / "scripts/install_rebot.sh"), "--skip-deps"],
-            env={**os.environ, "REBOT_PYTHON": sys.executable, "REBOT_DEPS_PREFIX": sys.prefix},
-            text=True,
-            capture_output=True,
-        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "scripts").mkdir()
+            script = root / "scripts/install_rebot.sh"
+            shutil.copy2(ROOT / "scripts/install_rebot.sh", script)
+            sdk = root / "third_party/libpyrebot"
+            sdk.mkdir(parents=True)
+            # Reach prefix validation even when CI has not checked out the SDK.
+            (sdk / "CMakeLists.txt").touch()
+            result = subprocess.run(
+                ["bash", str(script), "--skip-deps"],
+                env={**os.environ, "REBOT_PYTHON": sys.executable, "REBOT_DEPS_PREFIX": sys.prefix},
+                text=True,
+                capture_output=True,
+            )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must be separate", result.stderr)
 
@@ -47,7 +55,7 @@ class TestInstallRebot(unittest.TestCase):
                 'printf "%s\\n" "$*" >> "$REBOT_TEST_CALLS"\n'
                 'if [[ "$*" == *"cmake --build"* ]]; then exit 37; fi\n'
                 # The stage must contain source only, even when a .so was copied with the repo.
-                'while [[ $# -gt 0 ]]; do\n'
+                "while [[ $# -gt 0 ]]; do\n"
                 '  if [[ "$1" == -S ]]; then\n'
                 '    compgen -G "$2/rebot_rt/_native*.so" && exit 99\n'
                 '    printf "%s\\n" "$2" > "$REBOT_TEST_STAGE"\n'

@@ -25,9 +25,7 @@ class RebotTactileCamera(XenseTactileCamera):
             self._check_retryable(error)
             last_error = error
 
-        camera_xense.logger.warn(
-            f"{self}: camera open failed; waiting for USB enumeration before reopening from cache"
-        )
+        camera_xense.logger.warn(f"{self}: camera open failed; waiting for USB enumeration before reopening from cache")
         deadline = time.monotonic() + _REOPEN_TIMEOUT_S
         while time.monotonic() < deadline:
             time.sleep(_REOPEN_POLL_S)
@@ -46,7 +44,11 @@ class RebotTactileCamera(XenseTactileCamera):
     def _check_retryable(self, error: ConnectionError) -> None:
         cause = error.__cause__
         cache = camera_xense._XENSE_CONFIG_CACHE_DIR / self.serial_number
-        if not isinstance(cause, RuntimeError) or not str(cause).startswith("Cannot open camera") or not cache.is_file():
+        if (
+            not isinstance(cause, RuntimeError)
+            or not str(cause).startswith("Cannot open camera")
+            or not cache.is_file()
+        ):
             raise error
 
     def read(self, color_mode=None):

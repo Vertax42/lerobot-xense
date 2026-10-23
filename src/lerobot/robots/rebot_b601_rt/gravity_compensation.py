@@ -2,9 +2,9 @@
 
 import math
 from pathlib import Path
-from xml.etree import ElementTree
 
 import yaml
+from defusedxml import ElementTree
 
 
 def load_joint_torque_offsets(urdf_path: str | Path) -> list[float]:

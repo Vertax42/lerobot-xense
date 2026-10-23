@@ -23,6 +23,7 @@ from tests.scripts.conftest_teleop_doubles import (
     FakeTeleop,
     fresh_events,
 )
+from tests.scripts.rebot_test_assets import isolated_rebot_assets
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -293,6 +294,9 @@ class TestB601RecordLoop(unittest.TestCase):
 
 
 class TestB601RecordEntrypoint(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(isolated_rebot_assets())
+
     def setup_record(self, dual=True, episodes=1):
         robot, teleop = RecordingRobot(dual), teleoperator(dual)
         recipe = "bi_rebot_b601_rt" if dual else "rebot_b601_rt"
@@ -594,6 +598,9 @@ class TestExistingRobotRecordEntrypoint(unittest.TestCase):
 
 
 class TestB601DatasetRoundTrip(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(isolated_rebot_assets())
+
     def test_dual_arm_streaming_video_save_and_resume(self):
         # Exercise the real dataset/encoder and CLI, replacing only hardware,
         # keyboard and speech. H.264 uses CPU so this needs no GPU or camera.

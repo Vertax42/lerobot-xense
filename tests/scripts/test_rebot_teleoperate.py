@@ -9,12 +9,14 @@ import numpy as np
 
 from lerobot.scripts import lerobot_teleoperate as cli, teleop_device_loops as loops
 from tests.scripts.conftest_teleop_doubles import FakeBiPico4Teleop, FakeRobot, FakeTeleop, run_loop
+from tests.scripts.rebot_test_assets import isolated_rebot_assets
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestRebotTeleoperate(unittest.TestCase):
     def setUp(self):
+        self.enterContext(isolated_rebot_assets())
         self.enterContext(patch.object(cli, "logger"))
 
     def test_single_arm_recipe_and_pico4_startup(self):

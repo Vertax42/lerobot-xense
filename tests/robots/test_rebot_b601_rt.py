@@ -667,8 +667,12 @@ class TestRebotB601RT(unittest.TestCase):
     def test_reset_reports_torques_before_observations_using_custom_gains_and_sent_command(self):
         target = [0, -0.8, -0.8, 0.5, 0, 0]
         robot = self.make_robot(
-            motor_family="dm", control_mode="mit", channel="/dev/ttyACM5", reset_position_rad=target,
-            reset_tolerance_rad=0.06, trace_joint_tracking=False,
+            motor_family="dm",
+            control_mode="mit",
+            channel="/dev/ttyACM5",
+            reset_position_rad=target,
+            reset_tolerance_rad=0.06,
+            trace_joint_tracking=False,
             motor_configs=[{}, {}, {"kp": 60, "kd": 2}, {}, {}, {}, {}],
         )
         robot.connect(go_to_start=False)

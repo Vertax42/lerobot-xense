@@ -20,7 +20,7 @@ def can_error_hint(channel: str, error: str) -> str | None:
             "sudo modprobe peak_usb\n"
             "ip -br link\n\n"
             f"# Once {channel} appears, configure its bitrate\n"
-            "# If the interface name differs, update these commands and the robot's channel configuration\n"
+            "# If the interface name differs, adjust these commands and the robot's channel configuration\n"
             f"sudo ip link set {interface} down 2>/dev/null\n"
             f"sudo ip link set {interface} type can bitrate 1000000\n"
             f"sudo ip link set {interface} up"

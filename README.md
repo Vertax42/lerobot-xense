@@ -289,7 +289,7 @@ bash ./setup_env.sh --install --help
 
 | Selector                  | Builds                                         | Robots / teleoperators enabled            |
 | ------------------------- | ---------------------------------------------- | ----------------------------------------- |
-| `--rebot`, `--bi_rebot`   | `rebot_rt` (isolated Pinocchio dependencies) | `rebot_b601_rt`, `bi_rebot_b601_rt`      |
+| `--rebot`, `--bi_rebot`   | `rebot_rt` (isolated Pinocchio dependencies)   | `rebot_b601_rt`, `bi_rebot_b601_rt`       |
 | `--flexiv`, `--bi_flexiv` | `flexiv_rt` (+ `xense`)                        | `flexiv_rizon4_rt`, `bi_flexiv_rizon4_rt` |
 | `--elite`, `--bi_elite`   | `elite_cs_sdk` (+ `xense`)                     | `elite_cs66_rt`, `bi_elite_cs66_rt`       |
 | `--taccap`, `--bi_taccap` | `xense.taccap` (+ `xense`)                     | `taccap_follower` gripper (on any arm)    |
